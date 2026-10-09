@@ -35,7 +35,10 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 - [x] **Together:** connect Cloudflare to the repository with Workers Builds, add `backenddesdecero.com` as a custom domain, redirect `www` to it and `backendfromscratch.com` to `/en/`, and turn on "Always Use HTTPS" (2026-10-10). The site is live at `https://backenddesdecero.com`. Setup in `docs/specs/2026-10-02-site-and-phase-0-design.md`, §7.
 - [x] **Claude:** one year of cache for `/_astro/` and no production `workers.dev` address (2026-10-10).
 - [ ] **You:** check that auto-renewal is on for both domains.
-- [ ] **Together, before announcing it:** Lighthouse with a simulated phone, Google Search Console, Bing Webmaster Tools and the rich results test.
+- [x] **Together (2026-10-10):** Lighthouse with a simulated phone on the home page and three lessons (performance 94 to 100; accessibility, best practices and SEO 100; LCP 1.5 to 2.5 s), Google Search Console (domain property, `sitemap-index.xml` sent) and the rich results test (breadcrumbs valid on `/fase-0/que-es-dns/`).
+- [x] **You:** Bing Webmaster Tools, importing the site from Search Console (2026-10-10).
+- [ ] **You, optional:** Crawler Hints in Cloudflare (`backenddesdecero.com` → Caching → Configuration), which tells Bing about every deploy through IndexNow.
+- [x] **Claude:** `WebSite` JSON-LD on the home page, the way Google picks the site name it shows (2026-10-10). The SEO audit checks it.
 - [ ] **Together, a few weeks after publishing:** turn on HSTS once the domain has worked without problems (start with a short `max-age`).
 - [x] **You:** decide the license (2026-10-09): CC BY 4.0 for the course content (`web/src/content/docs/`, `glossary/` and `i18n/`) and MIT for everything else, code and tests included. `LICENSE`, `LICENSE-CONTENT` and the README say so.
 - [x] **Claude:** say on the site that the content is CC BY 4.0 (2026-10-09): a line in the footer of every page, in both languages, linking to the license deed in the reader's language with `rel="license"`.
@@ -121,6 +124,12 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 - [x] **The open page's tab is first and always visible; the explorer has no root folder and does not collapse** (2026-10-03). Spec updated (§4.2, §4.3).
 - [x] **The first tab cannot be closed in playgrounds and glossary:** it links to the last page opened (2026-10-03).
 - [x] **Minor items deferred from the editor layout review, resolved** (2026-10-03): outline with a single entry, empty `aside`, clipped focus, glossary in the minimap and in the highlighting, outline that shows the marked section, comment on the search import and the contrast of `line` in the guide. The rest no longer applied after removing the activity bar.
+- [ ] **Accessible names of the links that show a file name (Lighthouse, 2026-10-10).** The explorer, the pinned tabs, the pagination, the prerequisites and the home page's CodeLens show a file name but announce another name: «← 05-ip-puertos-y-sockets.md» is read as «Página anterior: IP, puertos y sockets». The style guide asks for it ("File names"), so screen readers do not spell out file names, but it breaks WCAG 2.5.3, "Label in Name" (level A): someone using voice control says what they see («click 05-ip-puertos…») and it matches nothing. Lighthouse flags it as an experimental audit, without lowering the score. Options:
+  - **(a)** the accessible name contains both: «Página anterior: IP, puertos y sockets (05-ip-puertos-y-sockets.md)». It meets WCAG; a screen reader reads a bit more;
+  - **(b)** keep it as it is.
+
+  Recommendation: (a), the same in every component, and update the style guide.
+- [ ] **Render-blocking CSS (Lighthouse, 2026-10-10):** the two stylesheets (Starlight's and Expressive Code's) delay the first paint by a few hundred milliseconds on a simulated phone. Normal for Starlight; not worth touching while performance stays above 90.
 - [ ] **Idea for later:** a progress panel (finished lessons, saved in the browser), when there are more lessons. Without an activity bar, it could be another pinned tab.
 
 - [x] **Name and domain:** «Backend desde cero / Backend from Scratch», at `backenddesdecero.com` (decided on 2026-10-03). The repository name was changed by the following decision.
@@ -151,7 +160,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 - [ ] **Deployment on Cloudflare:** Workers with static assets (2026-10-09, `wrangler.jsonc`); what remains is connecting the repository ("Next steps", 3).
 - [x] **Commit:** the first, on 2026-10-09, when pushing the code to GitHub.
 - [x] **CI on GitHub (2026-10-07; active since 2026-10-09):** the `.github/workflows/ci.yml` workflow is already written, but it only runs once the repository is on GitHub. When creating it, protect `main` and mark the job "format, types, tests and build" as a required check: that way a PR with a red CI cannot be merged. Watch out: Cloudflare deploys every push to `main` on its own, without waiting for the CI; its build does fail with a broken link or an SEO problem, but not with a broken test.
-- [ ] **Before publishing:** run Lighthouse with a simulated phone, sign up for Google Search Console and Bing Webmaster Tools, and check the breadcrumbs with Google's rich results test.
+- [x] **Before publishing:** run Lighthouse with a simulated phone, sign up for Google Search Console and Bing Webmaster Tools, and check the breadcrumbs with Google's rich results test (2026-10-10).
 - [x] **On Cloudflare,** the build command is `pnpm build` from the root (or `pnpm --filter web build`). The fonts for the social images are already found through the module system, but Astro needs to run with `web/` as the root.
 - [ ] **JavaScript limit per page: 400 KB** (uncompressed, counting everything the page can import). The plan said 300, but a lesson with a lab already weighs about 340 KB (React 208 KB and Starlight's search 92 KB). Is that fine with you, or do you prefer studying how to slim down the labs (for example, Preact instead of React)?
 - [ ] **Decisions on the technical minor items (2026-10-03), taken without consulting you.** Do they work for you?

@@ -12,7 +12,8 @@ import { currentLesson } from './lib/explorer';
 import { localizedHref } from './lib/links';
 import { toLocale } from './lib/locales';
 import { phaseLabel } from './lib/sidebar';
-import { breadcrumbJsonLd } from './lib/structured-data';
+import { breadcrumbJsonLd, websiteJsonLd } from './lib/structured-data';
+import { siteTitle } from './data/site';
 import { OG_SIZE, ogImagePath } from './lib/og/card';
 
 export const onRequest = defineRouteMiddleware(async (context) => {
@@ -58,6 +59,20 @@ export const onRequest = defineRouteMiddleware(async (context) => {
   }
 
   route.head.push(...alternateLinks(translationsOf(index, route.entry.id), context.site.href));
+
+  // The site name Google shows above each result. It only reads it on the domain's home page, so the
+  // English home has none: on Google, both languages show «Backend desde cero»
+  // (docs/research/2026-10-03-languages-and-names.md).
+  if (urlOfId(route.entry.id) === '/') {
+    route.head.push({
+      tag: 'script',
+      attrs: { type: 'application/ld+json' },
+      content: websiteJsonLd(
+        { name: siteTitle.es, alternateName: [siteTitle.en] },
+        context.site.href,
+      ),
+    });
+  }
 
   // Breadcrumbs for Google: home › phase › lesson.
   const locale = toLocale(route.locale);

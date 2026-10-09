@@ -104,7 +104,7 @@ The site spec says: «personas que ya programan (por ejemplo, frontend) pero no 
 | `robots.txt` | ✗ Does not exist | Create it in `web/public/`, with the sitemap URL |
 | Root `/` | 302 to `/es/` | Goes away with options B or C; otherwise 301 |
 | Social image (`og:image`) | ✗ None, even though a large `twitter:card` is declared | Generate it in the build for each page, with the title and the IDE theme (`astro-og-canvas` or `satori`) |
-| Structured data (JSON-LD) | ✗ | `BreadcrumbList` on all lessons; `Course` on the home page, if it meets Google's requirements |
+| Structured data (JSON-LD) | ✗ | `BreadcrumbList` on all lessons; `WebSite` on the home page `/` with `name` and `alternateName`, the way Google picks the site name it shows (done on 2026-10-10; Google reads it only on the domain's home page, so `/en/` has none); `Course` on the home page, if it meets Google's requirements |
 | Home page `<title>` | «Backend desde cero \| Backend desde cero», repeated | Own title with `head` in the frontmatter |
 | Lesson `<title>`s | Short labels («DNS \| Backend desde cero») | Titles that answer the search (§4) |
 | Meta descriptions | 10 of the 16 lessons (5 per language) exceed 160 characters, and Google cuts them | Rewrite them under 155 |
