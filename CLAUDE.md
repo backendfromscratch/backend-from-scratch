@@ -47,6 +47,7 @@ Only what is needed to keep working gets committed. Git history keeps the rest.
 - Audience: everyone. No lesson assumes any programming knowledge (decided on 2026-10-03; consequences in `docs/specs/2026-10-03-seo-design.md`, §2.3).
 - Routes and technical SEO: Spanish at the root, translated routes linked by `translationKey`, and an SEO audit that fails the build (design in `docs/specs/2026-10-03-seo-design.md`; rules in `docs/style-guide.md`, "Routes, translations and SEO").
 - CI: GitHub Actions checks format, types, tests and build on every PR and every push to `main` (decided on 2026-10-07). Deployment stays with Cloudflare's Git integration; deploying from GitHub Actions is left for Phase 8.
+- Hosting: Cloudflare Workers with static assets only, no server code (decided on 2026-10-09; Cloudflare calls Pages "legacy"). Configuration in `wrangler.jsonc`; Workers Builds runs `pnpm build` and `pnpm exec wrangler deploy` on every push to `main`.
 - Repository language: English (decided on 2026-10-09). The site stays bilingual.
 - License: CC BY 4.0 for the course content (`web/src/content/docs/`, `glossary/` and `i18n/`) and MIT for everything else, code and tests included (decided on 2026-10-09; `LICENSE` and `LICENSE-CONTENT`).
 - Style guide for writing lessons: `docs/style-guide.md`.
@@ -71,6 +72,7 @@ pnpm check                   # types (astro check)
 pnpm test                    # tests (vitest)
 pnpm build                   # static site in web/dist/
 pnpm --filter web preview    # serves web/dist/ to try the build
+pnpm exec wrangler dev       # serves web/dist/ the way Cloudflare does (after pnpm build)
 pnpm format                  # formats with prettier
 pnpm format:check            # checks the format without changing anything
 ```
