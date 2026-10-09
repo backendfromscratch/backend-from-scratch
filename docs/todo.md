@@ -33,7 +33,8 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 - [ ] **You:** buy `backenddesdecero.com` and `backendfromscratch.com`, and `.dev` if you want, as a defense.
 - [ ] **Together:** connect Cloudflare to the repository (the build command is `pnpm build`) and redirect `backendfromscratch.com` to `/en/`.
 - [ ] **Together, before announcing it:** Lighthouse with a simulated phone, Google Search Console, Bing Webmaster Tools and the rich results test.
-- [ ] **You:** decide the license before anyone reuses anything. Without a license, it can be read but not reused. The usual choice: MIT for the code and Creative Commons for the content.
+- [x] **You:** decide the license (2026-10-09): CC BY 4.0 for the course content (`web/src/content/docs/`, `glossary/` and `i18n/`) and MIT for everything else, code and tests included. `LICENSE`, `LICENSE-CONTENT` and the README say so.
+- [ ] **Claude:** say on the site that the content is CC BY 4.0, with a short line and a link in the footer, before publishing.
 
 ### 4. Continue with Phase 1, lesson by lesson
 
