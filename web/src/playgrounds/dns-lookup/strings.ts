@@ -1,4 +1,4 @@
-/** Textos del laboratorio dns-lookup en los dos idiomas. Los huecos {así} los rellena describe.ts. */
+/** dns-lookup lab texts in both languages. The {like this} placeholders are filled by describe.ts. */
 import type { Locale } from '../../lib/locales';
 import type { Outcome } from './dns';
 import type { LookupFailure } from './resolver';
@@ -11,7 +11,7 @@ export interface Strings {
   idle: string;
   loading: string;
   errors: Record<'empty' | 'invalid' | 'ip' | LookupFailure, string>;
-  /** Siempre visible: el recorrido se reconstruye, no se ve en directo, y 1.1.1.1 no tiene por qué ser el tuyo. */
+  /** Always visible: the path is reconstructed, not seen live, and 1.1.1.1 need not be yours. */
   honesty: string;
   stepsLabel: string;
   next: string;
@@ -24,18 +24,18 @@ export interface Strings {
   referral: string;
   finalAnswer: string;
   alias: string;
-  /** Una cadena de varios alias: el primero, el último y los de en medio ({via}). */
+  /** A chain of several aliases: the first, the last and those in between ({via}). */
   aliasVia: string;
-  /** Cuando el alias apunta a otra zona: su servidor no tiene la respuesta. */
+  /** When the alias points to another zone: its server does not have the answer. */
   lookThere: string;
-  /** El paso extra en el que el resolver busca el destino del alias. */
+  /** The extra step in which the resolver looks up the alias target. */
   followAlias: string;
-  /** El destino del alias es a su vez un alias (una cadena que cruza zonas). */
+  /** The alias target is itself an alias (a chain that crosses zones). */
   followAliasChain: string;
   followAliasChainVia: string;
-  /** El destino del alias no existe o no tiene registros del tipo pedido (dentro de la misma zona). */
+  /** The alias target does not exist or has no records of the requested type (within the same zone). */
   aliasOutcome: Record<'nxdomain' | 'nodata', string>;
-  /** Lo mismo, cuando el resolver tiene que buscar el destino aparte. */
+  /** The same, when the resolver has to look up the target separately. */
   followAliasOutcome: Record<'nxdomain' | 'nodata', string>;
   final: Record<Exclude<Outcome, 'answer'>, string>;
   reply: Record<Outcome, string>;

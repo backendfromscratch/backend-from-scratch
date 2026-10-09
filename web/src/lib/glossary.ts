@@ -1,18 +1,18 @@
 import type { Locale } from './locales';
 
-/** Id de una entrada en la colección: "<idioma>/<id-del-término>", p. ej. "es/port". */
+/** Id of an entry in the collection: "<language>/<term-id>", e.g. "es/port". */
 export function glossaryEntryId(locale: Locale, termId: string): string {
   return `${locale}/${termId}`;
 }
 
-/** Inverso de glossaryEntryId: "es/port" → "port". */
+/** Inverse of glossaryEntryId: "es/port" → "port". */
 export function termIdFromEntryId(entryId: string): string {
   const separator = entryId.indexOf('/');
-  if (separator === -1) throw new Error(`[glossary] Id sin idioma: "${entryId}"`);
+  if (separator === -1) throw new Error(`[glossary] Id without a language: "${entryId}"`);
   return entryId.slice(separator + 1);
 }
 
-/** Ordena alfabéticamente con las reglas del idioma (Intl.Collator), sin modificar la lista original. */
+/** Sorts alphabetically with the language's rules (Intl.Collator), without modifying the original list. */
 export function sortGlossary<T extends { data: { term: string } }>(
   entries: readonly T[],
   locale: Locale,
@@ -22,8 +22,8 @@ export function sortGlossary<T extends { data: { term: string } }>(
 }
 
 /**
- * El id del popover de un <Term>: el término y cuántas veces ha salido ya en la página
- * («term-port», «term-port-2»…). Así el HTML es el mismo en cada build. `seen` es de la página.
+ * The popover id of a <Term>: the term and how many times it has already appeared on the page
+ * («term-port», «term-port-2»…). This way the HTML is the same on every build. `seen` belongs to the page.
  */
 export function termPopoverId(seen: Map<string, number>, termId: string): string {
   const count = (seen.get(termId) ?? 0) + 1;
@@ -34,9 +34,9 @@ export function termPopoverId(seen: Map<string, number>, termId: string): string
 const seenByPage = new WeakMap<object, Map<string, number>>();
 
 /**
- * Los términos que ya han salido en una página. `page` es un objeto que es uno por página (en
- * Term.astro, Astro.locals): el frontmatter de un componente se ejecuta de nuevo con cada <Term>, así
- * que la cuenta tiene que vivir aquí, en el módulo.
+ * The terms that have already appeared on a page. `page` is an object that exists once per page (in
+ * Term.astro, Astro.locals): a component's frontmatter runs again for each <Term>, so
+ * the count has to live here, in the module.
  */
 export function termsSeenIn(page: object): Map<string, number> {
   let seen = seenByPage.get(page);
@@ -48,14 +48,14 @@ export function termsSeenIn(page: object): Map<string, number> {
 }
 
 /**
- * La lección que explica cada término (id del término → id de la lección). Si el término dice cuál
- * (`lesson`, la translationKey de la lección), esa: el primer uso no siempre es la explicación
- * («puerto» sale en cliente-servidor, pero se explica en la de IP y puertos). Si no, la primera del
- * curso que lo usa con <Term id="…">. `lessons` llega en el orden del curso, con las introducciones
- * de fase, su translationKey y su texto MDX; cada texto se recorre una sola vez.
+ * The lesson that explains each term (term id → lesson id). If the term says which one
+ * (`lesson`, the lesson's translationKey), that one: the first use is not always the explanation
+ * («puerto» appears in client-server, but it is explained in the IP and ports one). Otherwise, the first in the
+ * course that uses it with <Term id="…">. `lessons` arrives in course order, with the phase
+ * introductions, their translationKey and their MDX text; each text is scanned only once.
  *
- * Una `lesson` que no está en este idioma pero sí en otro (aún sin traducir) vuelve al primer uso;
- * una que no está en `knownKeys` (las translationKey de todos los idiomas) es una errata: error.
+ * A `lesson` that is not in this language but is in another (not yet translated) falls back to the first use;
+ * one that is not in `knownKeys` (the translationKeys of all languages) is a typo: error.
  */
 export function explainingLessons(
   terms: readonly { id: string; lesson?: string }[],
@@ -77,7 +77,7 @@ export function explainingLessons(
   for (const term of terms) {
     if (term.lesson && !knownKeys.has(term.lesson)) {
       throw new Error(
-        `[glossary] "${term.id}" dice que lo explica la lección "${term.lesson}", que no existe`,
+        `[glossary] "${term.id}" says it is explained by the lesson "${term.lesson}", which does not exist`,
       );
     }
     const lessonId = (term.lesson && byKey.get(term.lesson)) || firstUse.get(term.id);

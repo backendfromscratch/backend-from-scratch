@@ -1,9 +1,9 @@
 /**
- * El esquema de la página (src/components/Outline.astro), sin DOM: el índice de Starlight como lista
- * plana y cuál es la sección actual.
+ * The page outline (src/components/Outline.astro), without a DOM: Starlight's table of contents as a flat
+ * list and which section is the current one.
  */
 
-/** Lo que el esquema usa de cada entrada del índice de Starlight (route.toc.items). */
+/** What the outline uses from each Starlight table-of-contents entry (route.toc.items). */
 export interface TocEntry {
   depth: number;
   slug: string;
@@ -14,11 +14,11 @@ export interface TocEntry {
 export interface OutlineItem {
   slug: string;
   text: string;
-  /** La marca de Markdown del nivel: «#» para el título de la página, «##» y «###» para las secciones. */
+  /** The level's Markdown marker: «#» for the page title, «##» and «###» for sections. */
   mark: string;
 }
 
-/** Starlight abre el índice con el título de la página (la «Sinopsis»), que enlaza a #_top. */
+/** Starlight opens the table of contents with the page title (the «Sinopsis»), which links to #_top. */
 const PAGE_TITLE_SLUG = '_top';
 
 export function flattenOutline(entries: readonly TocEntry[]): OutlineItem[] {
@@ -32,17 +32,17 @@ export function flattenOutline(entries: readonly TocEntry[]): OutlineItem[] {
   ]);
 }
 
-/** Un salto reciente a una sección del esquema: su posición en la lista y el alto de la ventana. */
+/** A recent jump to an outline section: its position in the list and the window height. */
 export interface Jump {
   target: number;
   viewHeight: number;
 }
 
 /**
- * La sección actual: la última cuyo título ya ha subido hasta la línea de lectura (donde aterriza un
- * salto a un ancla, justo debajo de las pestañas fijas). Antes del primer título, la primera entrada.
- * Al final de la página los últimos títulos ya no pueden subir tanto: entonces manda la sección a la
- * que se acaba de saltar, si su título sigue a la vista, y si no, la última. Sin títulos, -1.
+ * The current section: the last one whose heading has already scrolled up to the reading line (where an
+ * anchor jump lands, just below the pinned tabs). Before the first heading, the first entry.
+ * At the end of the page the last headings can no longer scroll up that far: then the section just
+ * jumped to wins, if its heading is still in view, and otherwise the last one. Without headings, -1.
  */
 export function currentSection(
   headingTops: readonly number[],

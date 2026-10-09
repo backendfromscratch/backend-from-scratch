@@ -6,18 +6,18 @@ const context = { fileURL: new URL('file:///proyecto/src/content/docs/fase-0/x.m
 const SEQUENCE = 'sequenceDiagram\nparticipant A as Uno\nparticipant B as Dos\nA->>B: hola';
 
 describe('satteriDiagrams', () => {
-  it('pide las posiciones de los nodos, para decir en qué línea falla un diagrama', () => {
+  it('asks for node positions, to say which line a diagram fails on', () => {
     expect(plugin.options).toEqual({ position: true });
   });
 
-  it('cambia un bloque mermaid de secuencia por la figura en HTML', () => {
+  it('replaces a mermaid sequence block with the HTML figure', () => {
     const result = plugin.code({ lang: 'mermaid', value: SEQUENCE }, context);
     expect(result?.type).toBe('html');
     expect(result?.value).toMatch(/^<figure class="seq seq--n2 not-content">/);
     expect(result?.value).toContain('Uno → Dos');
   });
 
-  it('también las cadenas (flowchart TB)', () => {
+  it('chains too (flowchart TB)', () => {
     const result = plugin.code(
       { lang: 'mermaid', value: 'flowchart TB\nA["a"] -->|x| B["b"]' },
       context,
@@ -25,28 +25,28 @@ describe('satteriDiagrams', () => {
     expect(result?.value).toMatch(/^<figure class="chain not-content">/);
   });
 
-  it('el HTML va en una sola línea: una línea en blanco cortaría el bloque HTML', () => {
+  it('the HTML is on a single line: a blank line would cut the HTML block', () => {
     expect(plugin.code({ lang: 'mermaid', value: SEQUENCE }, context)?.value).not.toContain('\n');
   });
 
-  it('no toca los demás bloques de código', () => {
+  it('leaves other code blocks alone', () => {
     expect(plugin.code({ lang: 'sh', value: 'curl example.com' }, context)).toBeUndefined();
   });
 
-  it('el error apunta a la línea mala del fichero, no a la apertura del bloque', () => {
-    // El bloque abre en la línea 12; «loop x» es su cuarta línea: la 16 del fichero.
+  it('the error points to the bad line of the file, not to the block opening', () => {
+    // The block opens at line 12; «loop x» is its fourth line: line 16 of the file.
     const node = {
       lang: 'mermaid',
       value: 'sequenceDiagram\nparticipant A as A\nparticipant B as B\nloop x',
       position: { start: { line: 12 } },
     };
-    expect(() => plugin.code(node, context)).toThrow(/x\.mdx:16: Línea no admitida/);
+    expect(() => plugin.code(node, context)).toThrow(/x\.mdx:16: Unsupported line/);
   });
 
-  it('un diagrama no admitido hace fallar el build, con el fichero y la línea', () => {
+  it('an unsupported diagram fails the build, with the file and line', () => {
     const node = { lang: 'mermaid', value: 'graph LR\nA --> B', position: { start: { line: 12 } } };
     expect(() => plugin.code(node, context)).toThrow(
-      /\/proyecto\/src\/content\/docs\/fase-0\/x\.mdx:12: Tipo de diagrama no admitido: «graph LR»/,
+      /\/proyecto\/src\/content\/docs\/fase-0\/x\.mdx:12: Unsupported diagram type: «graph LR»/,
     );
   });
 });

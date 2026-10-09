@@ -1,4 +1,4 @@
-/** Textos del laboratorio tcp-handshake en los dos idiomas. Los datos de `payloads` van solo en ASCII. */
+/** Texts of the tcp-handshake lab in both languages. The `payloads` data is ASCII only. */
 import type { Locale } from '../../lib/locales';
 import type { Fate, Narration, Side } from './machine';
 
@@ -8,14 +8,14 @@ export interface Strings {
   client: string;
   server: string;
   sideName: Record<Side, string>;
-  /** Lo que muestran las etiquetas de estado en modo UDP. */
+  /** What the state labels show in UDP mode. */
   udpNoState: string;
   next: string;
   reset: string;
   lose: string;
-  /** Nombre accesible del botón «Perder»: {n} es la fila y {summary}, el segmento. */
+  /** Accessible name of the «Perder» button: {n} is the row and {summary} the segment. */
   loseLabel: string;
-  /** Lo mismo en modo UDP, donde no hay segmentos sino datagramas. */
+  /** The same in UDP mode, where there are datagrams instead of segments. */
   loseLabelUdp: string;
   ladderLabel: string;
   routeToServer: string;
@@ -31,12 +31,12 @@ export interface Strings {
   nothing: string;
   quoteOpen: string;
   quoteClose: string;
-  /** Se añade a la narración cuando un segmento de datos completa el handshake. */
+  /** Added to the narration when a data segment completes the handshake. */
   completesHandshake: string;
   done: string;
   udpDone: string;
   udpDoneLost: string;
-  /** Los datos que envía el cliente. Solo ASCII: así cada letra es un byte. */
+  /** The data the client sends. ASCII only: so each letter is one byte. */
   payloads: string[];
   narration: Record<Narration['key'], string>;
 }

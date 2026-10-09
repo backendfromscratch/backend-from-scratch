@@ -1,8 +1,8 @@
 import { defaultLocale, type Locale } from './locales';
 
 /**
- * URL interna de un idioma. El español va en la raíz: localizedHref('es', 'roadmap') → '/roadmap/';
- * el inglés lleva prefijo: localizedHref('en', 'phase-0') → '/en/phase-0/'.
+ * Internal URL for a language. Spanish goes at the root: localizedHref('es', 'roadmap') → '/roadmap/';
+ * English gets a prefix: localizedHref('en', 'phase-0') → '/en/phase-0/'.
  */
 export function localizedHref(locale: Locale, slug = ''): string {
   const cleanSlug = slug.replace(/^\/+|\/+$/g, '');

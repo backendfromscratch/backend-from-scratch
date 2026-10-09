@@ -42,35 +42,35 @@ const sidebar: ExplorerEntry[] = [
 ];
 
 describe('toKebab / toFileName', () => {
-  it('quita tildes, eñes y signos', () => {
+  it('removes accents, ñ and punctuation', () => {
     expect(toKebab('¿Qué es un protocolo?')).toBe('que-es-un-protocolo');
     expect(toKebab('El modelo TCP/IP')).toBe('el-modelo-tcp-ip');
     expect(toKebab('Diseño  de   APIs')).toBe('diseno-de-apis');
   });
 
-  it('antepone la posición con dos cifras', () => {
+  it('prefixes the position with two digits', () => {
     expect(toFileName('Qué es un protocolo', 2)).toBe('02-que-es-un-protocolo.md');
     expect(toFileName('Introducción', 0)).toBe('00-introduccion.md');
   });
 
-  it('sin posición es un fichero raíz', () => {
+  it('without a position it is a root file', () => {
     expect(toFileName('Glosario')).toBe('glosario.md');
   });
 
-  it('lanza un error si no queda nada con lo que nombrar el fichero', () => {
-    expect(() => toFileName('¿?')).toThrow(/nombre de fichero/);
+  it('throws if nothing is left to name the file with', () => {
+    expect(() => toFileName('¿?')).toThrow(/file name/);
   });
 });
 
 describe('phaseFolderName', () => {
-  it('usa la palabra del idioma', () => {
+  it('uses the word of the language', () => {
     expect(phaseFolderName('es', 0)).toBe('fase-0');
     expect(phaseFolderName('en', 11)).toBe('phase-11');
   });
 });
 
 describe('findPhaseLinks', () => {
-  it('devuelve los enlaces de la fase en orden', () => {
+  it('returns the links of the phase in order', () => {
     expect(findPhaseLinks(sidebar, 'fase-0').map((l) => l.label)).toEqual([
       'Introducción',
       'Modelo cliente-servidor',
@@ -78,19 +78,19 @@ describe('findPhaseLinks', () => {
     ]);
   });
 
-  it('no confunde fase-1 con fase-10', () => {
+  it('does not confuse fase-1 with fase-10', () => {
     expect(findPhaseLinks(sidebar, 'fase-1')).toEqual([]);
   });
 });
 
 describe('locateCurrent', () => {
-  it('encuentra la fase y la posición de la página actual (0 = introducción)', () => {
+  it('finds the phase and position of the current page (0 = introduction)', () => {
     const position = locateCurrent(sidebar, ['fase-0', 'fase-10']);
     expect(position?.phaseSlug).toBe('fase-0');
     expect(position?.index).toBe(2);
   });
 
-  it('fuera de una fase no devuelve nada', () => {
+  it('outside a phase it returns nothing', () => {
     const outside: ExplorerEntry[] = sidebar.map((entry) =>
       entry.type === 'link'
         ? entry
@@ -101,7 +101,7 @@ describe('locateCurrent', () => {
 });
 
 describe('fileNameFor / pageFileName', () => {
-  it('las lecciones llevan su posición y el resto no', () => {
+  it('lessons carry their position and the rest do not', () => {
     expect(
       fileNameFor(sidebar, ['fase-0'], {
         href: '/fase-0/modelo-cliente-servidor/',
@@ -113,7 +113,7 @@ describe('fileNameFor / pageFileName', () => {
     );
   });
 
-  it('la portada es inicio.md en español y home.md en inglés: README no le dice nada a quien no programa', () => {
+  it('the home page is inicio.md in Spanish and home.md in English: README means nothing to someone who does not program', () => {
     expect(homeFileName('es')).toBe('inicio.md');
     expect(homeFileName('en')).toBe('home.md');
     expect(pageFileName('', 'Backend desde cero')).toBe('inicio.md');
@@ -121,13 +121,13 @@ describe('fileNameFor / pageFileName', () => {
     expect(pageFileName('en', 'Backend from Scratch')).toBe('home.md');
   });
 
-  it('las páginas raíz del español no son la portada, aunque su id no tenga barra', () => {
+  it('Spanish root pages are not the home page, even if their id has no slash', () => {
     expect(pageFileName('glossary', 'Glosario')).toBe('glosario.md');
     expect(pageFileName('roadmap', 'Temario')).toBe('temario.md');
     expect(pageFileName('en/glossary', 'Glossary')).toBe('glossary.md');
   });
 
-  it('las lecciones llevan su posición', () => {
+  it('lessons carry their position', () => {
     const position = locateCurrent(sidebar, ['fase-0']);
     expect(pageFileName('fase-0/que-es-un-protocolo', 'Qué es un protocolo', position)).toBe(
       '02-que-es-un-protocolo.md',
@@ -135,8 +135,8 @@ describe('fileNameFor / pageFileName', () => {
   });
 });
 
-describe('fileNameFor con la etiqueta del sidebar', () => {
-  it('usa la etiqueta que el sidebar da a ese href, aunque se le pase otro título', () => {
+describe('fileNameFor with the sidebar label', () => {
+  it('uses the label the sidebar gives that href, even if another title is passed', () => {
     const english: ExplorerEntry[] = [
       {
         type: 'group',
@@ -168,13 +168,13 @@ describe('currentLesson / statusStep', () => {
   } as const;
   const phase10 = { ...phase0, number: 10, lessonCount: undefined };
 
-  it('devuelve la fase y la posición de la página actual, en la carpeta de su idioma', () => {
+  it('returns the phase and position of the current page, in the folder of its language', () => {
     const current = currentLesson(sidebar, [phase0, phase10], 'es');
     expect(current?.phase.number).toBe(0);
     expect(current?.position.index).toBe(2);
   });
 
-  it('en inglés busca la carpeta phase-N', () => {
+  it('in English it looks for the phase-N folder', () => {
     const english: ExplorerEntry[] = [
       {
         type: 'group',
@@ -189,7 +189,7 @@ describe('currentLesson / statusStep', () => {
     expect(currentLesson(english, [phase0], 'es')).toBeUndefined();
   });
 
-  it('la introducción, una lección con total y una lección sin total', () => {
+  it('the introduction, a lesson with a total and a lesson without a total', () => {
     const at = (index: number, phase: typeof phase0 | typeof phase10) => ({
       phase,
       position: { phaseSlug: phaseFolderName('es', phase.number), index, links: [] },
@@ -203,31 +203,31 @@ describe('currentLesson / statusStep', () => {
 describe('revealScrollTop', () => {
   const view = { scrollTop: 100, height: 300 };
 
-  it('si el fichero ya se ve, no mueve nada', () => {
+  it('if the file is already visible, it moves nothing', () => {
     expect(revealScrollTop(view, { top: 150, height: 28 })).toBe(100);
   });
 
-  it('si está más abajo, lo centra', () => {
+  it('if it is further down, it centers it', () => {
     expect(revealScrollTop(view, { top: 700, height: 28 })).toBe(700 - (300 - 28) / 2);
   });
 
-  it('si solo se ve en parte, también lo centra', () => {
+  it('if it is only partly visible, it also centers it', () => {
     expect(revealScrollTop(view, { top: 390, height: 28 })).toBe(390 - (300 - 28) / 2);
   });
 
-  it('si está más arriba, lo centra sin pasar de 0', () => {
+  it('if it is further up, it centers it without going below 0', () => {
     expect(revealScrollTop(view, { top: 20, height: 28 })).toBe(0);
   });
 });
 
 describe('phaseSlugOf', () => {
-  it('la carpeta de fase de un enlace; fase-1 y fase-10 no se confunden', () => {
+  it('the phase folder of a link; fase-1 and fase-10 are not confused', () => {
     expect(phaseSlugOf('/fase-0/que-es-dns/', ['fase-0', 'fase-1', 'fase-10'])).toBe('fase-0');
     expect(phaseSlugOf('/fase-10/', ['fase-1', 'fase-10'])).toBe('fase-10');
     expect(phaseSlugOf('/en/phase-1/x/', ['phase-0', 'phase-1'])).toBe('phase-1');
   });
 
-  it('fuera de una fase, ninguna', () => {
+  it('outside a phase, none', () => {
     expect(phaseSlugOf('/glossary/', ['fase-0'])).toBeUndefined();
     expect(phaseSlugOf('/', ['fase-0'])).toBeUndefined();
   });
@@ -237,13 +237,13 @@ describe('qualifiedFileName', () => {
   const slugs = ['fase-0', 'fase-10'];
   const modelo = { href: '/fase-0/modelo-cliente-servidor/', label: 'Modelo cliente-servidor' };
 
-  it('dentro de la misma fase, el nombre solo', () => {
+  it('within the same phase, the name alone', () => {
     expect(qualifiedFileName(sidebar, slugs, modelo, '/fase-0/que-es-un-protocolo/')).toBe(
       '01-modelo-cliente-servidor.md',
     );
   });
 
-  it('al cambiar de fase, con la carpeta delante', () => {
+  it('when changing phase, with the folder in front', () => {
     expect(qualifiedFileName(sidebar, slugs, modelo, '/fase-10/')).toBe(
       'fase-0/01-modelo-cliente-servidor.md',
     );
@@ -252,7 +252,7 @@ describe('qualifiedFileName', () => {
     ).toBe('fase-10/00-introduccion.md');
   });
 
-  it('desde una página fuera de las fases (la portada), también con la carpeta', () => {
+  it('from a page outside the phases (the home page), also with the folder', () => {
     expect(qualifiedFileName(sidebar, slugs, modelo, '/')).toBe(
       'fase-0/01-modelo-cliente-servidor.md',
     );
@@ -260,13 +260,13 @@ describe('qualifiedFileName', () => {
 });
 
 describe('folderOpenByDefault', () => {
-  it('dentro de una fase, solo su carpeta', () => {
+  it('inside a phase, only its folder', () => {
     expect(folderOpenByDefault('fase-0', 'fase-0', 'fase-0')).toBe(true);
     expect(folderOpenByDefault('fase-1', 'fase-0', 'fase-0')).toBe(false);
     expect(folderOpenByDefault('fase-0', 'fase-1', 'fase-0')).toBe(false);
   });
 
-  it('fuera de las fases (portada, glosario), la primera publicada', () => {
+  it('outside the phases (home, glossary), the first published one', () => {
     expect(folderOpenByDefault('fase-0', undefined, 'fase-0')).toBe(true);
     expect(folderOpenByDefault('fase-1', undefined, 'fase-0')).toBe(false);
   });
@@ -275,11 +275,11 @@ describe('folderOpenByDefault', () => {
 describe('unexpectedSidebarEntries', () => {
   const phaseGroup = sidebar.filter((entry) => entry.type === 'group');
 
-  it('un menú hecho solo de fases está bien', () => {
+  it('a menu made only of phases is fine', () => {
     expect(unexpectedSidebarEntries(phaseGroup, ['fase-0', 'fase-10'])).toEqual([]);
   });
 
-  it('un enlace suelto o un grupo que no es una fase no se pintarían en el explorador', () => {
+  it('a loose link or a group that is not a phase would not be drawn in the explorer', () => {
     const extra: ExplorerEntry[] = [
       link('Roadmap', '/roadmap/'),
       ...phaseGroup,
@@ -288,7 +288,7 @@ describe('unexpectedSidebarEntries', () => {
     expect(unexpectedSidebarEntries(extra, ['fase-0', 'fase-10'])).toEqual(['Roadmap', 'Extras']);
   });
 
-  it('un grupo vacío (la fase aún sin traducir en este idioma) no molesta', () => {
+  it('an empty group (the phase not yet translated into this language) is not a problem', () => {
     expect(
       unexpectedSidebarEntries([{ type: 'group', label: 'Phase 1', entries: [] }], ['phase-1']),
     ).toEqual([]);

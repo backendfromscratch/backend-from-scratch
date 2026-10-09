@@ -18,30 +18,30 @@ function steps(state: LabState, n: number): LabState {
   return s;
 }
 
-/** Avanza hasta el final. Falla si no termina en 100 pasos. */
+/** Advances to the end. Fails if it does not finish within 100 steps. */
 function finish(state: LabState): LabState {
   let s = state;
   for (let i = 0; i < 100 && !s.done; i++) s = reduce(s, { type: 'step' });
-  if (!s.done) throw new Error('El laboratorio no termina');
+  if (!s.done) throw new Error('The lab does not finish');
   return s;
 }
 
 function inTransit(state: LabState): Segment[] {
   return state.network.map((id) => {
     const row = state.rows.find((r) => r.id === id);
-    if (row?.kind !== 'segment') throw new Error(`No hay segmento ${id}`);
+    if (row?.kind !== 'segment') throw new Error(`There is no segment ${id}`);
     return row.segment;
   });
 }
 
-/** Pierde el primer segmento en tránsito que cumpla la condición. */
+/** Loses the first segment in transit that meets the condition. */
 function lose(state: LabState, match: (segment: Segment) => boolean): LabState {
   const segment = inTransit(state).find(match);
-  if (!segment) throw new Error('No hay ningún segmento así en tránsito');
+  if (!segment) throw new Error('There is no such segment in transit');
   return reduce(state, { type: 'lose', id: segment.id });
 }
 
-/** Un segmento en texto corto: «C SYN seq=100», «S ACK ack=107», «C "todo " seq=107 ack=501 R». */
+/** A segment in short text: «C SYN seq=100», «S ACK ack=107», «C "todo " seq=107 ack=501 R». */
 function brief(segment: Segment): string {
   const who = segment.from === 'client' ? 'C' : 'S';
   const pureAck = !segment.syn && segment.payload === undefined;
@@ -57,7 +57,7 @@ function brief(segment: Segment): string {
   return `${who} ${what}${seq}${ack}${segment.retransmission ? ' R' : ''}`;
 }
 
-/** La historia de la escalera: segmentos en texto corto y temporizadores como «⏱ client». */
+/** The ladder history: segments in short text and timers like «⏱ client». */
 const history = (state: LabState) =>
   state.rows.map((row) => (row.kind === 'segment' ? brief(row.segment) : `⏱ ${row.side}`));
 
@@ -66,8 +66,8 @@ const isClientAck = (segment: Segment) =>
   segment.from === 'client' && !segment.syn && segment.payload === undefined;
 const timeouts = (state: LabState) => state.rows.filter((row) => row.kind === 'timeout').length;
 
-describe('modo TCP sin pérdidas', () => {
-  it('abre la conexión con SYN, SYN-ACK y ACK', () => {
+describe('TCP mode without losses', () => {
+  it('opens the connection with SYN, SYN-ACK and ACK', () => {
     const s = steps(start(), 4);
     expect(history(s)).toEqual(['C SYN seq=100', 'S SYN-ACK seq=500 ack=101', 'C ACK ack=501']);
     expect(s.client.state).toBe('ESTABLISHED');
@@ -75,7 +75,7 @@ describe('modo TCP sin pérdidas', () => {
     expect(s.narration).toEqual({ key: 'server-receives-ack' });
   });
 
-  it('envía los datos con el seq de sus bytes y los entrega en orden', () => {
+  it('sends the data with the seq of its bytes and delivers it in order', () => {
     const s = finish(start());
     expect(history(s)).toEqual([
       'C SYN seq=100',
@@ -95,7 +95,7 @@ describe('modo TCP sin pérdidas', () => {
     expect(s.server.buffered).toEqual([]);
   });
 
-  it('cada paso cuenta una sola cosa', () => {
+  it('each step tells only one thing', () => {
     let s = start();
     const keys: string[] = [];
     while (!s.done) {
@@ -117,7 +117,7 @@ describe('modo TCP sin pérdidas', () => {
     ]);
   });
 
-  it('marca los cambios de estado en la fila que los provoca', () => {
+  it('marks the state changes on the row that causes them', () => {
     const s = steps(start(), 4);
     const changes = s.rows.map((row) => (row.kind === 'segment' ? row.changes : []));
     expect(changes).toEqual([
@@ -130,14 +130,14 @@ describe('modo TCP sin pérdidas', () => {
     ]);
   });
 
-  it('usa los bytes de los datos de cada idioma', () => {
+  it('uses the bytes of the data of each language', () => {
     const en = initialState('tcp', { ...config, payloads: ['Hi, ', 'how are ', 'you?'] });
     const acks = history(finish(en)).filter((line) => line.startsWith('S ACK'));
     expect(acks).toEqual(['S ACK ack=105', 'S ACK ack=113', 'S ACK ack=117']);
   });
 });
 
-/** Qué se pierde, en qué paso y cómo reconocerlo en tránsito. */
+/** What is lost, at which step and how to recognise it in transit. */
 const losses: [string, number, (segment: Segment) => boolean][] = [
   ['el SYN', 1, (g) => g.syn && g.ack === undefined],
   ['el SYN-ACK', 2, (g) => g.syn && g.ack !== undefined],
@@ -148,7 +148,7 @@ const losses: [string, number, (segment: Segment) => boolean][] = [
   ['un ACK de datos', 6, (g) => g.from === 'server' && g.ack === 107],
 ];
 
-describe('pérdidas en TCP: siempre se acaba entregando todo, en orden', () => {
+describe('losses in TCP: everything always ends up delivered, in order', () => {
   it.each(losses)('si se pierde %s', (_, at, match) => {
     const s = finish(lose(steps(start(), at), match));
     expect(s.server.delivered).toBe('Hola, todo bien');
@@ -157,7 +157,7 @@ describe('pérdidas en TCP: siempre se acaba entregando todo, en orden', () => {
     expect(s.rows.some((row) => row.kind === 'segment' && row.fate === 'lost')).toBe(true);
   });
 
-  it('si se pierde un reenvío', () => {
+  it('if a retransmission is lost', () => {
     let s = lose(steps(start(), 5), isData('todo '));
     while (!inTransit(s).some((g) => g.retransmission)) s = steps(s, 1);
     s = finish(lose(s, (g) => g.retransmission));
@@ -165,7 +165,7 @@ describe('pérdidas en TCP: siempre se acaba entregando todo, en orden', () => {
     expect(timeouts(s)).toBe(2);
   });
 
-  it('si se pierde el mismo reenvío muchas veces, termina en cuanto deja de perderse', () => {
+  it('if the same retransmission is lost many times, it finishes as soon as it stops being lost', () => {
     let s = lose(steps(start(), 5), isData('todo '));
     for (let i = 0; i < 5; i++) {
       while (!inTransit(s).some((g) => g.retransmission)) s = steps(s, 1);
@@ -176,7 +176,7 @@ describe('pérdidas en TCP: siempre se acaba entregando todo, en orden', () => {
     expect(timeouts(s)).toBe(6);
   });
 
-  it('si se pierden los tres segmentos de datos a la vez', () => {
+  it('if the three data segments are lost at once', () => {
     let s = steps(start(), 5);
     for (const payload of config.payloads) s = lose(s, isData(payload));
     s = finish(s);
@@ -185,9 +185,9 @@ describe('pérdidas en TCP: siempre se acaba entregando todo, en orden', () => {
   });
 });
 
-describe('narración', () => {
-  // Si dos pasos seguidos dijeran lo mismo, «Siguiente paso» parecería no hacer nada,
-  // y la región aria-live no anunciaría el segundo.
+describe('narration', () => {
+  // If two consecutive steps said the same thing, «Siguiente paso» would seem to do nothing,
+  // and the aria-live region would not announce the second.
   it.each(losses)(
     'si se pierde %s, dos pasos seguidos nunca cuentan exactamente lo mismo',
     (_, at, match) => {
@@ -203,8 +203,8 @@ describe('narración', () => {
   );
 });
 
-describe('casos concretos de TCP', () => {
-  it('si se pierde el ACK del handshake, el primer dato completa la conexión', () => {
+describe('specific TCP cases', () => {
+  it('if the handshake ACK is lost, the first data completes the connection', () => {
     let s = lose(steps(start(), 3), isClientAck);
     expect(s.server.state).toBe('SYN_RECEIVED');
     s = steps(s, 1);
@@ -222,7 +222,7 @@ describe('casos concretos de TCP', () => {
     expect(row?.kind === 'segment' && row.changes).toEqual([{ side: 'server', to: 'ESTABLISHED' }]);
   });
 
-  it('si se pierde el 2.º dato, el servidor guarda el 3.º y el reenvío completa el texto', () => {
+  it('if the 2nd data is lost, the server stores the 3rd and the retransmission completes the text', () => {
     let s = lose(steps(start(), 5), isData('todo '));
     s = steps(s, 1);
     expect(s.server.delivered).toBe('Hola, ');
@@ -254,7 +254,7 @@ describe('casos concretos de TCP', () => {
     expect(s.server.delivered).toBe('Hola, todo bien');
   });
 
-  it('si se pierde el SYN-ACK, el cliente reenvía el SYN y el servidor repite el SYN-ACK', () => {
+  it('if the SYN-ACK is lost, the client resends the SYN and the server repeats the SYN-ACK', () => {
     let s = lose(steps(start(), 2), (g) => g.syn && g.ack !== undefined);
     s = steps(s, 1);
     expect(s.narration).toEqual({ key: 'client-timeout-syn', seq: 100 });
@@ -263,7 +263,7 @@ describe('casos concretos de TCP', () => {
     expect(inTransit(s).map(brief)).toEqual(['S SYN-ACK seq=500 ack=101 R']);
   });
 
-  it('si se pierden el ACK del handshake y los tres datos, el servidor repite el SYN-ACK', () => {
+  it('if the handshake ACK and the three data are lost, the server repeats the SYN-ACK', () => {
     let s = steps(lose(steps(start(), 3), isClientAck), 1);
     for (const payload of config.payloads) s = lose(s, isData(payload));
     s = steps(s, 1);
@@ -276,7 +276,7 @@ describe('casos concretos de TCP', () => {
     expect(finish(s).server.delivered).toBe('Hola, todo bien');
   });
 
-  it('si se pierde el último ACK, el servidor descarta el reenvío y repite el ACK', () => {
+  it('if the last ACK is lost, the server discards the retransmission and repeats the ACK', () => {
     let s = lose(steps(start(), 8), (g) => g.from === 'server' && g.ack === 116);
     s = steps(s, 3);
     expect(s.narration).toEqual({ key: 'client-timeout-data', seq: 112 });
@@ -286,46 +286,46 @@ describe('casos concretos de TCP', () => {
   });
 });
 
-describe('modo UDP', () => {
-  it('sin pérdidas, la aplicación lo recibe todo, sin handshake ni ACK', () => {
+describe('UDP mode', () => {
+  it('without losses, the application receives everything, with no handshake or ACK', () => {
     const s = finish(start('udp'));
     expect(history(s)).toEqual(['C "Hola, "', 'C "todo "', 'C "bien"']);
     expect(s.server.delivered).toBe('Hola, todo bien');
     expect(s.step).toBe(4);
   });
 
-  it('si se pierde un datagrama, no vuelve', () => {
+  it('if a datagram is lost, it does not come back', () => {
     const s = finish(lose(steps(start('udp'), 1), isData('todo ')));
     expect(s.server.delivered).toBe('Hola, bien');
     expect(timeouts(s)).toBe(0);
     expect(history(s)).toEqual(['C "Hola, "', 'C "todo "', 'C "bien"']);
   });
 
-  it('si se pierde el último datagrama en tránsito, termina al momento', () => {
+  it('if the last datagram in transit is lost, it finishes immediately', () => {
     const s = lose(steps(start('udp'), 3), isData('bien'));
     expect(s.done).toBe(true);
     expect(s.server.delivered).toBe('Hola, todo ');
   });
 });
 
-describe('reglas generales', () => {
-  it('perder un segmento que ya no está en tránsito no cambia nada', () => {
+describe('general rules', () => {
+  it('losing a segment that is no longer in transit changes nothing', () => {
     const s = steps(start(), 2);
     const synId = s.rows[0]!.id;
     expect(reduce(s, { type: 'lose', id: synId })).toBe(s);
   });
 
-  it('después del final, «step» no cambia nada', () => {
+  it('after the end, «step» changes nothing', () => {
     const s = finish(start());
     expect(reduce(s, { type: 'step' })).toBe(s);
   });
 
-  it('«reset» vuelve al estado inicial del modo elegido', () => {
+  it('«reset» returns to the initial state of the chosen mode', () => {
     const s = steps(start(), 5);
     expect(reduce(s, { type: 'reset', mode: 'udp' })).toEqual(start('udp'));
   });
 
-  it('no modifica el estado que recibe', () => {
+  it('does not modify the state it receives', () => {
     const s = steps(start(), 5);
     const copy = structuredClone(s);
     reduce(s, { type: 'step' });
@@ -334,7 +334,7 @@ describe('reglas generales', () => {
     expect(s).toEqual(copy);
   });
 
-  it('cuenta bytes, no caracteres', () => {
+  it('counts bytes, not characters', () => {
     expect(byteLength('todo ')).toBe(5);
     expect(byteLength('¿qué ')).toBe(7);
   });

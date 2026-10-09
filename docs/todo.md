@@ -17,7 +17,7 @@ The code has been on GitHub since 2026-10-09: `backendfromscratch/backend-from-s
 - [x] **Claude:** protect `main` and make the CI job mandatory ("format, types, tests and build"). Since the same day, "conventional commit title" is also mandatory (the PR title follows Conventional Commits), and merging is only possible with squash. Done on 2026-10-09: to merge a PR, the CI has to pass on the branch up to date with `main`; force pushes and deleting `main` are not allowed. Admins (you) can skip the rule with a direct push, but Cloudflare will deploy every push to `main`, so the normal way is to go through a PR.
 - [x] **Claude:** translate `CLAUDE.md` and `docs/` into English, with English file names (2026-10-09). The repository is in English; the site stays bilingual.
 - [x] **Claude:** keep only what is needed in `docs/` (2026-10-09): the executed plans, the routes spike and the spec of an already published lesson are deleted (they stay in the first commit, `3bcdc57`). Rule in `CLAUDE.md`, "Docs".
-- [ ] **Claude:** translate the source code into English: code comments, test names, and build and SEO audit messages. Its own PR, after the docs one. Spanish site content (lessons, glossary, UI strings, routes) stays as it is.
+- [x] **Claude:** translate the source code into English: code comments, test names, and build and SEO audit messages (2026-10-09). Spanish site content (lessons, glossary, UI strings, routes) stays as it is.
 
 ### 2. Unblock Phase 1
 

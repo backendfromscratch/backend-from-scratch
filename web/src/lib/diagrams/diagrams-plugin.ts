@@ -1,8 +1,8 @@
 /**
- * Plugin de Sätteri (el procesador de Markdown de Astro 7): cambia cada bloque ```mermaid por su
- * diagrama en HTML (secuencias o cadenas). Sin JavaScript en el navegador, con el texto en el HTML
- * (lo leen los buscadores y los lectores de pantalla) y con los colores del tema. Un diagrama que
- * no se sabe dibujar hace fallar el build. Lo registra src/integrations/diagrams.ts.
+ * Sätteri plugin (Astro 7's Markdown processor): replaces each ```mermaid block with its diagram
+ * as HTML (sequences or chains). No JavaScript in the browser, with the text in the HTML (search
+ * engines and screen readers read it) and using the theme colors. A diagram that cannot be drawn
+ * fails the build. Registered by src/integrations/diagrams.ts.
  */
 import { fileURLToPath } from 'node:url';
 import { parseChain, renderChain } from './chain';
@@ -15,11 +15,11 @@ export function diagramFromMermaid(source: string): HastElement {
   if (kind === 'sequenceDiagram') return renderSequence(parseSequence(source));
   if (kind === 'flowchart TB') return renderChain(parseChain(source));
   throw new Error(
-    `Tipo de diagrama no admitido: «${kind}». Admitidos: sequenceDiagram y flowchart TB.`,
+    `Unsupported diagram type: «${kind}». Supported: sequenceDiagram and flowchart TB.`,
   );
 }
 
-/** Lo que el plugin necesita de un nodo de código de mdast. */
+/** What the plugin needs from an mdast code node. */
 interface CodeNode {
   lang?: string | null;
   value: string;
@@ -29,16 +29,16 @@ interface CodeNode {
 export function satteriDiagrams() {
   return {
     name: 'diagrams',
-    // Con posiciones, el error dice en qué línea está el diagrama que no se sabe dibujar.
+    // With positions, the error says which line holds the diagram that cannot be drawn.
     options: { position: true },
     code(node: Readonly<CodeNode>, context: { readonly fileURL: URL | undefined }) {
       if (node.lang !== 'mermaid') return undefined;
       try {
-        // Un nodo html se inserta tal cual, también en MDX (las llaves no se interpretan).
+        // An html node is inserted as is, in MDX too (braces are not interpreted).
         return { type: 'html' as const, value: toHtml(diagramFromMermaid(node.value)) };
       } catch (error) {
         const file = context.fileURL ? fileURLToPath(context.fileURL) : '?';
-        // El bloque abre en `start`; la línea k del diagrama está en start + k.
+        // The block opens at `start`; line k of the diagram is at start + k.
         const start = node.position?.start.line;
         const offset = error instanceof DiagramError ? (error.line ?? 0) : 0;
         const line = start === undefined ? '?' : start + offset;

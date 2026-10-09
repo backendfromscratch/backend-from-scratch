@@ -1,9 +1,9 @@
-/** Convierte el estado del laboratorio en frases: la narración de cada paso y el aviso del final. */
+/** Turns the lab state into sentences: the narration of each step and the notice at the end. */
 import { fill } from '../../lib/fill';
 import type { LabState, Narration } from './machine';
 import type { Strings } from './strings';
 
-/** Un texto entre las comillas del idioma: «Hola, » o “Hi, ”. */
+/** A text between the quotes of the language: «Hola, » or “Hi, ”. */
 export function quote(t: Strings, text: string): string {
   return `${t.quoteOpen}${text}${t.quoteClose}`;
 }
@@ -18,7 +18,7 @@ export function narrate(t: Strings, narration: Narration): string {
     : sentence;
 }
 
-/** El aviso del final, o null si aún no ha terminado. */
+/** The notice at the end, or null if it has not finished yet. */
 export function doneMessage(t: Strings, state: LabState): string | null {
   if (!state.done) return null;
   const text = state.server.delivered === '' ? t.nothing : quote(t, state.server.delivered);

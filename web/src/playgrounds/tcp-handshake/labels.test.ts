@@ -12,7 +12,7 @@ const segment = (fields: Partial<Segment>): Segment => ({
   ...fields,
 });
 
-describe('segmentTitle y segmentDetail', () => {
+describe('segmentTitle and segmentDetail', () => {
   it('SYN', () => {
     const syn = segment({ syn: true, seq: 100 });
     expect(segmentTitle(syn, es)).toBe('SYN seq=100');
@@ -25,13 +25,13 @@ describe('segmentTitle y segmentDetail', () => {
     expect(segmentDetail(synAck)).toBe('ack=101');
   });
 
-  it('un ACK sin datos no enseña su seq', () => {
+  it('an ACK without data does not show its seq', () => {
     const ack = segment({ seq: 101, ack: 501 });
     expect(segmentTitle(ack, es)).toBe('ACK');
     expect(segmentDetail(ack)).toBe('ack=501');
   });
 
-  it('datos, con sus bytes y las comillas del idioma', () => {
+  it('data, with its bytes and the quotes of the language', () => {
     expect(segmentTitle(segment({ seq: 101, ack: 501, payload: 'Hola, ' }), es)).toBe(
       'seq=101 · «Hola, » (6 bytes)',
     );
@@ -40,7 +40,7 @@ describe('segmentTitle y segmentDetail', () => {
     );
   });
 
-  it('un datagrama UDP no tiene seq ni ack', () => {
+  it('a UDP datagram has no seq or ack', () => {
     const datagram = segment({ payload: 'Hola, ' });
     expect(segmentTitle(datagram, es)).toBe('«Hola, » (6 bytes)');
     expect(segmentDetail(datagram)).toBeNull();
@@ -48,14 +48,14 @@ describe('segmentTitle y segmentDetail', () => {
 });
 
 describe('segmentSummary', () => {
-  it('junta título, ack y reenvío', () => {
+  it('joins title, ack and retransmission', () => {
     const resent = segment({ seq: 107, ack: 501, payload: 'todo ', retransmission: true });
     expect(segmentSummary(resent, es)).toBe('seq=107 · «todo » (5 bytes), ack=501, reenvío');
   });
 });
 
 describe('rowDescription', () => {
-  it('lee una fila de segmento entera, con sus cambios de estado', () => {
+  it('reads a whole segment row, with its state changes', () => {
     const row = {
       kind: 'segment' as const,
       id: 1,
@@ -71,7 +71,7 @@ describe('rowDescription', () => {
     );
   });
 
-  it('lee una fila de temporizador', () => {
+  it('reads a timer row', () => {
     expect(rowDescription({ kind: 'timeout', id: 9, side: 'server' }, 4, es)).toBe(
       '4. Vence el temporizador del servidor.',
     );
@@ -79,13 +79,13 @@ describe('rowDescription', () => {
 });
 
 describe('loseLabel', () => {
-  it('en TCP habla de segmentos', () => {
+  it('in TCP it talks about segments', () => {
     expect(loseLabel(segment({ syn: true, seq: 100 }), 1, 'tcp', es)).toBe(
       'Perder el segmento 1: SYN seq=100',
     );
   });
 
-  it('en UDP habla de datagramas', () => {
+  it('in UDP it talks about datagrams', () => {
     expect(loseLabel(segment({ payload: 'bien' }), 3, 'udp', es)).toBe(
       'Perder el datagrama 3: «bien» (4 bytes)',
     );

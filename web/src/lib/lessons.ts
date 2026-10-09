@@ -3,23 +3,23 @@ import { phaseFolderName } from './explorer';
 import { defaultLocale, type Locale } from './locales';
 
 /**
- * Una lección es cualquier página dentro de la carpeta de una fase que no sea su introducción:
- * "fase-0/que-es-dns" y "en/phase-0/what-is-dns" sí; "fase-0", "roadmap" y "en/glossary" no.
+ * A lesson is any page inside a phase folder that is not its introduction:
+ * "fase-0/que-es-dns" and "en/phase-0/what-is-dns" yes; "fase-0", "roadmap" and "en/glossary" no.
  */
 export function isLessonId(entryId: string): boolean {
   return /^(?:fase-\d+|en\/phase-\d+)\/[^/]+$/.test(entryId);
 }
 
 /**
- * El número de fase de una lección o de la introducción de una fase: "fase-0/que-es-dns" → 0,
- * "en/phase-1" → 1. Fuera de las fases ("glosario", "en/glossary"), ninguno.
+ * The phase number of a lesson or a phase introduction: "fase-0/que-es-dns" → 0,
+ * "en/phase-1" → 1. Outside the phases ("glosario", "en/glossary"), none.
  */
 export function phaseNumberOf(entryId: string): number | undefined {
   const match = /^(?:fase|en\/phase)-(\d+)(?:\/[^/]+)?$/.exec(entryId);
   return match ? Number(match[1]) : undefined;
 }
 
-/** Lecciones publicadas de una fase en un idioma (sin contar la introducción). */
+/** Published lessons of a phase in a language (not counting the introduction). */
 export function countLessons(
   entryIds: readonly string[],
   locale: Locale,
@@ -31,8 +31,8 @@ export function countLessons(
 }
 
 /**
- * Una fase está publicada en un idioma si está disponible y su introducción existe en ese idioma.
- * Una fase solo en español no está publicada en inglés: su enlace en /en/ daría 404.
+ * A phase is published in a language if it is available and its introduction exists in that language.
+ * A Spanish-only phase is not published in English: its link under /en/ would 404.
  */
 export function isPhasePublished(
   entryIds: readonly string[],

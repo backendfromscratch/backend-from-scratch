@@ -1,4 +1,4 @@
-/** Textos del playground crypto-keys en los dos idiomas. Los huecos {así} se rellenan en CryptoKeys.tsx. */
+/** Texts of the crypto-keys playground in both languages. The {like this} placeholders are filled in CryptoKeys.tsx. */
 import type { Locale } from '../../lib/locales';
 
 const es = {

@@ -7,13 +7,13 @@ import { strings } from './strings';
 import './tcp-handshake.css';
 
 interface Props {
-  /** Idioma de la lección donde se usa. */
+  /** Language of the lesson where it is used. */
   lang: Locale;
 }
 
 const modes: Mode[] = ['tcp', 'udp'];
 
-/** Laboratorio: el handshake de TCP, sus ACK y reenvíos, y el contraste con UDP. Spec: docs/specs/2026-10-03-tcp-lab-design.md */
+/** Lab: the TCP handshake, its ACKs and retransmissions, and the contrast with UDP. Spec: docs/specs/2026-10-03-tcp-lab-design.md */
 export default function TcpHandshake({ lang }: Props) {
   const t = strings[lang];
   const config: LabConfig = {
@@ -27,7 +27,7 @@ export default function TcpHandshake({ lang }: Props) {
   const resetRef = useRef<HTMLButtonElement>(null);
   const focusAfterLose = useRef(false);
 
-  // «Perder» desaparece al pulsarlo: el foco pasa a «Siguiente paso», o a «Reiniciar» si ya ha terminado.
+  // «Perder» disappears when pressed: focus moves to «Siguiente paso», or to «Reiniciar» if it has finished.
   useEffect(() => {
     if (!focusAfterLose.current) return;
     focusAfterLose.current = false;

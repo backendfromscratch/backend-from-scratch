@@ -1,4 +1,4 @@
-/** Un error de un diagrama. `line` es la línea del bloque (desde 1) cuando el problema está en una línea concreta. */
+/** A diagram error. `line` is the line within the block (from 1) when the problem is on a specific line. */
 export class DiagramError extends Error {
   line: number | undefined;
 

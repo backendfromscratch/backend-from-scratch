@@ -1,7 +1,7 @@
 import type { Phase } from '../data/phases';
 import { isLocale, type Locale } from './locales';
 
-/** Subconjunto estructural de las entradas del sidebar de Starlight que usa el explorador. */
+/** Structural subset of the Starlight sidebar entries that the explorer uses. */
 export interface ExplorerLink {
   type: 'link';
   label: string;
@@ -17,7 +17,7 @@ export type ExplorerEntry = ExplorerLink | ExplorerGroup;
 
 export interface LessonPosition {
   phaseSlug: string;
-  /** Posición dentro de la fase: 0 es la introducción. */
+  /** Position within the phase: 0 is the introduction. */
   index: number;
   links: ExplorerLink[];
 }
@@ -32,10 +32,10 @@ export function toKebab(text: string): string {
     .replace(/^-+|-+$/g, '');
 }
 
-/** «Qué es un protocolo», 2 → «02-que-es-un-protocolo.md». Sin posición: «glosario.md». */
+/** «Qué es un protocolo», 2 → «02-que-es-un-protocolo.md». Without a position: «glosario.md». */
 export function toFileName(label: string, position?: number): string {
   const name = toKebab(label);
-  if (!name) throw new Error(`[explorer] «${label}» no da para un nombre de fichero`);
+  if (!name) throw new Error(`[explorer] «${label}» cannot be turned into a file name`);
   const prefix = position === undefined ? '' : `${String(position).padStart(2, '0')}-`;
   return `${prefix}${name}.md`;
 }
@@ -52,7 +52,7 @@ function flattenLinks(entries: readonly ExplorerEntry[]): ExplorerLink[] {
   );
 }
 
-/** Los enlaces del grupo de una fase, en orden. Se reconoce por «/<slug>/» en sus URLs. */
+/** The links of a phase's group, in order. Recognised by «/<slug>/» in their URLs. */
 export function findPhaseLinks(
   sidebar: readonly ExplorerEntry[],
   phaseSlug: string,
@@ -78,15 +78,15 @@ export function locateCurrent(
   return undefined;
 }
 
-/** La etiqueta que el sidebar da a un href (en el idioma de la página), si está en el sidebar. */
+/** The label the sidebar gives an href (in the page's language), if it is in the sidebar. */
 export function linkLabel(sidebar: readonly ExplorerEntry[], href: string): string | undefined {
   return flattenLinks(sidebar).find((l) => l.href === href)?.label;
 }
 
 /**
- * Nombre de fichero de cualquier enlace: con posición si está dentro de una fase. Usa la etiqueta
- * del sidebar para ese href (la misma que muestran el explorador y la paginación); `link.label`
- * solo se usa si el href no está en el sidebar.
+ * File name of any link: with a position if it is inside a phase. Uses the sidebar's
+ * label for that href (the same one the explorer and the pagination show); `link.label`
+ * is only used if the href is not in the sidebar.
  */
 export function fileNameFor(
   sidebar: readonly ExplorerEntry[],
@@ -106,7 +106,7 @@ export interface CurrentLesson {
   position: LessonPosition;
 }
 
-/** La fase y la posición de la página actual, si está dentro de una fase. */
+/** The phase and position of the current page, if it is inside a phase. */
 export function currentLesson(
   sidebar: readonly ExplorerEntry[],
   phases: readonly Phase[],
@@ -123,7 +123,7 @@ export type StatusStep =
   | { key: 'status.lesson'; n: number; total: number }
   | { key: 'status.lessonNoTotal'; n: number };
 
-/** Qué dice la barra de estado sobre la página actual: «introducción», «lección 2/8» o «lección 2». */
+/** What the status bar says about the current page: «introducción», «lección 2/8» or «lección 2». */
 export function statusStep(current: CurrentLesson): StatusStep {
   const { index } = current.position;
   const total = current.phase.lessonCount;
@@ -133,17 +133,17 @@ export function statusStep(current: CurrentLesson): StatusStep {
     : { key: 'status.lessonNoTotal', n: index };
 }
 
-/** Las portadas: '' o 'index' (español, en la raíz) y 'en'. */
+/** The home pages: '' or 'index' (Spanish, at the root) and 'en'. */
 const isHomeId = (routeId: string) => routeId === '' || routeId === 'index' || isLocale(routeId);
 
-/** La portada como fichero. No es README.md: a quien no programa, README no le dice nada. */
+/** The home page as a file. Not README.md: README means nothing to someone who does not program. */
 const HOME_FILE: Record<Locale, string> = { es: 'inicio.md', en: 'home.md' };
 
 export function homeFileName(locale: Locale): string {
   return HOME_FILE[locale];
 }
 
-/** Nombre de fichero de la página actual: inicio.md / home.md para las portadas. */
+/** File name of the current page: inicio.md / home.md for the home pages. */
 export function pageFileName(routeId: string, title: string, position?: LessonPosition): string {
   if (position) return toFileName(position.links[position.index]!.label, position.index);
   if (isHomeId(routeId)) return homeFileName(isLocale(routeId) ? routeId : 'es');
@@ -151,8 +151,8 @@ export function pageFileName(routeId: string, title: string, position?: LessonPo
 }
 
 /**
- * Cuánto desplazar el árbol del explorador para que se vea el fichero abierto, como hace un
- * editor: nada si ya se ve entero; si no, lo centra.
+ * How far to scroll the explorer tree so the open file is visible, as an
+ * editor does: nothing if it is already fully visible; otherwise, center it.
  */
 export function revealScrollTop(
   view: { scrollTop: number; height: number },
@@ -164,15 +164,15 @@ export function revealScrollTop(
   return Math.max(0, item.top - (view.height - item.height) / 2);
 }
 
-/** La carpeta de fase de un enlace («/fase-0/que-es-dns/» → «fase-0»), o ninguna. */
+/** The phase folder of a link («/fase-0/que-es-dns/» → «fase-0»), or none. */
 export function phaseSlugOf(href: string, phaseSlugs: readonly string[]): string | undefined {
   return phaseSlugs.find((slug) => href.includes(`/${slug}/`));
 }
 
 /**
- * El nombre de fichero de un enlace visto desde la página `currentHref`: el nombre solo si está en
- * la misma fase y, si no, con su carpeta delante («fase-1/00-introduccion.md»), como en un editor
- * cuando dos ficheros se llaman parecido. Lo usan la paginación y los requisitos de una lección.
+ * The file name of a link seen from the page `currentHref`: the name alone if it is in
+ * the same phase and, if not, with its folder in front («fase-1/00-introduccion.md»), as in an editor
+ * when two files have similar names. Used by the pagination and a lesson's prerequisites.
  */
 export function qualifiedFileName(
   sidebar: readonly ExplorerEntry[],
@@ -188,8 +188,8 @@ export function qualifiedFileName(
 }
 
 /**
- * Qué carpeta de fase abre el explorador al llegar: dentro de una fase, solo la suya; fuera (portada,
- * glosario…), la primera publicada. Las que el lector haya abierto o plegado se recuerdan aparte.
+ * Which phase folder the explorer opens on arrival: inside a phase, only its own; outside (home,
+ * glossary…), the first published one. Those the reader has opened or collapsed are remembered separately.
  */
 export function folderOpenByDefault(
   phaseSlug: string,
@@ -200,9 +200,9 @@ export function folderOpenByDefault(
 }
 
 /**
- * Lo que hay en el menú de Starlight y el explorador no pintaría: enlaces sueltos y grupos con
- * páginas fuera de las fases. El explorador solo sabe de la portada y de las fases; si aparece otra
- * cosa (alguien la añade a la configuración), el build tiene que fallar en vez de esconderla.
+ * What is in the Starlight menu that the explorer would not draw: loose links and groups with
+ * pages outside the phases. The explorer only knows about the home page and the phases; if anything else
+ * shows up (someone adds it to the configuration), the build must fail instead of hiding it.
  */
 export function unexpectedSidebarEntries(
   sidebar: readonly ExplorerEntry[],

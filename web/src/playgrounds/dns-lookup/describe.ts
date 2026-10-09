@@ -1,35 +1,35 @@
-/** Convierte el recorrido y el resultado en frases del idioma de la página. */
+/** Turns the path and the result into sentences in the page's language. */
 import { fill } from '../../lib/fill';
 import type { DnsRecord, LookupResult, PathStep } from './dns';
 import { RESOLVER } from './resolver';
 import type { Strings } from './strings';
 
-/** «la raíz», «.com» (un TLD, con su punto) o el nombre de la zona tal cual. */
+/** “the root”, “.com” (a TLD, with its dot) or the zone name as is. */
 export function zoneLabel(zone: string, t: Strings): string {
   if (zone === '.') return t.root;
   return zone.includes('.') ? zone : `.${zone}`;
 }
 
-/** El primer servidor y cuántos más hay: «a.root-servers.net y 12 más». */
+/** The first server and how many more there are: “a.root-servers.net and 12 more”. */
 export function serversLabel(servers: string[], t: Strings): string {
   const [first = '', ...rest] = servers;
   return rest.length === 0 ? first : fill(t.andMore, { first, n: rest.length });
 }
 
-/** El TTL más bajo: lo que dura en la caché la respuesta completa. */
+/** The lowest TTL: how long the complete answer lasts in the cache. */
 export function minTtl(records: DnsRecord[]): number {
   return Math.min(...records.map((record) => record.ttl));
 }
 
-/** Un valor legible: sin el punto final de los nombres (en MX, NS y CNAME), que parecería puntuación. */
+/** A readable value: without the trailing dot of names (in MX, NS and CNAME), which would look like punctuation. */
 function shownValue(record: DnsRecord): string {
   return ['MX', 'NS', 'CNAME'].includes(record.type) ? record.data.replace(/\.$/, '') : record.data;
 }
 
-/** La prioridad de un MX («5 gmail-smtp-in…» → 5): el servidor de correo con la más baja se prueba primero. */
+/** The priority of an MX (“5 gmail-smtp-in…” → 5): the mail server with the lowest is tried first. */
 const priority = (record: DnsRecord) => Number.parseInt(record.data, 10) || 0;
 
-/** Los valores de la respuesta (sin los CNAME, que se cuentan aparte), como mucho tres; los MX, por prioridad. */
+/** The answer's values (without the CNAMEs, which are counted separately), at most three; MX by priority. */
 function valuesLabel(records: DnsRecord[], t: Strings): string {
   const values = records.filter((record) => record.type !== 'CNAME');
   const sorted = [...values].sort((a, b) =>
@@ -47,8 +47,8 @@ export interface StepText {
 }
 
 /**
- * Quién pregunta, a quién y qué le responden en un paso del recorrido. `resolverAddress`: el resolver
- * que ha respondido (8.8.8.8 si Cloudflare no lo hizo).
+ * Who asks, whom and what they answer in a step of the path. `resolverAddress`: the resolver
+ * that answered (8.8.8.8 if Cloudflare did not).
  */
 export function stepText(
   step: PathStep,
@@ -80,7 +80,7 @@ export function stepText(
             : fill(t.final[step.outcome], { type: step.type });
         return { from: resolver, to, says };
       }
-      // Con un alias: el servidor lo dice y, si el destino está en su zona, también lo que hay detrás.
+      // With an alias: the server says so and, if the target is in its zone, also what is behind it.
       const { name, target, via } = step.alias;
       const alias =
         via.length > 0
@@ -131,7 +131,7 @@ export function stepText(
   }
 }
 
-/** Una frase con el resultado, para anunciarla al terminar la consulta. */
+/** A sentence with the result, to announce when the lookup finishes. */
 export function summary(result: LookupResult, t: Strings): string {
   const template =
     result.outcome === 'answer' && result.records.length === 1

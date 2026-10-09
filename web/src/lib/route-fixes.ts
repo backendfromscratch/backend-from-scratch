@@ -1,6 +1,6 @@
 /**
- * Correcciones puras de lo que Starlight deduce suponiendo que una traducción tiene la misma ruta
- * con otro prefijo de idioma. Las aplica src/routeData.ts.
+ * Pure corrections of what Starlight infers by assuming a translation has the same route
+ * with a different language prefix. Applied by src/routeData.ts.
  */
 import type { StarlightRouteData } from '@astrojs/starlight/route-data';
 import { localizedHref } from './links';
@@ -10,7 +10,7 @@ type SidebarEntry = StarlightRouteData['sidebar'][number];
 type SidebarLink = Extract<SidebarEntry, { type: 'link' }>;
 type HeadEntry = StarlightRouteData['head'][number];
 
-/** Quita del sidebar los enlaces que no cumplen `keep` y los grupos que se quedan vacíos. */
+/** Removes from the sidebar the links that fail `keep` and the groups that end up empty. */
 export function pruneSidebar(
   entries: readonly SidebarEntry[],
   keep: (href: string) => boolean,
@@ -26,7 +26,7 @@ function flatten(entries: readonly SidebarEntry[]): SidebarLink[] {
   return entries.flatMap((entry) => (entry.type === 'link' ? [entry] : flatten(entry.entries)));
 }
 
-/** Anterior y siguiente según el orden del sidebar, o undefined si la página no está en él. */
+/** Previous and next by sidebar order, or undefined if the page is not in it. */
 export function paginationFrom(
   entries: readonly SidebarEntry[],
 ): StarlightRouteData['pagination'] | undefined {
@@ -35,7 +35,7 @@ export function paginationFrom(
   return index === -1 ? undefined : { prev: links[index - 1], next: links[index + 1] };
 }
 
-/** Los hreflang de una página que existe en varios idiomas; x-default apunta al español. */
+/** The hreflangs of a page that exists in several languages; x-default points to Spanish. */
 export function alternateLinks(urls: Partial<Record<Locale, string>>, site: string): HeadEntry[] {
   const present = locales.filter((locale) => urls[locale] !== undefined);
   if (present.length < 2) return [];
@@ -49,7 +49,7 @@ export function alternateLinks(urls: Partial<Record<Locale, string>>, site: stri
   ];
 }
 
-/** A dónde lleva el selector de idioma: a la traducción o, si no la hay, a la portada del idioma. */
+/** Where the language selector leads: to the translation or, if there is none, to the language's home page. */
 export function languageTargets(urls: Partial<Record<Locale, string>>): Record<Locale, string> {
   return Object.fromEntries(
     locales.map((locale) => [locale, urls[locale] ?? localizedHref(locale)]),
@@ -57,16 +57,16 @@ export function languageTargets(urls: Partial<Record<Locale, string>>): Record<L
 }
 
 /**
- * Lo que se queda en el sidebar: los enlaces externos y las páginas que existen de verdad. Se van las
- * rutas internas que no existen, es decir, las copias de respaldo de Starlight.
+ * What stays in the sidebar: external links and pages that really exist. Internal routes that do
+ * not exist go, that is, Starlight's fallback copies.
  */
 export function keepSidebarLink(href: string, realUrls: ReadonlySet<string>): boolean {
   return !href.startsWith('/') || realUrls.has(href);
 }
 
 /**
- * La paginación de Starlight ya respeta `prev`/`next` del frontmatter. Solo se cambian los enlaces
- * que apuntan a una copia de respaldo, por el vecino en el sidebar limpio (o por nada).
+ * Starlight's pagination already respects the frontmatter's `prev`/`next`. Only the links
+ * that point to a fallback copy are changed, to the neighbour in the clean sidebar (or to nothing).
  */
 export function fixPagination(
   pagination: StarlightRouteData['pagination'],

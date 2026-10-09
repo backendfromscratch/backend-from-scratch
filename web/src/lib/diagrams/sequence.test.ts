@@ -11,7 +11,7 @@ const CLIENT_SERVER = `sequenceDiagram
     S-->>C: Respuesta: HTTP/1.1 200 OK<br/>«Hola desde mi servidor»`;
 
 describe('parseSequence', () => {
-  it('lee participantes, mensajes, respuestas y notas; el texto puede llevar «:»', () => {
+  it('reads participants, messages, replies and notes; the text may contain «:»', () => {
     expect(parseSequence(CLIENT_SERVER)).toEqual({
       participants: [
         { id: 'C', label: 'Navegador (cliente)' },
@@ -31,7 +31,7 @@ describe('parseSequence', () => {
     });
   });
 
-  it('una nota puede ir sobre dos participantes', () => {
+  it('a note can span two participants', () => {
     const seq = parseSequence(
       'sequenceDiagram\nparticipant N as Navegador\nparticipant S as Servidor\nNote over N,S: Todo va cifrado.',
     );
@@ -41,24 +41,21 @@ describe('parseSequence', () => {
   it.each([
     [
       'sequenceDiagram\nparticipant A as A\nparticipant B as B\nloop Cada segundo\nA->>B: hola\nend',
-      /Línea no admitida: «loop Cada segundo»/,
+      /Unsupported line: «loop Cada segundo»/,
     ],
-    [
-      'sequenceDiagram\nparticipant A as A\nparticipant C as C\nA->>B: hola',
-      /«B» no está declarado/,
-    ],
-    ['sequenceDiagram\nparticipant A as A\nparticipant B as B\nA->>A: hola', /a sí mismo/],
-    ['sequenceDiagram\nparticipant A as A\nparticipant A as Otra', /«A» está repetido/],
+    ['sequenceDiagram\nparticipant A as A\nparticipant C as C\nA->>B: hola', /«B» is not declared/],
+    ['sequenceDiagram\nparticipant A as A\nparticipant B as B\nA->>A: hola', /to itself/],
+    ['sequenceDiagram\nparticipant A as A\nparticipant A as Otra', /«A» is declared twice/],
     [
       `sequenceDiagram\n${'abcdefg'
         .split('')
         .map((id) => `participant ${id} as ${id}`)
         .join('\n')}\na->>b: hola`,
-      /como mucho 6 participantes/,
+      /At most 6 participants/,
     ],
-    ['sequenceDiagram\nparticipant A as A\nNote over A: sola', /al menos 2 participantes/],
-    ['sequenceDiagram\nparticipant A as A\nparticipant B as B', /no tiene ningún paso/],
-  ])('falla con un mensaje claro ante lo que no admite (%#)', (source, error) => {
+    ['sequenceDiagram\nparticipant A as A\nNote over A: sola', /At least 2 participants/],
+    ['sequenceDiagram\nparticipant A as A\nparticipant B as B', /has no steps/],
+  ])('fails with a clear message on unsupported input (%#)', (source, error) => {
     expect(() => parseSequence(source)).toThrow(error);
   });
 });
@@ -66,12 +63,12 @@ describe('parseSequence', () => {
 describe('renderSequence', () => {
   const figure = renderSequence(parseSequence(CLIENT_SERVER));
 
-  it('es una figura sin estilos de prosa, con una columna por participante', () => {
+  it('is a figure without prose styles, with one column per participant', () => {
     expect(figure.tagName).toBe('figure');
     expect(classList(figure)).toEqual(['seq', 'seq--n2', 'not-content']);
   });
 
-  it('los participantes van en la cabecera, ocultos al lector de pantalla (cada paso dice quién habla)', () => {
+  it('participants go in the header, hidden from screen readers (each step says who is talking)', () => {
     expect(findByClass(figure, 'seq__participants')[0]?.properties.ariaHidden).toBe('true');
     expect(findByClass(figure, 'seq__participant').map(textContent)).toEqual([
       'Navegador (cliente)',
@@ -79,7 +76,7 @@ describe('renderSequence', () => {
     ]);
   });
 
-  it('cada paso ocupa las columnas entre sus participantes y dice quién habla a quién', () => {
+  it('each step spans the columns between its participants and says who talks to whom', () => {
     const steps = findByClass(figure, 'seq__step');
     expect(steps.map(classList)).toEqual([
       ['seq__step', 'seq__step--note', 'seq-c2', 'seq-s1'],
@@ -93,28 +90,28 @@ describe('renderSequence', () => {
     ]);
   });
 
-  it('los saltos de línea del texto son <br>', () => {
+  it('line breaks in the text are <br>', () => {
     expect(textContent(findByClass(figure, 'seq__text')[2]!)).toBe(
       'Respuesta: HTTP/1.1 200 OK\n«Hola desde mi servidor»',
     );
   });
 });
 
-describe('parseSequence: la línea del error', () => {
+describe('parseSequence: the error line', () => {
   const errorOf = (source: string) => {
     try {
       parseSequence(source);
     } catch (error) {
       return error as DiagramError;
     }
-    throw new Error('no ha lanzado');
+    throw new Error('did not throw');
   };
 
-  it('un error de una línea dice cuál, contando desde la primera del bloque y con las vacías', () => {
+  it('a single-line error says which line, counting from the first of the block and including empty ones', () => {
     expect(errorOf('sequenceDiagram\n  participant A as A\n\n  loop x').line).toBe(4);
   });
 
-  it('un error de todo el diagrama no tiene línea', () => {
+  it('an error about the whole diagram has no line', () => {
     expect(errorOf('sequenceDiagram\nparticipant A as A').line).toBeUndefined();
   });
 });

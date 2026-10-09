@@ -6,10 +6,10 @@ import { describe, expect, it } from 'vitest';
 const src = fileURLToPath(new URL('../', import.meta.url));
 const config = readFileSync(join(src, 'content.config.ts'), 'utf8');
 
-/** Las claves de interfaz propias: las del `extend` del esquema i18n. */
+/** The own interface keys: those in the `extend` of the i18n schema. */
 const ownKeys = [...config.matchAll(/'([\w.]+)': z\.string\(\)/g)].map(([, key]) => key!);
 
-/** El código que puede usar una clave: componentes, páginas y librerías (no los textos ni los tests). */
+/** The code that can use a key: components, pages and libraries (not the texts or the tests). */
 function sources(dir: string): string[] {
   return readdirSync(dir).flatMap((name) => {
     const path = join(dir, name);
@@ -22,12 +22,12 @@ const code = sources(src)
   .map((path) => readFileSync(path, 'utf8'))
   .join('\n');
 
-describe('textos de interfaz propios', () => {
-  it('hay claves que comprobar', () => {
+describe('own interface strings', () => {
+  it('there are keys to check', () => {
     expect(ownKeys.length).toBeGreaterThan(10);
   });
 
-  it.each(ownKeys)('«%s» se usa en el código', (key) => {
+  it.each(ownKeys)('«%s» is used in the code', (key) => {
     expect(code).toContain(`'${key}'`);
   });
 });

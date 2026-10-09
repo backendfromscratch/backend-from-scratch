@@ -3,7 +3,7 @@ import { initialState, reduce, type LabState, type Narration } from './machine';
 import { doneMessage, narrate } from './narration';
 import { strings } from './strings';
 
-/** Una narración de ejemplo por clave. El tipo obliga a que estén todas. */
+/** One sample narration per key. The type forces all of them to be present. */
 const samples: { [K in Narration['key']]: Extract<Narration, { key: K }> } = {
   intro: { key: 'intro' },
   'udp-intro': { key: 'udp-intro' },
@@ -43,7 +43,7 @@ function finish(state: LabState): LabState {
 }
 
 describe('narrate', () => {
-  it.each(['es', 'en'] as const)('rellena todas las frases en %s', (lang) => {
+  it.each(['es', 'en'] as const)('fills in every sentence in %s', (lang) => {
     for (const narration of Object.values(samples)) {
       const text = narrate(strings[lang], narration);
       expect(text, narration.key).not.toMatch(/[{}]/);
@@ -51,12 +51,12 @@ describe('narrate', () => {
     }
   });
 
-  it('pone los datos entre las comillas del idioma', () => {
+  it('puts the data between the quotes of the language', () => {
     expect(narrate(strings.es, samples['server-buffers'])).toContain('«bien»');
     expect(narrate(strings.en, samples['server-buffers'])).toContain('“bien”');
   });
 
-  it('añade una frase cuando un dato completa el handshake', () => {
+  it('adds a sentence when a piece of data completes the handshake', () => {
     const text = narrate(strings.es, { ...samples['server-delivers'], completesHandshake: true });
     expect(text).toContain(strings.es.completesHandshake);
     expect(narrate(strings.es, samples['server-delivers'])).not.toContain(
@@ -66,16 +66,16 @@ describe('narrate', () => {
 });
 
 describe('doneMessage', () => {
-  it('no dice nada si no ha terminado', () => {
+  it('says nothing if it has not finished', () => {
     expect(doneMessage(strings.es, initialState('tcp', config))).toBeNull();
   });
 
-  it('en TCP, dice el texto entregado', () => {
+  it('in TCP, says the delivered text', () => {
     const s = finish(initialState('tcp', config));
     expect(doneMessage(strings.es, s)).toBe('Entregado completo y en orden: «Hola, todo bien».');
   });
 
-  it('en UDP, dice cuántos datagramas se perdieron', () => {
+  it('in UDP, says how many datagrams were lost', () => {
     let s = reduce(initialState('udp', config), { type: 'step' });
     s = finish(reduce(s, { type: 'lose', id: s.network[1]! }));
     const message = doneMessage(strings.es, s);
@@ -83,7 +83,7 @@ describe('doneMessage', () => {
     expect(message).toContain('Datagramas perdidos: 1');
   });
 
-  it('en UDP, si se pierde todo, dice (nada)', () => {
+  it('in UDP, if everything is lost, says (nada)', () => {
     let s = reduce(initialState('udp', config), { type: 'step' });
     for (const id of [...s.network]) s = reduce(s, { type: 'lose', id });
     expect(s.done).toBe(true);

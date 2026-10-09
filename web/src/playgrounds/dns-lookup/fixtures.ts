@@ -1,6 +1,6 @@
 /**
- * Respuestas reales de Cloudflare (DoH JSON), grabadas el 2026-10-03 para los tests:
- * así no hace falta red y los resultados no cambian. Clave: «nombre TIPO».
+ * Real Cloudflare responses (DoH JSON), recorded on 2026-10-03 for the tests:
+ * so no network is needed and the results do not change. Key: “name TYPE”.
  */
 export const recorded: Record<string, unknown> = {
   '. NS': {

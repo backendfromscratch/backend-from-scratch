@@ -1,6 +1,6 @@
 /**
- * Un PNG de 1200 × 630 por página, para cuando se comparte en redes (og:image). Se genera en el
- * build con satori (árbol → SVG) y resvg (SVG → PNG), con las fuentes de src/lib/og/fonts.ts.
+ * One 1200 × 630 PNG per page, for when it is shared on social media (og:image). It is generated
+ * at build time with satori (tree → SVG) and resvg (SVG → PNG), with the fonts in src/lib/og/fonts.ts.
  */
 import type { APIRoute, GetStaticPaths } from 'astro';
 import { getCollection } from 'astro:content';

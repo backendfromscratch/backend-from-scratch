@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import TcpHandshake from './TcpHandshake';
 
 describe('TcpHandshake', () => {
-  it('se pinta en español con el estado inicial', () => {
+  it('renders in Spanish with the initial state', () => {
     const html = renderToString(<TcpHandshake lang="es" />);
     expect(html).toContain('laboratorio · handshake TCP');
     expect(html).toContain('Siguiente paso');
@@ -12,7 +12,7 @@ describe('TcpHandshake', () => {
     expect(html).toContain('aria-live="polite"');
   });
 
-  it('se pinta en inglés', () => {
+  it('renders in English', () => {
     const html = renderToString(<TcpHandshake lang="en" />);
     expect(html).toContain('lab · TCP handshake');
     expect(html).toContain('Next step');

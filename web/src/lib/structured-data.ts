@@ -1,10 +1,10 @@
 export interface Crumb {
   name: string;
-  /** Ruta de la página: '/', '/fase-0/'… */
+  /** Page path: '/', '/fase-0/'… */
   url: string;
 }
 
-/** JSON-LD de las migas (schema.org BreadcrumbList), listo para un <script type="application/ld+json">. */
+/** Breadcrumb JSON-LD (schema.org BreadcrumbList), ready for a <script type="application/ld+json">. */
 export function breadcrumbJsonLd(crumbs: readonly Crumb[], site: string): string {
   const data = {
     '@context': 'https://schema.org',
@@ -16,6 +16,6 @@ export function breadcrumbJsonLd(crumbs: readonly Crumb[], site: string): string
       item: new URL(crumb.url, site).href,
     })),
   };
-  // Un «</script>» dentro del JSON cerraría la etiqueta antes de tiempo.
+  // A «</script>» inside the JSON would close the tag too early.
   return JSON.stringify(data).replace(/</g, '\\u003c');
 }

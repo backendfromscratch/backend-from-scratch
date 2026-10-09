@@ -8,7 +8,7 @@ const TCP_IP = `flowchart TB
     C -->|cable| D["Servidor<br/>aplicación · transporte · red · enlace"]`;
 
 describe('parseChain', () => {
-  it('lee una cadena vertical de nodos con sus enlaces', () => {
+  it('reads a vertical chain of nodes with their links', () => {
     expect(parseChain(TCP_IP)).toEqual({
       nodes: [
         ['Tu portátil', 'aplicación · transporte · red · enlace'],
@@ -21,12 +21,12 @@ describe('parseChain', () => {
   });
 
   it.each([
-    ['flowchart LR\nA["a"] -->|x| B["b"]', /Solo se admite «flowchart TB»/],
-    ['flowchart TB\nA["a"] --> B["b"]', /Línea no admitida/],
-    ['flowchart TB\nA["a"] -->|x| B["b"]\nA -->|y| C["c"]', /«A» tiene dos salidas/],
-    ['flowchart TB\nA["a"] -->|x| B', /«B» no tiene texto/],
-    ['flowchart TB\nA["a"] -->|x| B["b"]\nC["c"] -->|y| D["d"]', /una sola cadena/],
-  ])('falla con un mensaje claro ante lo que no admite (%#)', (source, error) => {
+    ['flowchart LR\nA["a"] -->|x| B["b"]', /Only «flowchart TB»/],
+    ['flowchart TB\nA["a"] --> B["b"]', /Unsupported line/],
+    ['flowchart TB\nA["a"] -->|x| B["b"]\nA -->|y| C["c"]', /«A» has two outputs/],
+    ['flowchart TB\nA["a"] -->|x| B', /«B» has no text/],
+    ['flowchart TB\nA["a"] -->|x| B["b"]\nC["c"] -->|y| D["d"]', /a single chain/],
+  ])('fails with a clear message on unsupported input (%#)', (source, error) => {
     expect(() => parseChain(source)).toThrow(error);
   });
 });
@@ -34,7 +34,7 @@ describe('parseChain', () => {
 describe('renderChain', () => {
   const figure = renderChain(parseChain(TCP_IP));
 
-  it('una lista ordenada: cada paso con su nodo y, menos el último, el enlace al siguiente', () => {
+  it('an ordered list: each step with its node and, except the last, the link to the next', () => {
     expect(classList(figure)).toEqual(['chain', 'not-content']);
     expect(findByClass(figure, 'chain__name').map(textContent)).toEqual([
       'Tu portátil',
@@ -49,11 +49,11 @@ describe('renderChain', () => {
   });
 });
 
-describe('parseChain: la línea del error', () => {
-  it('un error de una línea dice cuál', () => {
+describe('parseChain: the error line', () => {
+  it('a single-line error says which line', () => {
     try {
       parseChain('flowchart TB\nA["a"] -->|x| B["b"]\nA -->|y| C["c"]');
-      throw new Error('no ha lanzado');
+      throw new Error('did not throw');
     } catch (error) {
       expect((error as { line?: number }).line).toBe(3);
     }

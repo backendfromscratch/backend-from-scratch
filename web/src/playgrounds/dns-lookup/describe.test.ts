@@ -6,20 +6,20 @@ import { strings } from './strings';
 
 const { es, en } = strings;
 
-/** El resultado que daría lookup() con las respuestas grabadas. */
+/** The result lookup() would give with the recorded responses. */
 function result(name: string, type: RecordType) {
   const ns = suffixes(name).map((suffix) => parseDohJson(recorded[`${suffix} NS`]));
   return interpret(name, type, parseDohJson(recorded[`${name} ${type}`]), buildPath(name, ns));
 }
 
 describe('zoneLabel y serversLabel', () => {
-  it('nombra la raíz, los TLD con su punto y el resto tal cual', () => {
+  it('names the root, TLDs with their dot and the rest as is', () => {
     expect(zoneLabel('.', es)).toBe('la raíz');
     expect(zoneLabel('com', es)).toBe('.com');
     expect(zoneLabel('example.com', es)).toBe('example.com');
   });
 
-  it('enseña el primer servidor y cuántos más hay', () => {
+  it('shows the first server and how many more there are', () => {
     expect(serversLabel(['a.root-servers.net'], es)).toBe('a.root-servers.net');
     expect(
       serversLabel(['a.root-servers.net', 'b.root-servers.net', 'c.root-servers.net'], es),
@@ -28,7 +28,7 @@ describe('zoneLabel y serversLabel', () => {
 });
 
 describe('stepText', () => {
-  it('cuenta el recorrido de example.com A con los servidores reales', () => {
+  it('tells the path of example.com A with the real servers', () => {
     const texts = explain(result('example.com', 'A')).map((step) => stepText(step, es));
     expect(texts[0]).toEqual({
       from: 'Tu navegador',
@@ -49,7 +49,7 @@ describe('stepText', () => {
     );
   });
 
-  it('con un CNAME a la misma zona, el autoritativo da el alias y la dirección en la misma respuesta', () => {
+  it('with a CNAME to the same zone, the authoritative gives the alias and the address in the same answer', () => {
     const steps = explain(result('www.github.com', 'A'));
     expect(steps.map((step) => step.kind)).toEqual([
       'ask',
@@ -63,7 +63,7 @@ describe('stepText', () => {
     );
   });
 
-  it('con un CNAME a otra zona, el autoritativo solo da el alias y el resolver busca el destino aparte', () => {
+  it('with a CNAME to another zone, the authoritative only gives the alias and the resolver looks up the target separately', () => {
     const steps = explain({
       name: 'www.microsoft.com',
       type: 'A',
@@ -98,7 +98,7 @@ describe('stepText', () => {
       'alias',
       'reply',
     ]);
-    // El servidor de microsoft.com solo conoce su alias; el resto de la cadena lo encuentra el resolver.
+    // The microsoft.com server only knows its alias; the rest of the chain is found by the resolver.
     expect(stepText(steps[3]!, es).says).toBe(
       'www.microsoft.com es un alias (CNAME) de www.microsoft.com-c-3.edgekey.net. Busca ese nombre.',
     );
@@ -109,7 +109,7 @@ describe('stepText', () => {
     });
   });
 
-  it('con un alias a la misma zona sin registros del tipo pedido, lo dice el autoritativo', () => {
+  it('with an alias to the same zone with no records of the requested type, the authoritative says so', () => {
     const steps = explain(result('www.github.com', 'AAAA'));
     expect(steps.map((step) => step.kind)).toEqual([
       'ask',
@@ -126,7 +126,7 @@ describe('stepText', () => {
     );
   });
 
-  it('con un alias a otra zona que no existe, el resolver lo averigua aparte', () => {
+  it('with an alias to another zone that does not exist, the resolver finds out separately', () => {
     const steps = explain({
       name: 'www.ejemplo.com',
       type: 'A',
@@ -153,21 +153,21 @@ describe('stepText', () => {
     expect(stepText(steps[4]!, es).says).toBe('Busco ese nombre aparte: no existe (NXDOMAIN).');
   });
 
-  it('ordena los MX por prioridad y quita el punto final de los nombres', () => {
+  it('sorts MX by priority and removes the trailing dot of names', () => {
     const steps = explain(result('gmail.com', 'MX'));
     expect(stepText(steps[3]!, es).says).toBe(
       'Respuesta: 5 gmail-smtp-in.l.google.com, 10 alt1.gmail-smtp-in.l.google.com, 20 alt2.gmail-smtp-in.l.google.com y 2 más.',
     );
   });
 
-  it('dice quién responde que un dominio no existe', () => {
+  it('says who answers that a domain does not exist', () => {
     const steps = explain(result('no-existe-backend-desde-cero.com', 'A'));
     const final = stepText(steps[steps.length - 2]!, es);
     expect(final.to).toBe('.com (a.gtld-servers.net y 12 más)');
     expect(final.says).toBe('Ese nombre no existe (NXDOMAIN).');
   });
 
-  it('explica el NODATA con el tipo pedido, en los dos idiomas', () => {
+  it('explains NODATA with the requested type, in both languages', () => {
     const steps = explain(result('github.com', 'AAAA'));
     expect(stepText(steps[steps.length - 2]!, es).says).toBe(
       'El nombre existe, pero no tiene registros AAAA.',
@@ -177,7 +177,7 @@ describe('stepText', () => {
     );
   });
 
-  it('un SERVFAIL no se lo atribuye a la última zona que sí respondió', () => {
+  it('a SERVFAIL is not attributed to the last zone that did answer', () => {
     const steps = explain({
       name: 'example.com',
       type: 'A',
@@ -192,14 +192,14 @@ describe('stepText', () => {
   });
 });
 
-describe('stepText: el resolver, los códigos de error y las cadenas de alias', () => {
-  it('nombra el resolver que ha respondido: 8.8.8.8 si Cloudflare no respondió', () => {
+describe('stepText: the resolver, the error codes and the alias chains', () => {
+  it('names the resolver that answered: 8.8.8.8 if Cloudflare did not answer', () => {
     const [ask] = explain(result('example.com', 'A'));
     expect(stepText(ask!, es).to).toBe('Resolver 1.1.1.1');
     expect(stepText(ask!, es, '8.8.8.8').to).toBe('Resolver 8.8.8.8');
   });
 
-  it('un REFUSED se llama REFUSED, no SERVFAIL', () => {
+  it('a REFUSED is called REFUSED, not SERVFAIL', () => {
     const refused = {
       name: 'example.com',
       type: 'A' as const,
@@ -215,7 +215,7 @@ describe('stepText: el resolver, los códigos de error y las cadenas de alias', 
     expect(summary(refused, en)).toContain('(REFUSED)');
   });
 
-  it('una cadena de alias dentro de la zona dice por dónde pasa', () => {
+  it('an alias chain within the zone says what it passes through', () => {
     const final = parseDohJson({
       Status: 0,
       Answer: [
@@ -235,8 +235,8 @@ describe('stepText: el resolver, los códigos de error y las cadenas de alias', 
   });
 });
 
-describe('minTtl y summary', () => {
-  it('usa el TTL más bajo: es lo que dura la respuesta completa en la caché', () => {
+describe('minTtl and summary', () => {
+  it('uses the lowest TTL: it is how long the complete answer lasts in the cache', () => {
     expect(
       minTtl([
         { name: 'a', type: 'A', ttl: 300, data: '' },
@@ -245,7 +245,7 @@ describe('minTtl y summary', () => {
     ).toBe(42);
   });
 
-  it('resume el resultado para anunciarlo, con singular y plural', () => {
+  it('summarises the result to announce it, with singular and plural', () => {
     expect(summary(result('gmail.com', 'MX'), es)).toBe(
       'Respuesta: 5 registros. Recorre los pasos para ver cómo se ha encontrado.',
     );
@@ -270,7 +270,7 @@ describe('minTtl y summary', () => {
 });
 
 describe('strings', () => {
-  it('los dos idiomas tienen las mismas claves', () => {
+  it('both languages have the same keys', () => {
     const keys = (value: object): string[] =>
       Object.entries(value).flatMap(([key, child]) =>
         typeof child === 'object' && child !== null ? keys(child).map((k) => `${key}.${k}`) : [key],

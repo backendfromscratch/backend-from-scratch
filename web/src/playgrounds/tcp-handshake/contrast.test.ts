@@ -7,7 +7,7 @@ const read = (path: string) => readFileSync(fileURLToPath(new URL(path, import.m
 const theme = read('../../styles/theme.css');
 const lab = read('./tcp-handshake.css');
 
-/** Los tokens --ide-* del primer bloque de theme.css que empieza por `selector {`. */
+/** The --ide-* tokens of the first theme.css block that starts with `selector {`. */
 function tokens(selector: string): Record<string, string> {
   const start = theme.indexOf(`${selector} {`);
   const block = theme.slice(start, theme.indexOf('}', start));
@@ -19,19 +19,19 @@ function tokens(selector: string): Record<string, string> {
   );
 }
 
-/** El token que usa `property` en la regla del CSS del laboratorio que empieza por `selector`. */
+/** The token that `property` uses in the lab CSS rule that starts with `selector`. */
 function labToken(selector: string, property: string): string {
   const start = lab.indexOf(`${selector} {`);
-  if (start === -1) throw new Error(`No encuentro la regla «${selector}» en tcp-handshake.css`);
+  if (start === -1) throw new Error(`Cannot find the rule «${selector}» in tcp-handshake.css`);
   const block = lab.slice(start, lab.indexOf('}', start));
   const match = block.match(new RegExp(`${property}:\\s*var\\(--ide-([a-z-]+)\\)`));
-  if (!match) throw new Error(`«${selector}» no usa un token --ide-* en ${property}`);
+  if (!match) throw new Error(`«${selector}» does not use an --ide-* token in ${property}`);
   return match[1]!;
 }
 
 const themes = { oscuro: tokens(':root'), claro: tokens(":root[data-theme='light']") };
 
-/** Las líneas que dibujan la escalera: son gráficos con significado, así que piden 3:1 (WCAG 1.4.11). */
+/** The lines that draw the ladder: they are meaningful graphics, so they need 3:1 (WCAG 1.4.11). */
 const lines = {
   'líneas de vida': labToken('.tcp-lab__rows::before,\n.tcp-lab__rows::after', 'background'),
   'flechas del cliente': labToken('.tcp-lab__row--client .tcp-lab__line', 'color'),
@@ -40,7 +40,10 @@ const lines = {
 };
 
 describe.each(Object.entries(themes))('laboratorio, tema %s', (_name, t) => {
-  it.each(Object.entries(lines))('%s: al menos 3:1 sobre el fondo del panel', (_line, token) => {
-    expect(contrastRatio(t[token]!, t.chrome!)).toBeGreaterThanOrEqual(3);
-  });
+  it.each(Object.entries(lines))(
+    '%s: at least 3:1 against the panel background',
+    (_line, token) => {
+      expect(contrastRatio(t[token]!, t.chrome!)).toBeGreaterThanOrEqual(3);
+    },
+  );
 });

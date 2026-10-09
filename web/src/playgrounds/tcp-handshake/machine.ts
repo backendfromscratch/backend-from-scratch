@@ -1,9 +1,9 @@
 /**
- * Laboratorio tcp-handshake: la lógica, sin interfaz. (estado, evento) → estado.
+ * tcp-handshake lab: the logic, without interface. (state, event) → state.
  *
- * Simula el handshake de TCP, el envío de tres segmentos de datos con sus ACK y el modo UDP.
- * El lector avanza paso a paso y puede perder cualquier segmento en tránsito.
- * No sabe nada de React ni de idiomas: la interfaz lo pinta y strings.ts pone las frases.
+ * Simulates the TCP handshake, the sending of three data segments with their ACKs, and UDP mode.
+ * The reader advances step by step and can lose any segment in transit.
+ * It knows nothing about React or languages: the interface draws it and strings.ts supplies the sentences.
  * Spec: docs/specs/2026-10-03-tcp-lab-design.md
  */
 
@@ -13,13 +13,13 @@ export type TcpState = 'CLOSED' | 'LISTEN' | 'SYN_SENT' | 'SYN_RECEIVED' | 'ESTA
 export type Fate = 'in-transit' | 'delivered' | 'lost';
 
 export interface Segment {
-  /** Identificador de su fila en la escalera. */
+  /** Identifier of its row in the ladder. */
   id: number;
   from: Side;
   syn: boolean;
-  /** Número del primer byte (en el SYN, el número inicial). En UDP no hay. */
+  /** Number of the first byte (in the SYN, the initial number). UDP has none. */
   seq?: number;
-  /** El siguiente byte que espera quien envía. Solo si lleva el flag ACK. */
+  /** The next byte the sender expects. Only if it has the ACK flag. */
   ack?: number;
   payload?: string;
   retransmission: boolean;
@@ -36,7 +36,7 @@ export type Row =
 
 export type SegmentRow = Extract<Row, { kind: 'segment' }>;
 
-/** Lo que ha pasado en el último paso. strings.ts lo convierte en una frase. */
+/** What happened in the last step. strings.ts turns it into a sentence. */
 export type Narration =
   | { key: 'intro' }
   | { key: 'udp-intro' }
@@ -62,9 +62,9 @@ export type Narration =
   | { key: 'udp-lost'; position: number };
 
 export interface LabConfig {
-  /** Los datos que envía el cliente, un segmento por texto. */
+  /** The data the client sends, one segment per text. */
   payloads: string[];
-  /** Números de secuencia iniciales. En la realidad son aleatorios. */
+  /** Initial sequence numbers. In reality they are random. */
   clientIsn: number;
   serverIsn: number;
 }
@@ -74,28 +74,28 @@ export const DEFAULT_ISN = { client: 100, server: 500 } as const;
 export interface LabState {
   mode: Mode;
   config: LabConfig;
-  /** Pasos dados. Sirve para saber qué temporizador se armó antes. */
+  /** Steps taken. Used to know which timer was armed first. */
   step: number;
   nextId: number;
   client: {
     state: TcpState;
-    /** Paso en que se armó el temporizador, o null si está parado. */
+    /** Step at which the timer was armed, or null if it is stopped. */
     timerArmedAt: number | null;
     dataSent: boolean;
-    /** Primer byte sin confirmar. */
+    /** First unacknowledged byte. */
     unacked: number;
   };
   server: {
     state: TcpState;
     timerArmedAt: number | null;
-    /** Siguiente byte que espera. */
+    /** Next byte it expects. */
     expected: number;
-    /** Lo que la aplicación ya ha recibido. */
+    /** What the application has already received. */
     delivered: string;
-    /** Segmentos que llegaron fuera de orden, guardados sin entregar, ordenados por seq. */
+    /** Segments that arrived out of order, stored undelivered, sorted by seq. */
     buffered: { seq: number; payload: string }[];
   };
-  /** Ids de los segmentos en tránsito, del más antiguo al más nuevo: la red es una cola. */
+  /** Ids of the segments in transit, oldest to newest: the network is a queue. */
   network: number[];
   rows: Row[];
   narration: Narration;
@@ -105,10 +105,10 @@ export interface LabState {
 export type LabEvent =
   { type: 'step' } | { type: 'lose'; id: number } | { type: 'reset'; mode: Mode };
 
-/** TCP cuenta bytes, no caracteres: «¿» y «é» ocupan dos bytes en UTF-8. */
+/** TCP counts bytes, not characters: «¿» and «é» take two bytes in UTF-8. */
 export const byteLength = (text: string): number => new TextEncoder().encode(text).length;
 
-/** Los segmentos de datos del cliente con su seq: el primero va tras el SYN, y cada uno tras los bytes del anterior. */
+/** The client's data segments with their seq: the first goes after the SYN, and each one after the bytes of the previous one. */
 function dataPieces(config: LabConfig): { seq: number; payload: string }[] {
   let seq = config.clientIsn + 1;
   return config.payloads.map((payload) => {
@@ -118,7 +118,7 @@ function dataPieces(config: LabConfig): { seq: number; payload: string }[] {
   });
 }
 
-/** El byte siguiente al último dato: cuando el ACK llega aquí, está todo confirmado. */
+/** The byte after the last data: when the ACK reaches here, everything is acknowledged. */
 function dataEnd(config: LabConfig): number {
   return config.payloads.reduce((end, payload) => end + byteLength(payload), config.clientIsn + 1);
 }
@@ -188,11 +188,11 @@ function isDone(s: LabState): boolean {
 
 function segmentRow(s: LabState, id: number): SegmentRow {
   const row = s.rows.find((r) => r.id === id);
-  if (row?.kind !== 'segment') throw new Error(`No hay ningún segmento con id ${id}`);
+  if (row?.kind !== 'segment') throw new Error(`There is no segment with id ${id}`);
   return row;
 }
 
-/** Pone un segmento en la red y su fila en la escalera. Devuelve la fila, que sigue siendo la de `s.rows`. */
+/** Puts a segment on the network and its row in the ladder. Returns the row, which is still the one in `s.rows`. */
 function send(s: LabState, segment: Omit<Segment, 'id'>): SegmentRow {
   const id = s.nextId++;
   const row: SegmentRow = {
@@ -209,7 +209,7 @@ function send(s: LabState, segment: Omit<Segment, 'id'>): SegmentRow {
 
 // --- TCP ---
 
-/** Un paso: llega el segmento más antiguo; si no hay, alguien envía lo pendiente; si no, vence un temporizador. */
+/** One step: the oldest segment arrives; if none, someone sends what is pending; otherwise, a timer expires. */
 function tcpStep(s: LabState): void {
   const oldest = s.network.shift();
   if (oldest !== undefined) return deliver(s, oldest);
@@ -257,7 +257,7 @@ function sendData(s: LabState): void {
   };
 }
 
-/** Un ACK sin datos del cliente. Su seq no se muestra; es el siguiente byte que enviaría. */
+/** An ACK without data from the client. Its seq is not shown; it is the next byte it would send. */
 function sendClientAck(s: LabState): void {
   send(s, {
     from: 'client',
@@ -304,7 +304,7 @@ function serverReceives(s: LabState, row: SegmentRow): void {
     return;
   }
 
-  // Todo lo que no es SYN lleva ack=ISN del servidor + 1: completa el handshake si faltaba.
+  // Everything that is not a SYN carries ack=server ISN + 1: it completes the handshake if it was missing.
   let completesHandshake = false;
   if (server.state === 'SYN_RECEIVED' && segment.ack === serverIsn + 1) {
     server.state = 'ESTABLISHED';
@@ -344,7 +344,7 @@ function receiveData(s: LabState, seq: number, payload: string, completesHandsha
     return;
   }
 
-  // Llega lo que esperaba: se entrega, y detrás todo lo guardado que ahora encaja.
+  // What it expected arrives: it is delivered, and after it everything stored that now fits.
   let text = payload;
   server.expected += byteLength(payload);
   for (
@@ -383,11 +383,11 @@ function clientReceives(s: LabState, row: SegmentRow): void {
 
   const ack = segment.ack ?? client.unacked;
   if (ack <= client.unacked) {
-    // La fila va en la frase: si llegan dos ACK repetidos seguidos, cada paso dice algo distinto.
+    // The row goes in the sentence: if two duplicate ACKs arrive in a row, each step says something different.
     s.narration = { key: 'client-ignores-duplicate-ack', ack, position: s.rows.indexOf(row) + 1 };
     return;
   }
-  // El ACK es acumulativo: confirma todos los bytes anteriores.
+  // The ACK is cumulative: it acknowledges all previous bytes.
   client.unacked = ack;
   const pending = dataEnd(s.config) - ack;
   if (pending > 0) {
@@ -399,7 +399,7 @@ function clientReceives(s: LabState, row: SegmentRow): void {
   }
 }
 
-/** Vence el temporizador armado antes (si empatan, el del cliente) y se reenvía lo más antiguo sin confirmar. */
+/** The timer armed earliest expires (on a tie, the client's) and the oldest unacknowledged data is resent. */
 function fireTimer(s: LabState): void {
   const { client, server } = s;
   const side: Side | null =
@@ -410,9 +410,7 @@ function fireTimer(s: LabState): void {
         ? 'server'
         : null;
   if (side === null) {
-    throw new Error(
-      'Nada en tránsito, nada pendiente y ningún temporizador: debería haber terminado',
-    );
+    throw new Error('Nothing in transit, nothing pending and no timer: it should have finished');
   }
   s.rows.push({ kind: 'timeout', id: s.nextId++, side });
 
@@ -428,7 +426,7 @@ function fireTimer(s: LabState): void {
     return;
   }
   const piece = dataPieces(s.config).find((p) => p.seq === client.unacked);
-  if (!piece) throw new Error(`Ningún segmento empieza en el byte ${client.unacked}`);
+  if (!piece) throw new Error(`No segment starts at byte ${client.unacked}`);
   send(s, {
     from: 'client',
     syn: false,
@@ -443,7 +441,7 @@ function fireTimer(s: LabState): void {
 
 // --- UDP ---
 
-/** Un paso: el primero envía todos los datagramas; cada siguiente entrega el más antiguo, tal cual. */
+/** One step: the first sends all the datagrams; each next one delivers the oldest, as is. */
 function udpStep(s: LabState): void {
   if (!s.client.dataSent) {
     for (const payload of s.config.payloads) {
@@ -454,7 +452,7 @@ function udpStep(s: LabState): void {
     return;
   }
   const id = s.network.shift();
-  if (id === undefined) throw new Error('UDP: nada en tránsito; debería haber terminado');
+  if (id === undefined) throw new Error('UDP: nothing in transit; it should have finished');
   const row = segmentRow(s, id);
   row.fate = 'delivered';
   const text = row.segment.payload ?? '';

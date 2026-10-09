@@ -1,14 +1,14 @@
 import type esStrings from '../content/i18n/es.json';
 
-/** Claves de los textos de interfaz propios (el esquema obliga a que es.json las tenga todas). */
+/** Keys of the site's own interface texts (the schema requires es.json to have all of them). */
 export type UiKey = keyof typeof esStrings;
 
 /**
- * Traductor de textos de interfaz en el idioma del CONTENIDO, no en el de la URL.
+ * Interface text translator in the CONTENT language, not the URL language.
  *
- * En una página sin traducir (/en/… mostrando la lección en español), las etiquetas de los
- * componentes que van dentro del contenido («En una frase», «Ver respuesta»…) deben ir en
- * español, igual que el texto que las rodea y que los botones de Starlight en esa misma página.
+ * On an untranslated page (/en/… showing the lesson in Spanish), the labels of the
+ * components inside the content («En una frase», «Ver respuesta»…) must be in
+ * Spanish, like the text around them and Starlight's buttons on that same page.
  */
 export function contentT(locals: App.Locals) {
   const lng = locals.starlightRoute.entryMeta.lang;

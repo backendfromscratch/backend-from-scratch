@@ -1,20 +1,20 @@
 /**
- * Lo que la interfaz recuerda en el navegador del lector. localStorage puede no existir o lanzar
- * (navegación privada, datos bloqueados, cuota llena): entonces todo sigue funcionando, solo que
- * sin recordar nada.
+ * What the interface remembers in the reader's browser. localStorage may not exist or may throw
+ * (private browsing, blocked data, quota full): everything keeps working then, just
+ * without remembering anything.
  */
 
 import type { Locale } from './locales';
 
-/** 'open' si el lector ha abierto el ESQUEMA (empieza plegado); vacío si no. */
+/** 'open' if the reader has opened the OUTLINE (it starts collapsed); empty otherwise. */
 export const OUTLINE_KEY = 'ide-outline';
 
-/** Las carpetas de fase que el lector ha abierto o plegado: { «fase-1»: true, … }. */
+/** The phase folders the reader has opened or collapsed: { «fase-1»: true, … }. */
 export const FOLDERS_KEY = 'ide-folders';
 
 /**
- * La última página abierta (que no sea una pestaña fijada), por idioma: la primera pestaña de los
- * playgrounds y del glosario enlaza a ella (EditorTabs.astro).
+ * The last open page (that is not a pinned tab), per language: the first tab of the
+ * playgrounds and the glossary links to it (EditorTabs.astro).
  */
 export function lastPageKey(locale: Locale): string {
   return `ide-last-page:${locale}`;
@@ -38,7 +38,7 @@ export function safeStorage(getStorage: () => Pick<Storage, 'getItem' | 'setItem
       try {
         getStorage().setItem(key, value);
       } catch {
-        // Sin almacenamiento, el cambio vale solo para esta página.
+        // Without storage, the change only applies to this page.
       }
     },
   };

@@ -1,7 +1,7 @@
 /**
- * Registra el plugin de diagramas (src/lib/diagrams/diagrams-plugin.ts) en Sätteri, el procesador
- * de Markdown de Astro 7. Va ANTES de Starlight en `integrations`, para que los bloques ```mermaid
- * ya sean HTML cuando Starlight procese el resto.
+ * Registers the diagrams plugin (src/lib/diagrams/diagrams-plugin.ts) in Sätteri, Astro 7's
+ * Markdown processor. It goes BEFORE Starlight in `integrations`, so the ```mermaid blocks are
+ * already HTML when Starlight processes the rest.
  */
 import type { AstroIntegration } from 'astro';
 import { isSatteriProcessor, satteri } from '@astrojs/markdown-satteri';
@@ -15,7 +15,7 @@ export function diagrams(): AstroIntegration {
         const processor = config.markdown.processor;
         if (!processor || !isSatteriProcessor(processor)) {
           throw new Error(
-            '[diagrams] Se esperaba Sätteri como procesador de Markdown (el de Astro 7). Si cambia, hay que registrar el plugin de diagramas en el nuevo.',
+            "[diagrams] Expected Sätteri as the Markdown processor (Astro 7's). If it changes, the diagrams plugin must be registered in the new one.",
           );
         }
         const options = processor.options;

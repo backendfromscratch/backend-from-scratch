@@ -18,11 +18,11 @@ import { strings, type Strings } from './strings';
 import './crypto-keys.css';
 
 interface Props {
-  /** Idioma de la lección donde se usa. */
+  /** Language of the lesson where it is used. */
   lang: Locale;
 }
 
-/** Una clave PEM abreviada, desplegable entera. */
+/** An abbreviated PEM key, expandable in full. */
 function KeyBox({
   label,
   pem,
@@ -49,20 +49,20 @@ function KeyBox({
   );
 }
 
-/** Playground: cifrar y descifrar con RSA-OAEP, y firmar y verificar con ECDSA, con la Web Crypto API de verdad. */
+/** Playground: encrypt and decrypt with RSA-OAEP, and sign and verify with ECDSA, with the real Web Crypto API. */
 export default function CryptoKeys({ lang }: Props) {
   const t = strings[lang];
   const ids = useId();
   const [available, setAvailable] = useState(true);
   const [announcement, setAnnouncementText] = useState('');
-  // Cada anuncio cambia un poco el texto: así dos avisos iguales seguidos se anuncian los dos.
+  // Each announcement changes the text slightly: that way two identical notices in a row are both announced.
   const [attempt, setAttempt] = useState(0);
   const setAnnouncement = (text: string) => {
     setAnnouncementText(text);
     setAttempt((count) => count + 1);
   };
-  // Mientras una operación está en marcha, los demás clics se ignoran (sin desactivar botones: el foco
-  // no se pierde), pero no en silencio: se avisa. Generar claves RSA puede tardar segundos en un móvil.
+  // While an operation is running, other clicks are ignored (without disabling buttons: focus
+  // is not lost), but not silently: a notice is announced. Generating RSA keys can take seconds on a phone.
   const busy = useRef(false);
   const [pending, setPending] = useState<string | null>(null);
   const [failure, setFailure] = useState<string | null>(null);
@@ -88,7 +88,7 @@ export default function CryptoKeys({ lang }: Props) {
 
   useEffect(() => setAvailable(isCryptoAvailable(window)), []);
 
-  /** Hace una operación: una cada vez, diciendo qué hace si tarda, y diciendo si falla. */
+  /** Runs an operation: one at a time, saying what it does if it takes long, and saying if it fails. */
   async function run(action: () => Promise<void>, pendingText?: string) {
     if (busy.current) {
       setAnnouncement(t.wait);
@@ -103,8 +103,8 @@ export default function CryptoKeys({ lang }: Props) {
     try {
       await action();
     } catch {
-      // Los errores esperados (mensaje demasiado largo, otra clave) los trata cada operación; esto es
-      // lo inesperado, que antes no se veía.
+      // Expected errors (message too long, another key) are handled by each operation; this is
+      // the unexpected, which used to go unseen.
       setFailure(t.failed);
       setAnnouncement(t.failed);
     } finally {
@@ -208,8 +208,8 @@ export default function CryptoKeys({ lang }: Props) {
       {!available ? (
         <p className="crypto-lab__unavailable">{t.unavailable}</p>
       ) : (
-        // aria-busy solo en las partes: la región que anuncia queda fuera, y los lectores de pantalla
-        // no se callan «Generando…».
+        // aria-busy only on the parts: the announcing region stays outside, so screen readers
+        // do not go quiet on "Generating…".
         <div className="crypto-lab__parts" aria-busy={pending ? true : undefined}>
           <section className="crypto-lab__part" aria-labelledby={`${ids}-encrypt`}>
             <h3 id={`${ids}-encrypt`}>{t.encryptTitle}</h3>
@@ -291,7 +291,7 @@ export default function CryptoKeys({ lang }: Props) {
                 rows={2}
                 value={toSign}
                 onChange={(event) => {
-                  // La firma era de otro mensaje: ya no sirve.
+                  // The signature was for another message: it no longer applies.
                   setToSign(event.target.value);
                   setSignature(null);
                   setReceived('');

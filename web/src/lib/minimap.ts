@@ -1,13 +1,13 @@
 /**
- * El minimapa (src/components/Minimap.astro), sin DOM. Como el de VS Code en su modo por defecto
- * («proportional»): cada palabra de la página es un trazo, a una escala fija que hace caber el
- * contenido a lo ancho. Si el dibujo es más alto que el minimapa, el minimapa se desliza a la vez
- * que la página. Un rectángulo marca lo que se ve; al pulsar, la página salta ahí, y al arrastrar,
- * el rectángulo sigue al puntero.
+ * The minimap (src/components/Minimap.astro), without a DOM. Like VS Code's in its default mode
+ * («proportional»): each word on the page is a stroke, at a fixed scale that makes the
+ * content fit the width. If the drawing is taller than the minimap, the minimap slides along with
+ * the page. A rectangle marks what is visible; on click, the page jumps there, and on drag,
+ * the rectangle follows the pointer.
  */
 export type WordKind = 'heading' | 'code' | 'text';
 
-/** Una palabra medida en la página: posición en px del documento (x desde el borde del contenido). */
+/** A word measured on the page: position in document px (x from the content edge). */
 export interface Word {
   x: number;
   y: number;
@@ -16,23 +16,23 @@ export interface Word {
   kind: WordKind;
 }
 
-/** Un trazo del minimapa, en px del minimapa. */
+/** A minimap stroke, in minimap px. */
 export type Stroke = Word;
 
-/** Con un contenido estrecho, el minimapa no dibuja palabras gigantes. */
+/** With narrow content, the minimap does not draw giant words. */
 export const MAX_SCALE = 0.2;
 
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-/** La escala del dibujo: el contenido cabe a lo ancho del minimapa, y a lo alto se usa la misma. */
+/** The drawing scale: the content fits the minimap's width, and the same scale is used for the height. */
 export function proportionalScale(contentWidth: number, mapWidth: number): number {
   if (contentWidth <= 0 || mapWidth <= 0) return 0;
   return Math.min(MAX_SCALE, mapWidth / contentWidth);
 }
 
 /**
- * Cuánto se ha deslizado el minimapa (px del minimapa): nada si el dibujo cabe; si no, en proporción
- * a lo que se ha desplazado la página, de modo que arriba enseña el principio y abajo el final.
+ * How far the minimap has slid (minimap px): nothing if the drawing fits; otherwise, in proportion
+ * to how far the page has scrolled, so the top shows the start and the bottom the end.
  */
 export function mapOffset(
   scrollY: number,
@@ -57,8 +57,8 @@ export function viewportRect(
 }
 
 /**
- * Adónde desplazar la página al pulsar en `mapY` (px desde arriba del minimapa, que se ha deslizado
- * `offset`): ese punto, centrado.
+ * Where to scroll the page when clicking at `mapY` (px from the top of the minimap, which has slid
+ * `offset`): that point, centered.
  */
 export function scrollTargetFor(
   mapY: number,
@@ -72,9 +72,9 @@ export function scrollTargetFor(
 }
 
 /**
- * Adónde desplazar la página al arrastrar el rectángulo `deltaY` px desde que se pulsó con la página
- * en `startScroll`. Como en una barra de scroll: el rectángulo sigue al puntero. Si el minimapa se
- * desliza, el rectángulo recorre su alto (menos el suyo) mientras la página va de arriba abajo.
+ * Where to scroll the page when dragging the rectangle `deltaY` px since it was pressed with the page
+ * at `startScroll`. As with a scrollbar: the rectangle follows the pointer. If the minimap
+ * slides, the rectangle travels its height (minus its own) while the page goes from top to bottom.
  */
 export function dragScroll(
   startScroll: number,
@@ -92,7 +92,7 @@ export function dragScroll(
   return clamp(startScroll + (deltaY * scrollable) / track, 0, scrollable);
 }
 
-/** Las palabras, a escala. Lo que no se ve no se dibuja; lo que se ve mide 1 px como mínimo. */
+/** The words, at scale. What is not visible is not drawn; what is visible is at least 1 px. */
 export function layoutStrokes(words: readonly Word[], scale: number): Stroke[] {
   return words
     .filter((word) => word.width > 0 && word.height > 0)
@@ -108,9 +108,9 @@ export function layoutStrokes(words: readonly Word[], scale: number): Stroke[] {
 const HEADING = /^(h[1-6]|dt)$/;
 
 /**
- * El color de una palabra, según dónde está: `ancestors` va del elemento que la contiene hacia fuera,
- * y manda el más cercano que sea código o título. Código es lo que va en `pre`, en `code` o en un
- * bloque de Expressive Code; la explicación de un «Pruébalo» es texto.
+ * The color of a word, depending on where it is: `ancestors` goes from the containing element outward,
+ * and the closest one that is code or a heading wins. Code is what is in `pre`, in `code` or in an
+ * Expressive Code block; the explanation of a «Pruébalo» is text.
  */
 export function wordKind(
   ancestors: readonly { tagName: string; classList: Iterable<string> }[],

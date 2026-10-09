@@ -1,9 +1,9 @@
 /**
- * Laboratorio dns-lookup: las consultas de verdad, por DNS sobre HTTPS (DoH).
+ * dns-lookup lab: the real lookups, over DNS over HTTPS (DoH).
  *
- * El navegador no puede hablar DNS por UDP, pero sí hacer peticiones HTTPS: Cloudflare (1.1.1.1) y
- * Google (8.8.8.8) responden a las consultas DNS en JSON y permiten llamarlos desde cualquier web
- * (CORS). Se pregunta a Cloudflare y, si no responde (en algunas redes de empresa está bloqueado), a
+ * The browser cannot speak DNS over UDP, but it can make HTTPS requests: Cloudflare (1.1.1.1) and
+ * Google (8.8.8.8) answer DNS queries in JSON and allow being called from any website
+ * (CORS). Cloudflare is asked first and, if it does not answer (it is blocked on some corporate networks),
  * Google.
  */
 import {
@@ -22,16 +22,16 @@ export interface Resolver {
   url: string;
 }
 
-/** A quién se pregunta, en orden: si el primero falla o no responde a tiempo, el siguiente. */
+/** Who is asked, in order: if the first fails or does not answer in time, the next one. */
 export const RESOLVERS: readonly Resolver[] = [
   { address: '1.1.1.1', name: 'Cloudflare', url: 'https://cloudflare-dns.com/dns-query' },
   { address: '8.8.8.8', name: 'Google', url: 'https://dns.google/resolve' },
 ];
 
-/** El primero, al que se pregunta siempre. */
+/** The first one, which is always asked. */
 export const RESOLVER: Resolver = RESOLVERS[0]!;
 
-/** Por qué no se ha podido consultar: sin conexión, sin respuesta a tiempo o el resolver ha fallado. */
+/** Why the lookup could not be made: offline, no answer in time or the resolver failed. */
 export type LookupFailure = 'offline' | 'timeout' | 'resolver';
 
 export class LookupError extends Error {
@@ -40,7 +40,7 @@ export class LookupError extends Error {
   }
 }
 
-/** Una respuesta, con la dirección del resolver que la ha dado. */
+/** An answer, with the address of the resolver that gave it. */
 export type ResolvedLookup = LookupResult & { resolver: string };
 
 async function query(
@@ -57,21 +57,21 @@ async function query(
 }
 
 interface LookupOptions {
-  /** Para los tests: un fetch que no sale a la red. */
+  /** For tests: a fetch that does not go out to the network. */
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   isOnline?: () => boolean;
-  /** Para los tests: a quién preguntar. */
+  /** For tests: who to ask. */
   resolvers?: readonly Resolver[];
-  /** Cancela la consulta (una consulta nueva cancela la anterior): falla con un AbortError. */
+  /** Cancels the lookup (a new lookup cancels the previous one): fails with an AbortError. */
   signal?: AbortSignal;
-  /** Se llama antes de preguntar a cada resolver, para decir a quién se pregunta. */
+  /** Called before asking each resolver, to say who is being asked. */
   onResolver?: (resolver: Resolver) => void;
 }
 
 /**
- * Consulta `type` de `name` a un resolver y, a la vez, los NS de cada sufijo, para reconstruir el
- * recorrido. Si una petición falla, cancela las demás.
+ * Looks up `type` of `name` on one resolver and, at the same time, the NS of each suffix, to reconstruct the
+ * path. If one request fails, it cancels the others.
  */
 async function lookupWith(
   resolver: Resolver,
@@ -98,7 +98,7 @@ async function lookupWith(
     ]);
     return { ...interpret(name, type, final, buildPath(name, ns)), resolver: resolver.address };
   } catch (error) {
-    if (signal?.aborted) throw new DOMException('Consulta cancelada', 'AbortError');
+    if (signal?.aborted) throw new DOMException('Lookup cancelled', 'AbortError');
     if (error instanceof LookupError) throw error;
     if (controller.signal.aborted) throw new LookupError('timeout');
     if (!isOnline()) throw new LookupError('offline');
@@ -106,15 +106,15 @@ async function lookupWith(
   } finally {
     clearTimeout(timer);
     signal?.removeEventListener('abort', cancel);
-    // Lo que siga en marcha (si una petición ha fallado, las demás) ya no sirve.
+    // Whatever is still running (if one request failed, the others) is no longer useful.
     controller.abort();
   }
 }
 
 /**
- * Consulta `type` de `name`: primero a Cloudflare y, si falla o no responde a tiempo, a Google.
- * Falla con LookupError si ninguno da una respuesta útil (sin conexión no se prueba el siguiente),
- * o con un AbortError si se cancela desde fuera.
+ * Looks up `type` of `name`: first on Cloudflare and, if it fails or does not answer in time, on Google.
+ * Fails with LookupError if neither gives a useful answer (when offline the next one is not tried),
+ * or with an AbortError if it is cancelled from outside.
  */
 export async function lookup(
   name: string,

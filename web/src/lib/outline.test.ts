@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { currentSection, flattenOutline } from './outline';
 
 describe('flattenOutline', () => {
-  it('el índice de Starlight, en una lista plana con la marca de cada nivel', () => {
+  it('the Starlight table of contents, as a flat list with the marker of each level', () => {
     const toc = [
       { depth: 2, slug: '_top', text: 'Sinopsis', children: [] },
       {
@@ -21,45 +21,45 @@ describe('flattenOutline', () => {
 });
 
 describe('currentSection', () => {
-  it('antes de que ningún título llegue a la línea de lectura, la primera entrada', () => {
+  it('before any heading reaches the reading line, the first entry', () => {
     expect(currentSection([170, 900, 2000], 166, false)).toBe(0);
   });
 
-  it('la última sección cuyo título ya ha llegado a la línea', () => {
+  it('the last section whose heading has already reached the line', () => {
     expect(currentSection([-500, 150, 800], 166, false)).toBe(1);
   });
 
-  it('un salto a un ancla deja el título justo en la línea: esa es la actual', () => {
+  it('a jump to an anchor leaves the heading right on the line: that is the current one', () => {
     expect(currentSection([-900, -400, 166, 700], 166, false)).toBe(2);
   });
 
-  it('con todos los títulos ya arriba, la última', () => {
+  it('with all headings already above, the last one', () => {
     expect(currentSection([-900, -500, -100], 166, false)).toBe(2);
   });
 
-  it('al final de la página, la última, aunque su título no llegue a la línea', () => {
+  it('at the end of the page, the last one, even if its heading does not reach the line', () => {
     expect(currentSection([-900, 300, 700], 166, true)).toBe(2);
   });
 
-  it('al final de la página, tras saltar a una sección que no llega a subir, esa sección', () => {
-    // Clic en «¿Lo has entendido?» (índice 1): la página baja hasta el final, pero el título se
-    // queda a media ventana y el de «Para profundizar» (índice 2) también se ve.
+  it('at the end of the page, after jumping to a section that cannot scroll up, that section', () => {
+    // Click on «¿Lo has entendido?» (index 1): the page scrolls to the end, but the heading
+    // stays mid-window and the «Para profundizar» one (index 2) is also visible.
     expect(currentSection([-900, 300, 700], 166, true, { target: 1, viewHeight: 900 })).toBe(1);
   });
 
-  it('el destino de un salto solo cuenta al final de la página', () => {
+  it('the target of a jump only counts at the end of the page', () => {
     expect(currentSection([-500, 150, 800], 166, false, { target: 2, viewHeight: 900 })).toBe(1);
   });
 
-  it('un destino que no existe se ignora', () => {
+  it('a target that does not exist is ignored', () => {
     expect(currentSection([-900, 300, 700], 166, true, { target: 7, viewHeight: 900 })).toBe(2);
   });
 
-  it('un destino que ya no se ve (el lector siguió bajando hasta el final), se ignora', () => {
+  it('a target that is no longer visible (the reader kept scrolling to the end) is ignored', () => {
     expect(currentSection([-900, -400, 700], 166, true, { target: 0, viewHeight: 900 })).toBe(2);
   });
 
-  it('sin títulos, ninguna', () => {
+  it('without headings, none', () => {
     expect(currentSection([], 166, false)).toBe(-1);
   });
 });

@@ -1,7 +1,7 @@
 /**
- * Borra del build las copias de respaldo que Starlight genera en /en/ para cada página en español
- * cuya ruta no existe en inglés (ver fallbackUrls). Va ANTES de Starlight en `integrations`: así
- * borra los ficheros antes de que Pagefind indexe el build.
+ * Deletes from the build the fallback copies Starlight generates under /en/ for each Spanish page
+ * whose path does not exist in English (see fallbackUrls). It goes BEFORE Starlight in
+ * `integrations`: that way it deletes the files before Pagefind indexes the build.
  */
 import type { AstroIntegration } from 'astro';
 import fs from 'node:fs';
@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { idFromContentPath } from '../lib/translations';
 
-/** Los ids de las entradas de una carpeta de contenido, como los genera Astro. */
+/** The ids of the entries in a content folder, as Astro generates them. */
 export function listContentIds(docsDir: string): string[] {
   return fs
     .readdirSync(docsDir, { recursive: true, encoding: 'utf8' })
@@ -17,7 +17,7 @@ export function listContentIds(docsDir: string): string[] {
     .map((file) => idFromContentPath(file.split(path.sep).join('/')));
 }
 
-/** Las operaciones de ficheros que hacen falta, para poder probarlo sin tocar el disco. */
+/** The file operations needed, so it can be tested without touching the disk. */
 export interface RemoveOps {
   rmFile(file: string): void;
   isEmptyDir(dir: string): boolean;
@@ -31,8 +31,8 @@ const diskOps: RemoveOps = {
 };
 
 /**
- * Borra el index.html de cada copia, y su carpeta solo si se queda vacía: así nunca se lleva por
- * delante páginas reales que vivan dentro. Va de las rutas más profundas a las menos.
+ * Deletes each copy's index.html, and its folder only if it ends up empty: that way it never takes
+ * real pages living inside with it. It goes from the deepest paths to the shallowest.
  */
 export function removeFallbackCopies(root: string, urls: Iterable<string>, ops: RemoveOps): void {
   const depth = (url: string) => url.split('/').length;
@@ -44,7 +44,7 @@ export function removeFallbackCopies(root: string, urls: Iterable<string>, ops: 
   }
 }
 
-/** Filtro del sitemap: fuera las copias de respaldo (compara la ruta sin codificar) y las imágenes para redes. */
+/** Sitemap filter: drops the fallback copies (compares the decoded path) and the social images. */
 export function keepInSitemap(fallbacks: ReadonlySet<string>): (page: string) => boolean {
   return (page) => {
     const pathname = decodeURI(new URL(page).pathname);
@@ -58,7 +58,7 @@ export function dropFallbacks(urls: ReadonlySet<string>): AstroIntegration {
     hooks: {
       'astro:build:done': ({ dir, logger }) => {
         removeFallbackCopies(fileURLToPath(dir), urls, diskOps);
-        logger.info(`${urls.size} copias de respaldo borradas`);
+        logger.info(`${urls.size} fallback copies deleted`);
       },
     },
   };

@@ -1,14 +1,13 @@
 /**
- * La imagen que se ve al compartir una página en redes: una pestaña de editor con el fichero, el
- * título de la página y el nombre de la web. Es el árbol que dibuja satori
- * (src/pages/og/[...route].png.ts).
+ * The image shown when a page is shared on social media: an editor tab with the file, the page
+ * title and the site name. It is the tree that satori draws (src/pages/og/[...route].png.ts).
  */
 import { homeFileName, toFileName } from '../explorer';
 import { localeOfId, normalizeId } from '../translations';
 
 export const OG_SIZE = { width: 1200, height: 630 } as const;
 
-/** Colores del tema oscuro (src/styles/theme.css). Si cambian allí, cámbialos aquí. */
+/** Dark theme colors (src/styles/theme.css). If they change there, change them here. */
 const COLORS = {
   bg: '#1b1a23',
   chrome: '#15141c',
@@ -32,7 +31,7 @@ const div = (
   props: { style: { display: 'flex', ...style }, children },
 });
 
-/** Lo que va entre /og/ y .png: la ruta de la página; las portadas, "index" y "en". */
+/** What goes between /og/ and .png: the page path; for the home pages, "index" and "en". */
 export function ogRouteParam(id: string): string {
   return normalizeId(id) || 'index';
 }
@@ -42,9 +41,9 @@ export function ogImagePath(id: string): string {
 }
 
 /**
- * El «fichero» de la pestaña. En una fase, la ruta sin el idioma (fase-0/que-es-dns.md); las
- * portadas y las páginas raíz, con el nombre del explorador (inicio.md, temario.md), que sale del
- * título y no de la ruta.
+ * The tab's «file». In a phase, the path without the language (fase-0/que-es-dns.md); the home
+ * pages and root pages, with the explorer's name (inicio.md, temario.md), which comes from the
+ * title and not from the path.
  */
 export function ogFileLabel(id: string, title: string): string {
   const path = normalizeId(id).replace(/^en(?:\/|$)/, '');

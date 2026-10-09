@@ -7,7 +7,7 @@ import { strings } from './strings';
 const t = strings.es;
 
 beforeEach(() => {
-  // La Web Crypto API solo existe en páginas seguras: la del test lo es.
+  // The Web Crypto API only exists on secure pages: the test page is one.
   Object.defineProperty(window, 'isSecureContext', { value: true, configurable: true });
   document.body.innerHTML = '';
 });
@@ -18,8 +18,8 @@ afterEach(() => {
 
 const text = (container: HTMLElement) => container.textContent ?? '';
 
-describe('CryptoKeys con clics', () => {
-  it('genera las claves, cifra el mensaje y lo descifra', async () => {
+describe('CryptoKeys with clicks', () => {
+  it('generates the keys, encrypts the message and decrypts it', async () => {
     const { container } = await render(<CryptoKeys lang="es" />);
     await click(byText(container, 'button', t.generate));
     await waitFor(() => text(container).includes('BEGIN PUBLIC KEY'));
@@ -30,7 +30,7 @@ describe('CryptoKeys con clics', () => {
     expect(byText(container, 'pre, output, p', t.defaultMessage)).toBeTruthy();
   });
 
-  it('mientras genera las claves lo dice, y avisa si se pulsa otra cosa', async () => {
+  it('while generating the keys it says so, and warns if something else is clicked', async () => {
     let finish: (pair: CryptoKeyPair) => void = () => {};
     const real = await crypto.subtle.generateKey(
       {
@@ -50,18 +50,18 @@ describe('CryptoKeys con clics', () => {
     const busy = () => container.querySelector('[aria-busy="true"]');
     expect(busy()).not.toBeNull();
     expect(text(container)).toContain(t.generating);
-    // Lo que se anuncia no puede quedar dentro de la zona ocupada: el lector de pantalla podría callarlo.
+    // What is announced cannot sit inside the busy area: the screen reader could silence it.
     const live = container.querySelector('[aria-live]')!;
     expect(busy()!.contains(live)).toBe(false);
     expect(live.textContent?.trim()).toBe(t.generating);
-    // Otro clic mientras tanto: no se ignora en silencio.
+    // Another click meanwhile: it is not ignored silently.
     const other = [...container.querySelectorAll('button')].filter(
       (b) => b.textContent === t.generate,
     )[1]!;
     await click(other);
     const firstWait = live.textContent;
     expect(firstWait?.trim()).toBe(t.wait);
-    // Un segundo clic, el mismo aviso: también se anuncia (el texto cambia sin que se note).
+    // A second click, the same notice: it is announced too (the text changes unnoticeably).
     await click(other);
     expect(live.textContent?.trim()).toBe(t.wait);
     expect(live.textContent).not.toBe(firstWait);
@@ -71,7 +71,7 @@ describe('CryptoKeys con clics', () => {
     expect(text(container)).not.toContain(t.generating);
   });
 
-  it('al cambiar el mensaje que se firma, la firma anterior desaparece', async () => {
+  it('when the message being signed changes, the previous signature disappears', async () => {
     const { container } = await render(<CryptoKeys lang="es" />);
     const signButtons = () =>
       [...container.querySelectorAll('button')].filter((b) => b.textContent === t.generate);
@@ -92,22 +92,22 @@ describe('CryptoKeys con clics', () => {
     expect(text(container)).not.toContain('Firma (');
   });
 
-  it('si descifrar falla por algo inesperado, lo dice', async () => {
+  it('if decrypting fails for something unexpected, it says so', async () => {
     const { container } = await render(<CryptoKeys lang="es" />);
     await click(byText(container, 'button', t.generate));
     await waitFor(() => text(container).includes('BEGIN PUBLIC KEY'));
     await click(byText(container, 'button', t.encrypt));
     await waitFor(() => text(container).includes('Mensaje cifrado ('));
     vi.spyOn(crypto.subtle, 'decrypt').mockRejectedValueOnce(
-      new DOMException('Fallo', 'OperationError'),
+      new DOMException('Failure', 'OperationError'),
     );
     await click(byText(container, 'button', t.decrypt));
     await waitFor(() => text(container).includes(t.failed));
   });
 
-  it('si generar las claves falla, lo dice', async () => {
+  it('if generating the keys fails, it says so', async () => {
     vi.spyOn(crypto.subtle, 'generateKey').mockRejectedValueOnce(
-      new DOMException('Fallo', 'OperationError'),
+      new DOMException('Failure', 'OperationError'),
     );
     const { container } = await render(<CryptoKeys lang="es" />);
     await click(byText(container, 'button', t.generate));

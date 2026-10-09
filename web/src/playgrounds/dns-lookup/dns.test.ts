@@ -15,88 +15,88 @@ const parsed = (key: string) => parseDohJson(recorded[key]);
 const nsFor = (name: string) => suffixes(name).map((suffix) => parsed(`${suffix} NS`));
 
 describe('parseDomain', () => {
-  it('acepta un nombre y lo pasa a minúsculas', () => {
+  it('accepts a name and lowercases it', () => {
     expect(parseDomain('  Example.COM ')).toEqual({ ok: true, name: 'example.com' });
   });
 
-  it('se queda con el nombre de una URL entera', () => {
+  it('keeps the name of a whole URL', () => {
     expect(parseDomain('https://www.example.com/ruta?x=1')).toEqual({
       ok: true,
       name: 'www.example.com',
     });
   });
 
-  it('quita el punto final', () => {
+  it('removes the trailing dot', () => {
     expect(parseDomain('example.com.')).toEqual({ ok: true, name: 'example.com' });
   });
 
-  it('pasa los nombres con tildes o eñes a ASCII (punycode)', () => {
+  it('converts names with accents or ñ to ASCII (punycode)', () => {
     expect(parseDomain('ñandú.com')).toEqual({ ok: true, name: 'xn--and-6ma2c.com' });
   });
 
-  it('acepta guiones bajos, como en _dmarc.gmail.com', () => {
+  it('accepts underscores, as in _dmarc.gmail.com', () => {
     expect(parseDomain('_dmarc.gmail.com')).toEqual({ ok: true, name: '_dmarc.gmail.com' });
   });
 
-  it('una IP no es un nombre: lo dice, en vez de dar NXDOMAIN', () => {
+  it('an IP is not a name: it says so, instead of giving NXDOMAIN', () => {
     expect(parseDomain('192.168.1.1')).toEqual({ ok: false, reason: 'ip' });
     expect(parseDomain('http://10.0.0.1/admin')).toEqual({ ok: false, reason: 'ip' });
     expect(parseDomain('[2606:4700::1111]')).toEqual({ ok: false, reason: 'ip' });
   });
 
-  it('una IPv6 sin corchetes, como se suele copiar, también es una IP', () => {
+  it('an IPv6 without brackets, as it is usually copied, is also an IP', () => {
     expect(parseDomain('2606:4700::1111')).toEqual({ ok: false, reason: 'ip' });
     expect(parseDomain('::1')).toEqual({ ok: false, reason: 'ip' });
-    // Un nombre con puerto que solo tiene letras de la a a la f no se confunde con una IPv6.
+    // A name with a port that only has letters a to f is not mistaken for an IPv6.
     expect(parseDomain('cafe.de:8080')).toEqual({ ok: true, name: 'cafe.de' });
   });
 
-  it('rechaza un campo vacío', () => {
+  it('rejects an empty field', () => {
     expect(parseDomain('   ')).toEqual({ ok: false, reason: 'empty' });
   });
 
-  it('rechaza lo que no es un nombre de dominio', () => {
+  it('rejects what is not a domain name', () => {
     for (const bad of ['ex ample.com', '-example.com', `${'a'.repeat(64)}.com`, 'http://']) {
       expect(parseDomain(bad), bad).toEqual({ ok: false, reason: 'invalid' });
     }
   });
 });
 
-describe('normalizeName y suffixes', () => {
-  it('normaliza la raíz, las mayúsculas y el punto final', () => {
+describe('normalizeName and suffixes', () => {
+  it('normalizes the root, uppercase and the trailing dot', () => {
     expect(normalizeName('')).toBe('.');
     expect(normalizeName('.')).toBe('.');
     expect(normalizeName('Example.COM.')).toBe('example.com');
   });
 
-  it('da cada sufijo del nombre, de la raíz hacia abajo', () => {
+  it('gives each suffix of the name, from the root down', () => {
     expect(suffixes('www.example.com')).toEqual(['.', 'com', 'example.com', 'www.example.com']);
     expect(suffixes('com')).toEqual(['.', 'com']);
   });
 });
 
 describe('parseDohJson', () => {
-  it('un TXT se ve igual venga de Cloudflare o de Google: unido y entre comillas, como en dig', () => {
+  it('a TXT looks the same from Cloudflare or Google: joined and quoted, as in dig', () => {
     const txt = (data: string) =>
       parseDohJson({
         Status: 0,
         Answer: [{ name: 'example.com.', type: 16, TTL: 300, data }],
       }).answers[0]!.data;
-    // Cloudflare entrecomilla cada trozo; Google los une y no pone comillas.
+    // Cloudflare quotes each chunk; Google joins them and adds no quotes.
     expect(txt('"v=spf1 -all"')).toBe('"v=spf1 -all"');
     expect(txt('v=spf1 -all')).toBe('"v=spf1 -all"');
     expect(txt('"v=DKIM1; p=MIIB" "IjAN"')).toBe('"v=DKIM1; p=MIIBIjAN"');
     expect(txt('v=DKIM1; p=MIIBIjAN')).toBe('"v=DKIM1; p=MIIBIjAN"');
   });
 
-  it('lee una respuesta real de Cloudflare (la raíz llega con nombre vacío)', () => {
+  it('reads a real Cloudflare response (the root arrives with an empty name)', () => {
     const root = parsed('. NS');
     expect(root.status).toBe('NOERROR');
     expect(root.answers).toHaveLength(13);
     expect(root.answers[0]).toMatchObject({ name: '.', type: 'NS' });
   });
 
-  it('traduce los códigos de estado y de tipo', () => {
+  it('translates status and type codes', () => {
     expect(parsed('no-existe-backend-desde-cero.com A').status).toBe('NXDOMAIN');
     expect(parseDohJson({ Status: 2 }).status).toBe('SERVFAIL');
     expect(parseDohJson({ Status: 5 }).status).toBe('REFUSED');
@@ -109,26 +109,26 @@ describe('parseDohJson', () => {
     ).toBe('TYPE65');
   });
 
-  it('falla con algo que no es una respuesta DNS', () => {
+  it('fails with something that is not a DNS response', () => {
     expect(() => parseDohJson({ error: 'no' })).toThrow();
     expect(() => parseDohJson(null)).toThrow();
   });
 });
 
 describe('buildPath', () => {
-  it('encuentra las zonas de example.com con sus servidores reales', () => {
+  it('finds the zones of example.com with their real servers', () => {
     const path = buildPath('example.com', nsFor('example.com'));
     expect(path.map((zone) => zone.name)).toEqual(['.', 'com', 'example.com']);
     expect(path[0]?.servers).toHaveLength(13);
     expect(path[2]?.servers).toEqual(['elliott.ns.cloudflare.com', 'hera.ns.cloudflare.com']);
   });
 
-  it('no confunde un CNAME con una zona: www.github.com vive en la zona github.com', () => {
+  it('does not mistake a CNAME for a zone: www.github.com lives in the github.com zone', () => {
     const path = buildPath('www.github.com', nsFor('www.github.com'));
     expect(path.map((zone) => zone.name)).toEqual(['.', 'com', 'github.com']);
   });
 
-  it('con un dominio que no existe, el recorrido se queda en .com', () => {
+  it('with a domain that does not exist, the path stops at .com', () => {
     const path = buildPath(
       'no-existe-backend-desde-cero.com',
       nsFor('no-existe-backend-desde-cero.com'),
@@ -140,7 +140,7 @@ describe('buildPath', () => {
 describe('interpret', () => {
   const path = buildPath('example.com', nsFor('example.com'));
 
-  it('distingue respuesta, NXDOMAIN, NODATA y error', () => {
+  it('tells answer, NXDOMAIN, NODATA and error apart', () => {
     expect(interpret('example.com', 'A', parsed('example.com A'), path).outcome).toBe('answer');
     expect(
       interpret(
@@ -155,7 +155,7 @@ describe('interpret', () => {
     expect(interpret('example.com', 'A', servfail, path).outcome).toBe('error');
   });
 
-  it('un error guarda su código: REFUSED no se cuenta como SERVFAIL', () => {
+  it('an error keeps its code: REFUSED is not counted as SERVFAIL', () => {
     const refused: DnsResponse = { status: 'REFUSED', answers: [] };
     const result = interpret('example.com', 'A', refused, path);
     expect(result).toMatchObject({ outcome: 'error', status: 'REFUSED' });
@@ -165,8 +165,8 @@ describe('interpret', () => {
   });
 });
 
-describe('interpret con alias', () => {
-  it('un CNAME sin registros del tipo pedido detrás es NODATA, no una respuesta', () => {
+describe('interpret with aliases', () => {
+  it('a CNAME with no records of the requested type behind it is NODATA, not an answer', () => {
     const path = buildPath('www.github.com', nsFor('www.github.com'));
     const result = interpret('www.github.com', 'AAAA', parsed('www.github.com AAAA'), path);
     expect(result.outcome).toBe('nodata');
@@ -175,7 +175,7 @@ describe('interpret con alias', () => {
     ]);
   });
 
-  it('si lo que se pide es el propio CNAME, sí es una respuesta', () => {
+  it('if what is requested is the CNAME itself, it is an answer', () => {
     const final = parseDohJson({
       Status: 0,
       Answer: [{ name: 'www.github.com', type: 5, TTL: 60, data: 'github.com.' }],
@@ -185,7 +185,7 @@ describe('interpret con alias', () => {
 });
 
 describe('explain', () => {
-  it('cuenta el recorrido: pregunta, una derivación por zona, la respuesta final y la del resolver', () => {
+  it('tells the path: question, one referral per zone, the final answer and the resolver answer', () => {
     const result = interpret(
       'example.com',
       'A',
@@ -206,14 +206,14 @@ describe('explain', () => {
   });
 });
 
-describe('explain con una cadena de alias', () => {
+describe('explain with an alias chain', () => {
   const zones = [
     { name: '.', servers: ['a.root-servers.net'] },
     { name: 'com', servers: ['a.gtld-servers.net'] },
     { name: 'a.com', servers: ['ns1.a.com'] },
   ];
 
-  it('dentro de la zona, el servidor da toda la cadena: el primero, el último y los de en medio', () => {
+  it('within the zone, the server gives the whole chain: the first, the last and those in between', () => {
     const final = parseDohJson({
       Status: 0,
       Answer: [
@@ -230,7 +230,7 @@ describe('explain con una cadena de alias', () => {
     expect(steps.some((step) => step.kind === 'alias')).toBe(false);
   });
 
-  it('el servidor de la zona solo conoce los alias de su zona; el resto lo encuentra el resolver aparte', () => {
+  it('the server of the zone only knows the aliases of its zone; the rest is found by the resolver separately', () => {
     const final = parseDohJson({
       Status: 0,
       Answer: [
@@ -250,7 +250,7 @@ describe('explain con una cadena de alias', () => {
     });
   });
 
-  it('un solo CNAME no pasa por ninguno', () => {
+  it('a single CNAME passes through none', () => {
     const final = parseDohJson({
       Status: 0,
       Answer: [{ name: 'www.github.com', type: 5, TTL: 60, data: 'github.com.' }],

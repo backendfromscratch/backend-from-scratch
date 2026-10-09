@@ -14,14 +14,14 @@ function fakeLocals(contentLang: string, urlLang: string) {
 }
 
 describe('contentT', () => {
-  it('traduce en el idioma del contenido, no en el de la URL', () => {
-    // Página /en/… sin traducir: la URL es inglesa pero el contenido es español.
+  it('translates into the content language, not the URL language', () => {
+    // Untranslated /en/… page: the URL is English but the content is Spanish.
     const { locals, calls } = fakeLocals('es', 'en');
     contentT(locals)('tryIt.title');
     expect(calls).toEqual([['tryIt.title', { lng: 'es' }]]);
   });
 
-  it('en una página traducida, el idioma del contenido coincide con el de la URL', () => {
+  it('on a translated page, the content language matches the URL language', () => {
     const { locals, calls } = fakeLocals('en', 'en');
     contentT(locals)('selfCheck.show');
     expect(calls).toEqual([['selfCheck.show', { lng: 'en' }]]);

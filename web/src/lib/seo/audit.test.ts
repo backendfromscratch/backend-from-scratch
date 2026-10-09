@@ -61,7 +61,7 @@ const input = (pages: AuditPage[], overrides: Partial<AuditInput> = {}): AuditIn
 });
 
 describe('oneH1', () => {
-  it('una página con un <h1> pasa; con cero o con dos, no', () => {
+  it('a page with one <h1> passes; with zero or two, it does not', () => {
     expect(oneH1(input([page('/')]))).toEqual([]);
     const issues = oneH1(input([page('/a/', { h1Count: 0 }), page('/b/', { h1Count: 2 })]));
     expect(issues.map((i) => i.url)).toEqual(['/a/', '/b/']);
@@ -69,7 +69,7 @@ describe('oneH1', () => {
 });
 
 describe('titleAndDescription', () => {
-  it('exige un título y una descripción no vacíos', () => {
+  it('requires a non-empty title and description', () => {
     expect(titleAndDescription(input([page('/')]))).toEqual([]);
     const issues = titleAndDescription(
       input([page('/a/', { title: '' }), page('/b/', { description: undefined })]),
@@ -79,7 +79,7 @@ describe('titleAndDescription', () => {
 });
 
 describe('langMatchesUrl', () => {
-  it('lang="en" bajo /en/ y lang="es" en el resto', () => {
+  it('lang="en" under /en/ and lang="es" elsewhere', () => {
     const pages = [
       page('/'),
       page('/fase-0/que-es-dns/'),
@@ -88,13 +88,13 @@ describe('langMatchesUrl', () => {
     ];
     expect(langMatchesUrl(input(pages))).toEqual([]);
     expect(langMatchesUrl(input([page('/en/roadmap/', { lang: 'es' })]))[0]?.message).toMatch(
-      /debería ser "en"/,
+      /should be "en"/,
     );
   });
 });
 
 describe('auditSite', () => {
-  it('junta los problemas de las reglas que se le pasan', () => {
+  it('collects the problems of the rules passed to it', () => {
     const issues = auditSite(input([page('/', { h1Count: 2, description: undefined })]), [
       oneH1,
       titleAndDescription,
@@ -102,7 +102,7 @@ describe('auditSite', () => {
     expect(issues.map((i) => i.rule).sort()).toEqual(['one-h1', 'title-description']);
   });
 
-  it('defaultRules son las reglas de la web', () => {
+  it("defaultRules are the site's rules", () => {
     expect(defaultRules).toEqual([
       oneH1,
       titleAndDescription,
@@ -127,7 +127,7 @@ describe('auditSite', () => {
 });
 
 describe('canonicalIsSelf', () => {
-  it('la canónica es la URL absoluta de la propia página', () => {
+  it('the canonical is the absolute URL of the page itself', () => {
     expect(canonicalIsSelf(input([page('/fase-0/', { canonical: `${SITE}/fase-0/` })]))).toEqual(
       [],
     );
@@ -141,37 +141,37 @@ describe('canonicalIsSelf', () => {
 describe('sitemapMatchesPages', () => {
   const pages = [page('/'), page('/en/')];
 
-  it('el sitemap lista exactamente las páginas del build', () => {
+  it('the sitemap lists exactly the pages of the build', () => {
     expect(sitemapMatchesPages(input(pages, { sitemap: [`${SITE}/`, `${SITE}/en/`] }))).toEqual([]);
   });
 
-  it('avisa de las páginas que faltan y de las URLs que sobran', () => {
+  it('reports missing pages and extra URLs', () => {
     const issues = sitemapMatchesPages(
       input(pages, { sitemap: [`${SITE}/`, `${SITE}/en/fase-0/`] }),
     );
     expect(issues.map((i) => [i.url, i.message])).toEqual([
-      ['/en/', 'falta en el sitemap'],
-      ['/en/fase-0/', 'está en el sitemap, pero no es una página del build'],
+      ['/en/', 'missing from the sitemap'],
+      ['/en/fase-0/', 'is in the sitemap, but is not a page of the build'],
     ]);
   });
 
-  it('sin sitemap es un problema', () => {
-    expect(sitemapMatchesPages(input(pages))[0]?.message).toBe('no hay sitemap');
+  it('no sitemap is a problem', () => {
+    expect(sitemapMatchesPages(input(pages))[0]?.message).toBe('there is no sitemap');
   });
 });
 
 describe('robotsTxtPointsToSitemap', () => {
   const ok = `User-agent: *\nAllow: /\n\nSitemap: ${SITE}/sitemap-index.xml\n`;
 
-  it('robots.txt existe, apunta al sitemap y no bloquea la web', () => {
+  it('robots.txt exists, points to the sitemap and does not block the site', () => {
     expect(robotsTxtPointsToSitemap(input([], { robotsTxt: ok }))).toEqual([]);
-    expect(robotsTxtPointsToSitemap(input([]))[0]?.message).toBe('no existe');
+    expect(robotsTxtPointsToSitemap(input([]))[0]?.message).toBe('does not exist');
     expect(
       robotsTxtPointsToSitemap(input([], { robotsTxt: 'User-agent: *\nAllow: /\n' }))[0]?.message,
-    ).toMatch(/le falta la línea/);
+    ).toMatch(/is missing the line/);
     expect(
       robotsTxtPointsToSitemap(input([], { robotsTxt: `${ok}Disallow: /\n` }))[0]?.message,
-    ).toMatch(/bloquea toda la web/);
+    ).toMatch(/blocks the whole site/);
   });
 });
 
@@ -184,7 +184,7 @@ describe('hreflangReciprocal', () => {
     { hreflang: 'x-default', href: es },
   ];
 
-  it('pasa si las dos páginas se declaran mutuamente, con x-default', () => {
+  it('passes if both pages declare each other, with x-default', () => {
     const pages = [
       page('/fase-0/que-es-dns/', { alternates: pair }),
       page('/en/phase-0/what-is-dns/', { lang: 'en', alternates: pair }),
@@ -192,11 +192,11 @@ describe('hreflangReciprocal', () => {
     expect(hreflangReciprocal(input(pages))).toEqual([]);
   });
 
-  it('una página sin hreflang no se comprueba', () => {
+  it('a page without hreflang is not checked', () => {
     expect(hreflangReciprocal(input([page('/fase-1/x/')]))).toEqual([]);
   });
 
-  it('avisa si apunta a una página que no existe (la misma ruta con otro prefijo)', () => {
+  it('reports a link to a page that does not exist (the same path with another prefix)', () => {
     const wrong = [
       { hreflang: 'es', href: es },
       { hreflang: 'en', href: `${SITE}/en/fase-0/que-es-dns/` },
@@ -204,25 +204,25 @@ describe('hreflangReciprocal', () => {
     ];
     const issues = hreflangReciprocal(input([page('/fase-0/que-es-dns/', { alternates: wrong })]));
     expect(issues.map((i) => i.message)).toEqual([
-      `en apunta a ${SITE}/en/fase-0/que-es-dns/, que no es una página del build`,
+      `en points to ${SITE}/en/fase-0/que-es-dns/, which is not a page of the build`,
     ]);
   });
 
-  it('avisa si no se incluye a sí misma, si falta x-default o si la otra no la declara de vuelta', () => {
+  it('reports if it does not include itself, if x-default is missing or if the other page does not declare it back', () => {
     const pages = [
       page('/fase-0/que-es-dns/', { alternates: [{ hreflang: 'en', href: en }] }),
       page('/en/phase-0/what-is-dns/', { lang: 'en' }),
     ];
     expect(hreflangReciprocal(input(pages)).map((i) => i.message)).toEqual([
-      'no se incluye a sí misma',
-      'no tiene x-default',
-      `${en} no la declara de vuelta`,
+      'does not include itself',
+      'has no x-default',
+      `${en} does not declare it back`,
     ]);
   });
 });
 
 describe('noFallbackCopies', () => {
-  it('ninguna página del build lleva noindex: las copias de respaldo se borran', () => {
+  it('no page of the build has noindex: fallback copies are deleted', () => {
     expect(noFallbackCopies(input([page('/')]))).toEqual([]);
     expect(noFallbackCopies(input([page('/en/fase-0/', { robots: 'noindex' })]))[0]?.url).toBe(
       '/en/fase-0/',
@@ -237,7 +237,7 @@ describe('languageSelectorMatchesHreflang', () => {
     { hreflang: 'x-default', href: `${SITE}/fase-0/que-es-dns/` },
   ];
 
-  it('el selector lleva a las mismas páginas que los hreflang', () => {
+  it('the selector leads to the same pages as the hreflang', () => {
     const ok = page('/fase-0/que-es-dns/', {
       alternates,
       languageOptions: ['/fase-0/que-es-dns/', '/en/phase-0/what-is-dns/'],
@@ -245,45 +245,45 @@ describe('languageSelectorMatchesHreflang', () => {
     expect(languageSelectorMatchesHreflang(input([ok]))).toEqual([]);
   });
 
-  it('avisa si el selector lleva a la misma ruta con otro prefijo', () => {
+  it('reports if the selector leads to the same path with another prefix', () => {
     const wrong = page('/fase-0/que-es-dns/', {
       alternates,
       languageOptions: ['/fase-0/que-es-dns/', '/en/fase-0/que-es-dns/'],
     });
     expect(languageSelectorMatchesHreflang(input([wrong]))[0]?.message).toBe(
-      'el selector de idioma no lleva a /en/phase-0/what-is-dns/',
+      'the language selector does not lead to /en/phase-0/what-is-dns/',
     );
   });
 });
 
 describe('noLegacySpanishPrefix', () => {
-  it('el español vive en la raíz: no hay páginas bajo /es/', () => {
+  it('Spanish lives at the root: there are no pages under /es/', () => {
     expect(noLegacySpanishPrefix(input([page('/fase-0/'), page('/')]))).toEqual([]);
     expect(noLegacySpanishPrefix(input([page('/es/phase-0/')]))[0]?.url).toBe('/es/phase-0/');
   });
 });
 
 describe('noMermaid', () => {
-  it('ningún diagrama Mermaid sin convertir', () => {
+  it('no unconverted Mermaid diagram', () => {
     expect(noMermaid(input([page('/')]))).toEqual([]);
     expect(noMermaid(input([page('/a/', { mermaidBlocks: 2 })]))[0]?.message).toMatch(
-      /2 diagramas/,
+      /2 Mermaid diagrams/,
     );
   });
 });
 
 describe('jsBudget', () => {
-  it('ninguna página puede descargar más de 400 KB de JavaScript', () => {
+  it('no page can download more than 400 KB of JavaScript', () => {
     expect(JS_BUDGET_BYTES).toBe(400 * 1024);
     expect(jsBudget(input([page('/', {}, JS_BUDGET_BYTES)]))).toEqual([]);
     expect(jsBudget(input([page('/a/', {}, JS_BUDGET_BYTES + 1)]))[0]?.message).toMatch(
-      /el límite es 400 KB/,
+      /the limit is 400 KB/,
     );
   });
 });
 
 describe('titleNotDuplicated', () => {
-  it('avisa si el título es «X | X»', () => {
+  it('reports if the title is «X | X»', () => {
     expect(
       titleNotDuplicated(
         input([page('/', { title: 'Backend desde cero: curso gratis para aprender backend' })]),
@@ -303,7 +303,7 @@ describe('breadcrumbsOnPhasePages', () => {
     itemListElement: [{ item: `${SITE}/` }, { item: last }],
   });
 
-  it('las páginas de una fase llevan migas que terminan en ellas mismas', () => {
+  it('phase pages have breadcrumbs that end at themselves', () => {
     const pages = [
       page('/fase-0/que-es-dns/', { jsonLd: [crumbs(`${SITE}/fase-0/que-es-dns/`)] }),
       page('/en/phase-0/', { lang: 'en', jsonLd: [crumbs(`${SITE}/en/phase-0/`)] }),
@@ -311,11 +311,11 @@ describe('breadcrumbsOnPhasePages', () => {
     expect(breadcrumbsOnPhasePages(input(pages))).toEqual([]);
   });
 
-  it('las páginas fuera de las fases no las necesitan', () => {
+  it('pages outside the phases do not need them', () => {
     expect(breadcrumbsOnPhasePages(input([page('/roadmap/')]))).toEqual([]);
   });
 
-  it('avisa si faltan o si no terminan en la propia página', () => {
+  it('reports if they are missing or do not end at the page itself', () => {
     const pages = [
       page('/fase-0/que-es-dns/'),
       page('/fase-0/tls-y-https/', { jsonLd: [crumbs(`${SITE}/fase-0/`)] }),
@@ -330,21 +330,21 @@ describe('breadcrumbsOnPhasePages', () => {
 describe('ogImageExists', () => {
   const files = new Set(['/og/fase-0/que-es-dns.png']);
 
-  it('cada página tiene una imagen para redes que existe en el build', () => {
+  it('each page has a social image that exists in the build', () => {
     const ok = page('/fase-0/que-es-dns/', { ogImage: `${SITE}/og/fase-0/que-es-dns.png` });
     expect(ogImageExists(input([ok], { files }))).toEqual([]);
   });
 
-  it('avisa si falta, si apunta fuera de la web o si el fichero no existe', () => {
+  it('reports if it is missing, points outside the site or the file does not exist', () => {
     const pages = [
       page('/a/'),
       page('/b/', { ogImage: 'https://otra.com/x.png' }),
       page('/c/', { ogImage: `${SITE}/og/c.png` }),
     ];
     expect(ogImageExists(input(pages, { files })).map((i) => i.message)).toEqual([
-      'no tiene og:image',
-      'og:image apunta fuera de la web: https://otra.com/x.png',
-      'og:image apunta a /og/c.png, que no existe en el build',
+      'has no og:image',
+      'og:image points outside the site: https://otra.com/x.png',
+      'og:image points to /og/c.png, which does not exist in the build',
     ]);
   });
 });
@@ -352,7 +352,7 @@ describe('ogImageExists', () => {
 describe('internalLinksResolve', () => {
   const files = new Set(['/index.html', '/fase-0/index.html', '/favicon.svg', '/og/index.png']);
 
-  it('los enlaces internos llevan a ficheros del build; los externos y las anclas no se comprueban', () => {
+  it('internal links lead to files of the build; external links and anchors are not checked', () => {
     const ok = page('/fase-0/', {
       links: [
         '/',
@@ -367,28 +367,28 @@ describe('internalLinksResolve', () => {
     expect(internalLinksResolve(input([ok], { files }))).toEqual([]);
   });
 
-  it('avisa de los enlaces a páginas que no existen, como una fase que solo está en español', () => {
+  it('reports links to pages that do not exist, like a phase that only exists in Spanish', () => {
     const issues = internalLinksResolve(
       input([page('/en/', { lang: 'en', links: ['/en/phase-1/', '/en/phase-1/'] })], { files }),
     );
     expect(issues.map((i) => i.message)).toEqual([
-      'enlaza a páginas que no existen en el build: /en/phase-1/',
+      'links to pages that do not exist in the build: /en/phase-1/',
     ]);
   });
 });
 
 describe('titleLength', () => {
-  it('el <title> no pasa de 70 caracteres; una tilde cuenta como uno', () => {
+  it('the <title> is at most 70 characters; an accented letter counts as one', () => {
     expect(TITLE_MAX).toBe(70);
     expect(titleLength(input([page('/', { title: 'á'.repeat(70) })]))).toEqual([]);
     expect(titleLength(input([page('/a/', { title: 'x'.repeat(71) })]))[0]?.message).toMatch(
-      /71 caracteres/,
+      /71 characters/,
     );
   });
 });
 
 describe('descriptionLength', () => {
-  it('la descripción tiene entre 70 y 155 caracteres', () => {
+  it('the description is between 70 and 155 characters', () => {
     expect([DESCRIPTION_MIN, DESCRIPTION_MAX]).toEqual([70, 155]);
     const ok = [
       page('/', { description: 'é'.repeat(155) }),
@@ -402,23 +402,23 @@ describe('descriptionLength', () => {
     expect(descriptionLength(input(wrong)).map((i) => i.url)).toEqual(['/a/', '/c/']);
   });
 
-  it('sin descripción no avisa: eso ya lo dice titleAndDescription', () => {
+  it('no description is not reported here: titleAndDescription already does', () => {
     expect(descriptionLength(input([page('/', { description: undefined })]))).toEqual([]);
   });
 });
 
-describe('ogImageExists con rutas codificadas', () => {
-  it('compara la ruta sin codificar: una imagen con tilde existe', () => {
+describe('ogImageExists with encoded paths', () => {
+  it('compares the decoded path: an image with an accent exists', () => {
     const files = new Set(['/og/fase-1/introducción.png']);
     const withAccent = page('/a/', { ogImage: `${SITE}/og/fase-1/introducci%C3%B3n.png` });
     expect(ogImageExists(input([withAccent], { files }))).toEqual([]);
   });
 });
 
-describe('noFallbackCopies: el mensaje', () => {
-  it('explica las dos causas posibles de un noindex', () => {
+describe('noFallbackCopies: the message', () => {
+  it('explains the two possible causes of a noindex', () => {
     const [issue] = noFallbackCopies(input([page('/x/', { robots: 'noindex' })]));
-    expect(issue?.message).toMatch(/copia de respaldo/);
-    expect(issue?.message).toMatch(/a propósito/);
+    expect(issue?.message).toMatch(/fallback copy/);
+    expect(issue?.message).toMatch(/on purpose/);
   });
 });

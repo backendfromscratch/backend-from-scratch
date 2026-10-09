@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { closureBytes, jsImports, scriptEntries } from './js-budget';
 
 describe('scriptEntries', () => {
-  it('encuentra los scripts, los modulepreload, las islas de Astro y los imports en línea', () => {
+  it('finds scripts, modulepreloads, Astro islands and inline imports', () => {
     const html = `<script type="module" src="/_astro/page.js"></script>
 <link rel="modulepreload" href="/_astro/pre.js">
 <astro-island component-url="/_astro/Lab.js" renderer-url="/_astro/client.js"></astro-island>
@@ -19,7 +19,7 @@ describe('scriptEntries', () => {
 });
 
 describe('jsImports', () => {
-  it('resuelve imports estáticos y dinámicos, con comillas dobles, simples o invertidas', () => {
+  it('resolves static and dynamic imports, with double, single or backtick quotes', () => {
     const code =
       'import{a}from"./a.js";import "./b.js";const c=()=>import(`./sub/c.js`);import(\'/_astro/d.js\');';
     expect(jsImports(code, '/_astro/page.js').sort()).toEqual([
@@ -30,7 +30,7 @@ describe('jsImports', () => {
     ]);
   });
 
-  it('resuelve rutas con ../', () => {
+  it('resolves paths with ../', () => {
     expect(jsImports('import"../x.js"', '/_astro/sub/y.js')).toEqual(['/_astro/x.js']);
   });
 });
@@ -44,7 +44,7 @@ describe('closureBytes', () => {
   const read = (path: string) => files[path];
   const size = (code: string) => new TextEncoder().encode(code).length;
 
-  it('suma cada fichero alcanzable una sola vez, también los imports dinámicos', () => {
+  it('adds up each reachable file once, dynamic imports included', () => {
     const expected =
       size(files['/_astro/page.js']!) +
       size(files['/_astro/shared.js']!) +
@@ -52,7 +52,7 @@ describe('closureBytes', () => {
     expect(closureBytes(['/_astro/page.js'], read)).toBe(expected);
   });
 
-  it('ignora los ficheros que no existen', () => {
+  it('ignores files that do not exist', () => {
     expect(closureBytes(['/_astro/no-existe.js'], read)).toBe(0);
   });
 });

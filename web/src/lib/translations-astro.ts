@@ -3,7 +3,7 @@ import { buildTranslationIndex, type TranslationIndex } from './translations';
 
 let index: Promise<TranslationIndex> | undefined;
 
-/** El índice de traducciones de todo el contenido. Se calcula una vez por build. */
+/** The translation index of all the content. Computed once per build. */
 export function getTranslationIndex(): Promise<TranslationIndex> {
   index ??= getCollection('docs').then((docs) =>
     buildTranslationIndex(

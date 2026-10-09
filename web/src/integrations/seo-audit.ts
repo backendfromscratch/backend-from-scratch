@@ -1,6 +1,7 @@
 /**
- * Auditoría SEO del build: lee el HTML generado y hace fallar el build si algo de SEO se ha roto
- * (reglas en src/lib/seo/audit.ts). Va la ÚLTIMA en `integrations`: necesita el sitemap ya escrito.
+ * SEO audit of the build: reads the generated HTML and fails the build if something SEO-related
+ * broke (rules in src/lib/seo/audit.ts). It goes LAST in `integrations`: it needs the sitemap
+ * already written.
  */
 import type { AstroIntegration } from 'astro';
 import fs from 'node:fs';
@@ -10,7 +11,7 @@ import { auditSite, type AuditPage } from '../lib/seo/audit';
 import { closureBytes, scriptEntries } from '../lib/seo/js-budget';
 import { parsePage } from '../lib/seo/page';
 
-/** Todos los ficheros del build, como rutas públicas: '/fase-0/que-es-dns/index.html'. */
+/** All the files of the build, as public paths: '/fase-0/que-es-dns/index.html'. */
 function listFiles(root: string): string[] {
   return fs
     .readdirSync(root, { recursive: true, withFileTypes: true })
@@ -28,8 +29,8 @@ export function seoAudit(): AstroIntegration {
     name: 'seo-audit',
     hooks: {
       'astro:config:done': ({ config }) => {
-        // Sin `site` (antes de la Tarea 2), las reglas que comparan URLs absolutas dan un fallo
-        // claro («canonical=…, y debería ser…») en lugar de romper con «Invalid URL».
+        // Without `site` in astro.config.ts, the rules that compare absolute URLs give a clear
+        // failure ("canonical=…, but it should be…") instead of breaking with "Invalid URL".
         site = config.site ?? 'http://localhost';
       },
       'astro:build:done': ({ dir, logger }) => {
@@ -67,16 +68,16 @@ export function seoAudit(): AstroIntegration {
         );
         if (heaviest) {
           logger.info(
-            `JavaScript más pesado: ${Math.round(heaviest.jsBytes / 1024)} KB, en ${heaviest.url}`,
+            `Heaviest JavaScript: ${Math.round(heaviest.jsBytes / 1024)} KB, on ${heaviest.url}`,
           );
         }
         if (issues.length > 0) {
           for (const issue of issues) logger.error(`${issue.url} [${issue.rule}] ${issue.message}`);
           throw new Error(
-            `[seo-audit] ${issues.length} problemas de SEO: el build falla para que no se publiquen.`,
+            `[seo-audit] ${issues.length} SEO problems: the build fails so they are not published.`,
           );
         }
-        logger.info(`${pages.length} páginas auditadas, sin problemas.`);
+        logger.info(`${pages.length} pages audited, no problems.`);
       },
     },
   };

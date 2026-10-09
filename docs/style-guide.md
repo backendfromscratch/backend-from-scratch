@@ -129,7 +129,7 @@ The site imitates a code editor (spec: `docs/specs/2026-10-02-ide-theme-design.m
   - prose (paragraphs, lists, `dl` and quotes) reaches at most `--ide-measure` (75ch);
   - boxes, `--ide-box-width`;
   - wide pieces use the whole editor: tables, `figure`, code blocks, `TryIt`, labs (`astro-island`) and the phase list.
-  A new component that needs width is added to that list in `theme.css` («Prosa legible», "Readable prose").
+  A new component that needs width is added to that list in `theme.css` ("Readable prose").
 - **Line numbers:** the title is 1 and the lesson's lead-in is 2. Pieces that scroll (tables, sequence and chain diagrams, labs) carry no number.
 - **Minimap:** it draws every word of the title, the lead-in and the content, like VS Code's. What goes in `pre`, `code` or an Expressive Code block comes out green; if a new component shows code in some other way, add it to `wordKind` (`web/src/lib/minimap.ts`).
 - **Tabs and side panel:**

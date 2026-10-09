@@ -4,7 +4,7 @@ import { breadcrumbJsonLd } from './structured-data';
 const SITE = 'https://backenddesdecero.com/';
 
 describe('breadcrumbJsonLd', () => {
-  it('es un BreadcrumbList de schema.org con posiciones desde 1 y URLs absolutas', () => {
+  it('is a schema.org BreadcrumbList with positions from 1 and absolute URLs', () => {
     const json = breadcrumbJsonLd(
       [
         { name: 'Backend desde cero', url: '/' },
@@ -29,7 +29,7 @@ describe('breadcrumbJsonLd', () => {
     });
   });
 
-  it('escapa «<» para que ningún texto pueda cerrar el <script>', () => {
+  it('escapes «<» so no text can close the <script>', () => {
     const json = breadcrumbJsonLd([{ name: '</script><b>', url: '/' }], SITE);
     expect(json).not.toContain('<');
     expect(JSON.parse(json).itemListElement[0].name).toBe('</script><b>');

@@ -1,6 +1,6 @@
 /**
- * Lo mínimo de hast (el árbol HTML de unified) para construir los diagramas y recorrerlos en los
- * tests, sin depender de los tipos de unified.
+ * The minimum of hast (unified's HTML tree) needed to build the diagrams and walk them in tests,
+ * without depending on unified's types.
  */
 export interface HastText {
   type: 'text';
@@ -24,7 +24,7 @@ export function el(
   return { type: 'element', tagName, properties, children };
 }
 
-/** Varias líneas de texto separadas por <br>. */
+/** Several lines of text separated by <br>. */
 export function lines(parts: readonly string[]): HastNode[] {
   return parts.flatMap((part, i) => (i === 0 ? [text(part)] : [el('br', {}), text(part)]));
 }
@@ -34,14 +34,14 @@ export function classList(node: HastElement): string[] {
   return Array.isArray(value) ? value : [];
 }
 
-/** Los elementos (el nodo incluido) que tienen exactamente esa clase, en orden de documento. */
+/** The elements (the node itself included) that have exactly that class, in document order. */
 export function findByClass(node: HastNode, className: string): HastElement[] {
   if (node.type === 'text') return [];
   const own = classList(node).includes(className) ? [node] : [];
   return [...own, ...node.children.flatMap((child) => findByClass(child, className))];
 }
 
-/** El texto de un nodo; cada <br> es un salto de línea. */
+/** The text of a node; each <br> is a line break. */
 export function textContent(node: HastNode): string {
   if (node.type === 'text') return node.value;
   if (node.tagName === 'br') return '\n';
@@ -49,13 +49,13 @@ export function textContent(node: HastNode): string {
 }
 
 const VOID_ELEMENTS = new Set(['br']);
-/** Nombres de propiedad de hast que no son el nombre del atributo HTML. */
+/** hast property names that are not the HTML attribute name. */
 const ATTRIBUTE_NAMES: Record<string, string> = { className: 'class', ariaHidden: 'aria-hidden' };
 
 const escapeText = (value: string) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;');
 const escapeAttribute = (value: string) => escapeText(value).replace(/"/g, '&quot;');
 
-/** El HTML de un nodo: lo que el procesador de Markdown inserta en la página. */
+/** The HTML of a node: what the Markdown processor inserts into the page. */
 export function toHtml(node: HastNode): string {
   if (node.type === 'text') return escapeText(node.value);
   const attributes = Object.entries(node.properties)

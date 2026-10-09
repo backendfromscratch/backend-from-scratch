@@ -9,15 +9,15 @@ export const collections = {
     loader: docsLoader(),
     schema: docsSchema({
       extend: z.object({
-        // Une la página con su traducción cuando sus rutas difieren (/fase-0/que-es-dns ↔
-        // /en/phase-0/what-is-dns). Es la misma en los dos idiomas. Ver src/lib/translations.ts.
+        // Links the page to its translation when their routes differ (/fase-0/que-es-dns ↔
+        // /en/phase-0/what-is-dns). It is the same in both languages. See src/lib/translations.ts.
         translationKey: z.string().optional(),
-        // Cabecera obligatoria de cada lección (ver isLessonId y overrides/PageTitle.astro).
+        // Required header of each lesson (see isLessonId and overrides/PageTitle.astro).
         lesson: z
           .object({
             oneLiner: z.string().min(1),
             objectives: z.array(z.string().min(1)).min(2).max(4),
-            // Las translationKey de las lecciones que conviene leer antes (p. ej. [tcp-vs-udp]).
+            // The translationKeys of the lessons worth reading first (e.g. [tcp-vs-udp]).
             prerequisites: z.array(z.string()).default([]),
           })
           .optional(),
@@ -27,7 +27,7 @@ export const collections = {
   i18n: defineCollection({
     loader: i18nLoader(),
     schema: i18nSchema({
-      // Textos de interfaz propios. Son obligatorios: si falta uno en algún idioma, el build falla.
+      // Our own interface strings. They are required: if one is missing in any language, the build fails.
       extend: z.object({
         'reading.minutes': z.string(),
         'phase.comingSoon': z.string(),
@@ -63,14 +63,14 @@ export const collections = {
     }),
   }),
   glossary: defineCollection({
-    // Un fichero YAML por término e idioma: src/content/glossary/es/port.yaml → id "es/port".
+    // One YAML file per term and language: src/content/glossary/es/port.yaml → id "es/port".
     loader: glob({ pattern: '**/*.yaml', base: './src/content/glossary' }),
     schema: z.object({
       term: z.string(),
       short: z.string(),
       related: z.array(z.string()).default([]),
-      // La translationKey de la lección que lo explica, si no es la primera que lo usa con <Term>
-      // (p. ej. «puerto» sale antes, pero se explica en ip-ports-sockets). Ver explainingLessons.
+      // The translationKey of the lesson that explains it, if it is not the first one that uses it
+      // with <Term> (e.g. «puerto» appears earlier, but is explained in ip-ports-sockets). See explainingLessons.
       lesson: z.string().optional(),
     }),
   }),

@@ -1,17 +1,17 @@
 /**
- * Laboratorio dns-lookup: la lógica, sin red ni interfaz.
+ * dns-lookup lab: the logic, without network or interface.
  *
- * Lee las respuestas DoH (DNS sobre HTTPS, en su formato JSON), encuentra las zonas que hay entre
- * la raíz y el nombre consultado y cuenta el recorrido que hace un resolver para responder.
- * No sabe de React ni de idiomas: resolver.ts hace las consultas y strings.ts pone las frases.
+ * Reads the DoH responses (DNS over HTTPS, in its JSON format), finds the zones between
+ * the root and the looked-up name and tells the path a resolver takes to answer.
+ * It knows nothing about React or languages: resolver.ts makes the lookups and strings.ts provides the sentences.
  * Spec: docs/specs/2026-10-02-site-and-phase-0-design.md (§6.4)
  */
 
-/** Los tipos de registro que se pueden pedir en el laboratorio. */
+/** The record types that can be requested in the lab. */
 export const RECORD_TYPES = ['A', 'AAAA', 'CNAME', 'MX', 'TXT', 'NS'] as const;
 export type RecordType = (typeof RECORD_TYPES)[number];
 
-/** Códigos numéricos de tipo (RFC 1035 y siguientes) de los registros que aparecen en las respuestas. */
+/** Numeric type codes (RFC 1035 and later) of the records that appear in the responses. */
 const TYPE_NAMES: Record<number, string> = {
   1: 'A',
   2: 'NS',
@@ -25,12 +25,12 @@ const TYPE_NAMES: Record<number, string> = {
 export interface DnsRecord {
   name: string;
   type: string;
-  /** Segundos que le quedan en la caché del resolver. */
+  /** Seconds left in the resolver's cache. */
   ttl: number;
   data: string;
 }
 
-/** El código de la respuesta, por su nombre: NOERROR, NXDOMAIN, SERVFAIL, REFUSED… («RCODE9» si es raro). */
+/** The response code, by name: NOERROR, NXDOMAIN, SERVFAIL, REFUSED… (“RCODE9” if unusual). */
 export type DnsStatus = string;
 
 export interface DnsResponse {
@@ -38,7 +38,7 @@ export interface DnsResponse {
   answers: DnsRecord[];
 }
 
-/** Una zona del recorrido: un nivel del árbol de nombres con sus propios servidores. */
+/** A zone of the path: a level of the name tree with its own servers. */
 export interface Zone {
   name: string;
   servers: string[];
@@ -50,20 +50,20 @@ export interface LookupResult {
   name: string;
   type: RecordType;
   outcome: Outcome;
-  /** El código de la respuesta final: con un error, dice cuál (SERVFAIL, REFUSED…). */
+  /** The final response code: with an error, it says which (SERVFAIL, REFUSED…). */
   status: DnsStatus;
   records: DnsRecord[];
   path: Zone[];
 }
 
-/** Un alias (CNAME): el primer nombre de la cadena, el último destino y los de en medio. */
+/** An alias (CNAME): the first name of the chain, the last target and those in between. */
 export interface Alias {
   name: string;
   target: string;
   via: string[];
 }
 
-/** Un paso del recorrido, para contarlo de uno en uno. */
+/** A step of the path, to tell it one at a time. */
 export type PathStep =
   | { kind: 'ask'; name: string; type: RecordType }
   | { kind: 'referral'; zone: Zone; next: Zone }
@@ -75,7 +75,7 @@ export type PathStep =
       status: DnsStatus;
       records: DnsRecord[];
       alias: Alias | null;
-      /** El alias apunta fuera de esta zona: su servidor no tiene la respuesta y el resolver la busca aparte. */
+      /** The alias points outside this zone: its server does not have the answer and the resolver looks it up separately. */
       leavesZone: boolean;
     }
   | {
@@ -84,27 +84,27 @@ export type PathStep =
       type: RecordType;
       outcome: Outcome;
       records: DnsRecord[];
-      /** Si el destino es a su vez un alias: adónde llega la cadena y por dónde pasa. */
+      /** If the target is itself an alias: where the chain ends and what it passes through. */
       chain: { target: string; via: string[] } | null;
     }
   | { kind: 'reply'; type: RecordType; outcome: Outcome; status: DnsStatus; records: DnsRecord[] };
 
-/** Minúsculas y sin el punto final. La raíz, que puede llegar como «» o como «.», es siempre «.». */
+/** Lowercase and without the trailing dot. The root, which can arrive as “” or as “.”, is always “.”. */
 export function normalizeName(name: string): string {
   const trimmed = name.trim().toLowerCase().replace(/\.$/, '');
   return trimmed === '' ? '.' : trimmed;
 }
 
-/** Una etiqueta: letras, cifras, guiones y guiones bajos (como en _dmarc), sin guion al principio ni al final. */
+/** A label: letters, digits, hyphens and underscores (as in _dmarc), with no hyphen at the start or end. */
 const LABEL = /^(?!-)[a-z0-9_-]{1,63}(?<!-)$/;
 
 export type DomainResult =
   { ok: true; name: string } | { ok: false; reason: 'empty' | 'invalid' | 'ip' };
 
-/** Una IPv4 (cuatro números) o una IPv6 (la URL la da entre corchetes). */
+/** An IPv4 (four numbers) or an IPv6 (the URL gives it in brackets). */
 const IP = /^(\d{1,3}(\.\d{1,3}){3}|\[[0-9a-f:.]+\])$/i;
 
-/** «2606:4700::1111» o «::1»: una IPv6 escrita sin corchetes, que como URL no se entendería. */
+/** “2606:4700::1111” or “::1”: an IPv6 written without brackets, which would not be understood as a URL. */
 function isBareIpv6(text: string): boolean {
   if (!text.includes(':') || !/^[0-9a-f:.]+$/i.test(text)) return false;
   try {
@@ -115,19 +115,19 @@ function isBareIpv6(text: string): boolean {
   }
 }
 
-/** Lo que escribe el lector → un nombre de dominio, o por qué no lo es. */
+/** What the reader types → a domain name, or why it is not one. */
 export function parseDomain(input: string): DomainResult {
   const text = input.trim();
   if (text === '') return { ok: false, reason: 'empty' };
   if (isBareIpv6(text)) return { ok: false, reason: 'ip' };
   let host: string;
   try {
-    // Una URL entera (https://example.com/ruta) o un nombre con tildes: URL da el nombre en ASCII.
+    // A whole URL (https://example.com/path) or a name with accents: URL gives the name in ASCII.
     host = new URL(text.includes('://') ? text : `http://${text}`).hostname;
   } catch {
     return { ok: false, reason: 'invalid' };
   }
-  // Una IP no es un nombre: el DNS va de nombres a IPs. Mejor decirlo que responder NXDOMAIN.
+  // An IP is not a name: DNS goes from names to IPs. Better to say so than to answer NXDOMAIN.
   if (IP.test(host)) return { ok: false, reason: 'ip' };
   const name = normalizeName(host);
   const valid =
@@ -135,7 +135,7 @@ export function parseDomain(input: string): DomainResult {
   return valid ? { ok: true, name } : { ok: false, reason: 'invalid' };
 }
 
-/** Cada sufijo del nombre, de la raíz hacia abajo: «www.example.com» → «.», «com», «example.com», «www.example.com». */
+/** Each suffix of the name, from the root down: «www.example.com» → «.», «com», «example.com», «www.example.com». */
 export function suffixes(name: string): string[] {
   const labels = name.split('.');
   return ['.', ...labels.map((_, i) => labels.slice(labels.length - 1 - i).join('.'))];
@@ -159,7 +159,7 @@ function isDohAnswer(value: unknown): value is DohAnswer {
   );
 }
 
-/** Los códigos de respuesta (RCODE, RFC 1035 y RFC 6895). */
+/** The response codes (RCODE, RFC 1035 and RFC 6895). */
 const STATUS: Record<number, DnsStatus> = {
   0: 'NOERROR',
   1: 'FORMERR',
@@ -169,11 +169,11 @@ const STATUS: Record<number, DnsStatus> = {
   5: 'REFUSED',
 };
 
-/** Una respuesta DoH en JSON (Cloudflare o Google) → DnsResponse. Falla si no lo parece. */
+/** A DoH response in JSON (Cloudflare or Google) → DnsResponse. Fails if it does not look like one. */
 /**
- * Un TXT puede ir en varios trozos, que quien lo lee une. Cloudflare entrecomilla cada trozo
- * («"v=DKIM1; p=MIIB" "IjAN"») y Google los da ya unidos y sin comillas. Aquí se ven igual con los
- * dos: unidos y entre comillas, como los enseña dig cuando hay un solo trozo (lo normal).
+ * A TXT can come in several chunks, which the reader joins. Cloudflare quotes each chunk
+ * (“"v=DKIM1; p=MIIB" "IjAN"”) and Google gives them already joined and unquoted. Here they look the same with
+ * both: joined and quoted, as dig shows them when there is a single chunk (the usual case).
  */
 function txtData(data: string): string {
   const pieces = [...data.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map(([, piece]) =>
@@ -183,9 +183,9 @@ function txtData(data: string): string {
 }
 
 export function parseDohJson(json: unknown): DnsResponse {
-  if (typeof json !== 'object' || json === null) throw new Error('Respuesta DNS inesperada');
+  if (typeof json !== 'object' || json === null) throw new Error('Unexpected DNS response');
   const { Status, Answer } = json as { Status?: unknown; Answer?: unknown };
-  if (typeof Status !== 'number') throw new Error('Respuesta DNS inesperada');
+  if (typeof Status !== 'number') throw new Error('Unexpected DNS response');
   const answers = (Array.isArray(Answer) ? Answer : []).filter(isDohAnswer).map((answer) => ({
     name: normalizeName(answer.name),
     type: TYPE_NAMES[answer.type] ?? `TYPE${answer.type}`,
@@ -196,8 +196,8 @@ export function parseDohJson(json: unknown): DnsResponse {
 }
 
 /**
- * Un nombre es una zona si la consulta NS devuelve servidores para ese nombre exacto.
- * (La de www.github.com devuelve su CNAME y los NS de github.com: esos no cuentan.)
+ * A name is a zone if the NS lookup returns servers for that exact name.
+ * (The one for www.github.com returns its CNAME and the NS of github.com: those do not count.)
  */
 function zoneOf(name: string, ns: DnsResponse | undefined): Zone | null {
   const servers = (ns?.answers ?? [])
@@ -207,14 +207,14 @@ function zoneOf(name: string, ns: DnsResponse | undefined): Zone | null {
   return servers.length > 0 ? { name, servers } : null;
 }
 
-/** Las zonas entre la raíz y el nombre. `nsBySuffix` va en el orden de `suffixes(name)`. */
+/** The zones between the root and the name. `nsBySuffix` is in the order of `suffixes(name)`. */
 export function buildPath(name: string, nsBySuffix: DnsResponse[]): Zone[] {
   return suffixes(name)
     .map((suffix, i) => zoneOf(suffix, nsBySuffix[i]))
     .filter((zone): zone is Zone => zone !== null);
 }
 
-/** La respuesta final, con su recorrido, en uno de los cuatro resultados posibles. */
+/** The final response, with its path, as one of the four possible results. */
 export function interpret(
   name: string,
   type: RecordType,
@@ -226,7 +226,7 @@ export function interpret(
       ? 'nxdomain'
       : final.status !== 'NOERROR'
         ? 'error'
-        : // Un CNAME sin registros del tipo pedido detrás no es una respuesta: es NODATA.
+        : // A CNAME with no records of the requested type behind it is not an answer: it is NODATA.
           final.answers.some((record) => record.type === type)
           ? 'answer'
           : 'nodata';
@@ -238,14 +238,14 @@ interface AliasLink {
   target: string;
 }
 
-/** Los CNAME de una respuesta, en orden: cada nombre y adónde apunta. */
+/** The CNAMEs of a response, in order: each name and where it points. */
 function aliasLinks(records: DnsRecord[]): AliasLink[] {
   return records
     .filter((record) => record.type === 'CNAME')
     .map((record) => ({ name: record.name, target: normalizeName(record.data) }));
 }
 
-/** Una cadena de alias como alias: el primer nombre, el último destino y los de en medio. */
+/** A chain of aliases as one alias: the first name, the last target and those in between. */
 function chainOf(links: AliasLink[]): Alias | null {
   const first = links[0];
   const last = links[links.length - 1];
@@ -261,8 +261,8 @@ const inZone = (name: string, zone: string) =>
   zone === '.' || name === zone || name.endsWith(`.${zone}`);
 
 /**
- * El recorrido contado paso a paso: la pregunta, una derivación por zona, la respuesta final y la del resolver.
- * Si la respuesta es un alias a otra zona, hay un paso más: el resolver busca el destino aparte.
+ * The path told step by step: the question, one referral per zone, the final answer and the resolver's.
+ * If the answer is an alias to another zone, there is one more step: the resolver looks up the target separately.
  */
 export function explain(result: LookupResult): PathStep[] {
   const steps: PathStep[] = [{ kind: 'ask', name: result.name, type: result.type }];
@@ -274,8 +274,8 @@ export function explain(result: LookupResult): PathStep[] {
       steps.push({ kind: 'referral', zone, next });
       return;
     }
-    // El servidor de la zona solo conoce los alias de su zona; el resto de la cadena lo encuentra
-    // el resolver aparte, al buscar el destino.
+    // The zone's server only knows the aliases of its zone; the rest of the chain is found
+    // by the resolver separately, when looking up the target.
     const known: AliasLink[] = [];
     for (const link of links) {
       if (!inZone(link.name, zone.name)) break;

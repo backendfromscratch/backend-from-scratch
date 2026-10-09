@@ -1,14 +1,14 @@
 /**
- * Diagramas de flujo verticales con la sintaxis de Mermaid (flowchart TB), convertidos a HTML en el
- * build. Solo se admite una cadena: A["texto"] -->|enlace| B["texto"], sin ramas.
+ * Vertical flow diagrams in Mermaid syntax (flowchart TB), converted to HTML at build time. Only a
+ * chain is supported: A["text"] -->|link| B["text"], with no branches.
  */
 import { DiagramError } from './errors';
 import { el, text, type HastElement } from './hast';
 
 export interface Chain {
-  /** Las líneas de texto de cada nodo, en orden; la primera es su nombre. */
+  /** The lines of text of each node, in order; the first is its name. */
   nodes: string[][];
-  /** El texto del enlace entre cada nodo y el siguiente. */
+  /** The text of the link between each node and the next. */
   edges: string[];
 }
 
@@ -22,7 +22,7 @@ export function parseChain(source: string): Chain {
     .filter((line) => line.text);
   if (first?.text !== 'flowchart TB') {
     throw new DiagramError(
-      `Solo se admite «flowchart TB» (de arriba abajo); este diagrama empieza por «${first?.text}».`,
+      `Only «flowchart TB» (top to bottom) is supported; this diagram starts with «${first?.text}».`,
       first?.number,
     );
   }
@@ -34,7 +34,7 @@ export function parseChain(source: string): Chain {
     nodes.add(id);
     if (label === undefined) return;
     if (labels.has(id) && labels.get(id) !== label)
-      throw new DiagramError(`«${id}» tiene dos textos.`, number);
+      throw new DiagramError(`«${id}» has two texts.`, number);
     labels.set(id, label);
   };
 
@@ -42,7 +42,7 @@ export function parseChain(source: string): Chain {
     const match = EDGE.exec(line);
     if (!match) {
       throw new DiagramError(
-        `Línea no admitida: «${line}». Admitido: A["texto"] -->|enlace| B["texto"].`,
+        `Unsupported line: «${line}». Supported: A["text"] -->|link| B["text"].`,
         number,
       );
     }
@@ -50,20 +50,20 @@ export function parseChain(source: string): Chain {
     define(from!, fromLabel, number);
     define(to!, toLabel, number);
     if (next.has(from!))
-      throw new DiagramError(`Solo se admite una cadena: «${from}» tiene dos salidas.`, number);
+      throw new DiagramError(`Only a chain is supported: «${from}» has two outputs.`, number);
     if (incoming.has(to!))
-      throw new DiagramError(`Solo se admite una cadena: «${to}» tiene dos entradas.`, number);
+      throw new DiagramError(`Only a chain is supported: «${to}» has two inputs.`, number);
     next.set(from!, { to: to!, edge: edge!.trim() });
     incoming.add(to!);
   }
 
-  if (next.size === 0) throw new Error('El diagrama no tiene ningún enlace.');
+  if (next.size === 0) throw new Error('The diagram has no links.');
   for (const id of nodes) {
     if (!labels.has(id))
-      throw new Error(`«${id}» no tiene texto: escribe ${id}["…"] la primera vez que aparece.`);
+      throw new Error(`«${id}» has no text: write ${id}["…"] the first time it appears.`);
   }
   const starts = [...nodes].filter((id) => !incoming.has(id));
-  if (starts.length !== 1) throw new Error('El diagrama tiene que ser una sola cadena.');
+  if (starts.length !== 1) throw new Error('The diagram must be a single chain.');
 
   const chain: Chain = { nodes: [], edges: [] };
   let current: string | undefined = starts[0];
@@ -73,8 +73,7 @@ export function parseChain(source: string): Chain {
     if (step) chain.edges.push(step.edge);
     current = step?.to;
   }
-  if (chain.nodes.length !== nodes.size)
-    throw new Error('El diagrama tiene que ser una sola cadena.');
+  if (chain.nodes.length !== nodes.size) throw new Error('The diagram must be a single chain.');
   return chain;
 }
 

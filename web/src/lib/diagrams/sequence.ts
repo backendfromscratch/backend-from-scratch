@@ -1,7 +1,7 @@
 /**
- * Diagramas de secuencia escritos con la sintaxis de Mermaid, convertidos a HTML en el build. Solo
- * se admite lo que usa el curso: participantes con nombre, mensajes (->>), respuestas (-->>) y notas.
- * Lo demás falla con un mensaje claro: el build no publica un diagrama que no sabe dibujar.
+ * Sequence diagrams written in Mermaid syntax, converted to HTML at build time. Only what the course
+ * uses is supported: named participants, messages (->>), replies (-->>) and notes. Anything else
+ * fails with a clear message: the build does not publish a diagram it cannot draw.
  */
 import { DiagramError } from './errors';
 import { el, lines, text, type HastElement } from './hast';
@@ -30,17 +30,14 @@ export function parseSequence(source: string): Sequence {
     .map((text, i) => ({ text: text.trim(), number: i + 1 }))
     .filter((line) => line.text);
   if (first?.text !== 'sequenceDiagram') {
-    throw new DiagramError(
-      `Se esperaba «sequenceDiagram» y llega «${first?.text}».`,
-      first?.number,
-    );
+    throw new DiagramError(`Expected «sequenceDiagram» but got «${first?.text}».`, first?.number);
   }
   const participants: Participant[] = [];
   const steps: SequenceStep[] = [];
   const declared = (id: string, number: number) => {
     if (!participants.some((p) => p.id === id)) {
       throw new DiagramError(
-        `El participante «${id}» no está declarado: añade «participant ${id} as Nombre».`,
+        `Participant «${id}» is not declared: add «participant ${id} as Name».`,
         number,
       );
     }
@@ -54,12 +51,12 @@ export function parseSequence(source: string): Sequence {
     if (participant) {
       const [, id, label] = participant;
       if (participants.some((p) => p.id === id)) {
-        throw new DiagramError(`El participante «${id}» está repetido.`, number);
+        throw new DiagramError(`Participant «${id}» is declared twice.`, number);
       }
       participants.push({ id: id!, label: label!.trim() });
       if (participants.length > MAX_PARTICIPANTS) {
         throw new DiagramError(
-          `Caben como mucho ${MAX_PARTICIPANTS} participantes; este diagrama tiene ${participants.length}.`,
+          `At most ${MAX_PARTICIPANTS} participants fit; this diagram has ${participants.length}.`,
           number,
         );
       }
@@ -67,7 +64,7 @@ export function parseSequence(source: string): Sequence {
       const [, from, arrow, to, body] = message;
       if (from === to)
         throw new DiagramError(
-          `No se admite un mensaje de un participante a sí mismo («${from}»).`,
+          `A message from a participant to itself is not supported («${from}»).`,
           number,
         );
       steps.push({
@@ -86,21 +83,21 @@ export function parseSequence(source: string): Sequence {
       });
     } else {
       throw new DiagramError(
-        `Línea no admitida: «${line}». Admitido: participant X as Nombre, X->>Y: texto, X-->>Y: texto y Note over X[,Y]: texto.`,
+        `Unsupported line: «${line}». Supported: participant X as Name, X->>Y: text, X-->>Y: text and Note over X[,Y]: text.`,
         number,
       );
     }
   }
 
-  if (participants.length < 2) throw new Error('Hacen falta al menos 2 participantes.');
-  if (steps.length === 0) throw new Error('El diagrama no tiene ningún paso.');
+  if (participants.length < 2) throw new Error('At least 2 participants are needed.');
+  if (steps.length === 0) throw new Error('The diagram has no steps.');
   return { participants, steps };
 }
 
 /**
- * Una figura con una cuadrícula de una columna por participante (clases seq-c<columna> y
- * seq-s<anchura>, sin estilos en línea). Cada paso dice en texto quién habla a quién: lo oyen los
- * lectores de pantalla y, en pantallas estrechas, es lo que se ve (src/styles/diagrams.css).
+ * A figure with a grid of one column per participant (classes seq-c<column> and seq-s<width>, no
+ * inline styles). Each step says in text who talks to whom: screen readers announce it and, on
+ * narrow screens, it is what is shown (src/styles/diagrams.css).
  */
 export function renderSequence(seq: Sequence): HastElement {
   const column = new Map(seq.participants.map((p, i) => [p.id, i + 1]));

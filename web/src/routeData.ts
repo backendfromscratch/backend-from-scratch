@@ -1,7 +1,7 @@
 /**
- * Starlight deduce las traducciones cambiando el prefijo de idioma de la URL. Con rutas traducidas
- * (/fase-0/que-es-dns/ ↔ /en/phase-0/what-is-dns/) eso falla, y aquí se corrige con el índice de
- * traducciones: el sidebar, la paginación, los hreflang y las copias de respaldo.
+ * Starlight infers translations by swapping the language prefix of the URL. With translated routes
+ * (/fase-0/que-es-dns/ ↔ /en/phase-0/what-is-dns/) that fails, and here it is fixed with the
+ * translation index: the sidebar, pagination, hreflang and fallback copies.
  */
 import { defineRouteMiddleware } from '@astrojs/starlight/route-data';
 import { alternateLinks, fixPagination, keepSidebarLink, pruneSidebar } from './lib/route-fixes';
@@ -20,9 +20,9 @@ export const onRequest = defineRouteMiddleware(async (context) => {
   const index = await getTranslationIndex();
   const realUrls = new Set([...index.keyById.keys()].map(urlOfId));
 
-  // En inglés, el sidebar incluye las copias de respaldo de las páginas en español: fuera.
+  // In English, the sidebar includes the fallback copies of the Spanish pages: drop them.
   route.sidebar = pruneSidebar(route.sidebar, (href) => keepSidebarLink(href, realUrls));
-  // Starlight calculó la paginación con el sidebar sin limpiar: se corrige lo que apunta a copias.
+  // Starlight computed pagination with the unpruned sidebar: fix whatever points to copies.
   route.pagination = fixPagination(route.pagination, route.sidebar, realUrls);
 
   route.head = route.head.filter(
@@ -34,13 +34,13 @@ export const onRequest = defineRouteMiddleware(async (context) => {
       ),
   );
   if (route.isFallback) {
-    // El build borra estas copias (src/integrations/drop-fallbacks.ts). Si alguna se escapa, que no se indexe.
+    // The build deletes these copies (src/integrations/drop-fallbacks.ts). If one slips through, keep it out of the index.
     route.head.push({ tag: 'meta', attrs: { name: 'robots', content: 'noindex' } });
     return;
   }
   if (!context.site) return;
 
-  // La imagen que se ve al compartir la página (src/pages/og/[...route].png.ts). La 404 no tiene.
+  // The image shown when the page is shared (src/pages/og/[...route].png.ts). The 404 has none.
   const is404 = route.entry.id === '404' || route.entry.id.endsWith('/404');
   if (!is404) {
     route.head.push(
@@ -59,7 +59,7 @@ export const onRequest = defineRouteMiddleware(async (context) => {
 
   route.head.push(...alternateLinks(translationsOf(index, route.entry.id), context.site.href));
 
-  // Migas para Google: portada › fase › lección.
+  // Breadcrumbs for Google: home › phase › lesson.
   const locale = toLocale(route.locale);
   const current = currentLesson(route.sidebar, phases, locale);
   if (current) {

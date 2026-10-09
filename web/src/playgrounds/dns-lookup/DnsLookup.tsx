@@ -9,7 +9,7 @@ import { strings } from './strings';
 import './dns-lookup.css';
 
 interface Props {
-  /** Idioma de la lección donde se usa. */
+  /** Language of the lesson where it is used. */
   lang: Locale;
 }
 
@@ -20,7 +20,7 @@ type Status =
   | { kind: 'failed'; reason: LookupFailure }
   | { kind: 'done'; result: ResolvedLookup };
 
-/** Laboratorio: una consulta DNS real y el recorrido resolver → raíz → TLD → autoritativo, paso a paso. */
+/** Lab: a real DNS lookup and the path resolver → root → TLD → authoritative, step by step. */
 export default function DnsLookup({ lang }: Props) {
   const t = strings[lang];
   const ids = useId();
@@ -28,13 +28,13 @@ export default function DnsLookup({ lang }: Props) {
   const [type, setType] = useState<RecordType>('A');
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
   const [shown, setShown] = useState(0);
-  // Si el lector consulta dos veces seguidas, solo vale la respuesta de la última, y las peticiones de
-  // la anterior se cancelan (con nombres largos son decenas).
+  // If the reader looks up twice in a row, only the last answer counts, and the requests of
+  // the previous one are cancelled (with long names there are dozens).
   const latest = useRef(0);
   const inFlight = useRef<AbortController | null>(null);
-  // A quién se está preguntando: 1.1.1.1 y, si no responde, 8.8.8.8.
+  // Who is being asked: 1.1.1.1 and, if it does not answer, 8.8.8.8.
   const [asking, setAsking] = useState(RESOLVER.address);
-  // Cada intento cambia un poco el texto anunciado: así dos errores iguales seguidos se anuncian los dos.
+  // Each attempt changes the announced text a little: that way two identical errors in a row are both announced.
   const [attempt, setAttempt] = useState(0);
   useEffect(() => () => inFlight.current?.abort(), []);
 
@@ -44,7 +44,7 @@ export default function DnsLookup({ lang }: Props) {
     setAttempt((count) => count + 1);
     const parsed = parseDomain(domain);
     if (!parsed.ok) {
-      // Invalida también la consulta que pudiera estar en marcha: su respuesta no debe tapar este error.
+      // Also invalidates any lookup that may be running: its answer must not cover this error.
       latest.current++;
       setStatus({ kind: 'invalid', reason: parsed.reason });
       return;
@@ -79,7 +79,7 @@ export default function DnsLookup({ lang }: Props) {
   const texts = steps.slice(0, shown).map((step) => stepText(step, t, resolverAddress));
   const newest = texts[texts.length - 1];
 
-  // Lo que anuncia la región aria-live: el estado de la consulta y, al avanzar, el paso nuevo.
+  // What the aria-live region announces: the lookup status and, when advancing, the new step.
   let message: string;
   switch (status.kind) {
     case 'idle':
@@ -95,7 +95,7 @@ export default function DnsLookup({ lang }: Props) {
     case 'done':
       message = summary(status.result, t);
   }
-  // Al avanzar, el paso nuevo ya se ve en la lista: solo se anuncia para los lectores de pantalla.
+  // When advancing, the new step is already visible in the list: it is only announced for screen readers.
   const stepAnnouncement =
     status.kind === 'done' && shown > 1 && newest
       ? `${newest.from} → ${newest.to}: ${t.quoteOpen}${newest.says}${t.quoteClose}`

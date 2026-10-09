@@ -1,10 +1,10 @@
 /**
- * Playground crypto-keys: criptografía de verdad con la Web Crypto API del navegador.
+ * Playground crypto-keys: real cryptography with the browser's Web Crypto API.
  *
- * - Cifrado con RSA-OAEP (2048 bits, SHA-256): cifra la clave pública, descifra la privada.
- * - Firma con ECDSA (curva P-256, SHA-256): firma la clave privada, verifica la pública.
+ * - Encryption with RSA-OAEP (2048 bits, SHA-256): the public key encrypts, the private key decrypts.
+ * - Signing with ECDSA (P-256 curve, SHA-256): the private key signs, the public key verifies.
  *
- * No sabe de React ni de idiomas.
+ * It knows nothing about React or languages.
  */
 
 const RSA_OAEP: RsaHashedKeyGenParams = {
@@ -16,7 +16,7 @@ const RSA_OAEP: RsaHashedKeyGenParams = {
 const ECDSA_KEYS: EcKeyGenParams = { name: 'ECDSA', namedCurve: 'P-256' };
 const ECDSA_SIGN: EcdsaParams = { name: 'ECDSA', hash: 'SHA-256' };
 
-/** La Web Crypto API solo existe en contextos seguros: HTTPS o localhost. */
+/** The Web Crypto API only exists in secure contexts: HTTPS or localhost. */
 export function isCryptoAvailable(environment: {
   isSecureContext?: boolean;
   crypto?: Crypto;
@@ -44,31 +44,31 @@ export function generateEncryptionKeys(): Promise<CryptoKeyPair> {
 }
 
 /**
- * La clave privada de firma no es exportable: el playground nunca la enseña. (La pública siempre se
- * puede exportar, sea cual sea este valor: es la que se muestra.)
+ * The private signing key is not exportable: the playground never shows it. (The public one can always
+ * be exported, whatever this value is: it is the one that is shown.)
  */
 export function generateSigningKeys(): Promise<CryptoKeyPair> {
   return crypto.subtle.generateKey(ECDSA_KEYS, false, ['sign', 'verify']);
 }
 
-/** Cifra un texto con la clave pública. Devuelve el resultado en Base64. */
+/** Encrypts a text with the public key. Returns the result in Base64. */
 export async function encrypt(publicKey: CryptoKey, text: string): Promise<string> {
   const encrypted = await crypto.subtle.encrypt(RSA_OAEP, publicKey, utf8.encode(text));
   return toBase64(new Uint8Array(encrypted));
 }
 
-/** Descifra con la clave privada. Falla si no es la pareja de la pública que cifró. */
+/** Decrypts with the private key. Fails if it is not the pair of the public key that encrypted. */
 export async function decrypt(privateKey: CryptoKey, encrypted: string): Promise<string> {
   return utf8.decode(await crypto.subtle.decrypt(RSA_OAEP, privateKey, fromBase64(encrypted)));
 }
 
-/** Firma un texto con la clave privada. Devuelve la firma en Base64. */
+/** Signs a text with the private key. Returns the signature in Base64. */
 export async function sign(privateKey: CryptoKey, text: string): Promise<string> {
   const signature = await crypto.subtle.sign(ECDSA_SIGN, privateKey, utf8.encode(text));
   return toBase64(new Uint8Array(signature));
 }
 
-/** ¿Esta firma es de este texto y de la pareja de esta clave pública? Una firma ilegible tampoco es válida. */
+/** Is this signature for this text and from the pair of this public key? An unreadable signature is not valid either. */
 export async function verify(
   publicKey: CryptoKey,
   text: string,
@@ -86,7 +86,7 @@ export async function verify(
   }
 }
 
-/** Exporta una clave en PEM: la pública como SPKI y la privada como PKCS #8, en líneas de 64 caracteres. */
+/** Exports a key as PEM: the public one as SPKI and the private one as PKCS #8, in 64-character lines. */
 export async function exportPem(key: CryptoKey): Promise<string> {
   const isPublic = key.type === 'public';
   const der = await crypto.subtle.exportKey(isPublic ? 'spki' : 'pkcs8', key);
@@ -95,7 +95,7 @@ export async function exportPem(key: CryptoKey): Promise<string> {
   return [`-----BEGIN ${label}-----`, ...body, `-----END ${label}-----`].join('\n');
 }
 
-/** Una clave PEM en cinco líneas: la cabecera, la primera línea, «…», la última y el pie. */
+/** A PEM key in five lines: the header, the first line, "…", the last line and the footer. */
 export function abbreviatePem(pem: string): string {
   const lines = pem.trim().split('\n');
   if (lines.length <= 5) return lines.join('\n');

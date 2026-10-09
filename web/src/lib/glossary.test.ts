@@ -9,28 +9,28 @@ import {
 } from './glossary';
 
 describe('glossaryEntryId / termIdFromEntryId', () => {
-  it('construye el id de la colección a partir del idioma y el término', () => {
+  it('builds the collection id from the language and the term', () => {
     expect(glossaryEntryId('es', 'port')).toBe('es/port');
   });
 
-  it('extrae el id del término de un id de la colección', () => {
+  it('extracts the term id from a collection id', () => {
     expect(termIdFromEntryId('en/port')).toBe('port');
   });
 
-  it('lanza un error si el id no lleva idioma', () => {
-    expect(() => termIdFromEntryId('port')).toThrow(/sin idioma/);
+  it('throws if the id has no language', () => {
+    expect(() => termIdFromEntryId('port')).toThrow(/without a language/);
   });
 });
 
 describe('sortGlossary', () => {
   const entry = (term: string) => ({ data: { term } });
 
-  it('ordena según las reglas del idioma: en español, «árbol» va antes que «Base»', () => {
+  it('sorts by the rules of the language: in Spanish, «árbol» comes before «Base»', () => {
     const sorted = sortGlossary([entry('Servidor'), entry('árbol'), entry('Base')], 'es');
     expect(sorted.map((e) => e.data.term)).toEqual(['árbol', 'Base', 'Servidor']);
   });
 
-  it('no modifica la lista original', () => {
+  it('does not modify the original list', () => {
     const original = [entry('b'), entry('a')];
     sortGlossary(original, 'en');
     expect(original.map((e) => e.data.term)).toEqual(['b', 'a']);
@@ -38,7 +38,7 @@ describe('sortGlossary', () => {
 });
 
 describe('termPopoverId', () => {
-  it('el mismo HTML en cada build: el id sale del término y de cuántas veces ha salido en la página', () => {
+  it('the same HTML on every build: the id comes from the term and how many times it has appeared on the page', () => {
     const seen = new Map<string, number>();
     expect(termPopoverId(seen, 'port')).toBe('term-port');
     expect(termPopoverId(seen, 'tcp')).toBe('term-tcp');
@@ -46,26 +46,26 @@ describe('termPopoverId', () => {
     expect(termPopoverId(seen, 'port')).toBe('term-port-3');
   });
 
-  it('cada página empieza de cero', () => {
+  it('each page starts from zero', () => {
     expect(termPopoverId(new Map(), 'port')).toBe('term-port');
   });
 });
 
 describe('termsSeenIn', () => {
-  it('la misma cuenta para toda la página, aunque cada <Term> se pinte por separado', () => {
+  it('the same count for the whole page, even if each <Term> is rendered separately', () => {
     const page = {};
     termPopoverId(termsSeenIn(page), 'port');
     expect(termPopoverId(termsSeenIn(page), 'port')).toBe('term-port-2');
   });
 
-  it('otra página, otra cuenta', () => {
+  it('another page, another count', () => {
     termPopoverId(termsSeenIn({}), 'port');
     expect(termPopoverId(termsSeenIn({}), 'port')).toBe('term-port');
   });
 });
 
 describe('explainingLessons', () => {
-  // En el orden del curso: la introducción de la fase va primero.
+  // In course order: the phase introduction comes first.
   const lessons = [
     {
       id: 'fase-0',
@@ -87,32 +87,32 @@ describe('explainingLessons', () => {
   const explained = (terms: { id: string; lesson?: string }[]) =>
     explainingLessons(terms, lessons, knownKeys);
 
-  it('sin lección indicada, la primera del curso que usa el término, introducciones incluidas', () => {
+  it('with no lesson given, the first lesson in the course that uses the term, introductions included', () => {
     const result = explained([{ id: 'server' }, { id: 'terminal' }]);
     expect(result.get('server')).toBe('fase-0/modelo-cliente-servidor');
     expect(result.get('terminal')).toBe('fase-0');
   });
 
-  it('la lección indicada en el glosario manda sobre el primer uso', () => {
-    // «puerto» sale antes en cliente-servidor, pero se explica en la lección de IP y puertos.
+  it('the lesson given in the glossary takes precedence over the first use', () => {
+    // «puerto» appears earlier in client-server, but it is explained in the IP and ports lesson.
     expect(explained([{ id: 'port', lesson: 'ip-ports-sockets' }]).get('port')).toBe(
       'fase-0/ip-puertos-y-sockets',
     );
   });
 
-  it('no confunde un término con otro que empieza igual, y si nadie lo usa, ninguna', () => {
+  it('does not confuse a term with another that starts the same, and if nobody uses it, none', () => {
     const result = explained([{ id: 'por' }, { id: 'dns' }]);
     expect(result.has('por')).toBe(false);
     expect(result.has('dns')).toBe(false);
   });
 
-  it('una lección indicada que aún no está en este idioma: vuelve al primer uso', () => {
+  it('a given lesson that is not yet in this language: falls back to the first use', () => {
     expect(explained([{ id: 'server', lesson: 'dns' }]).get('server')).toBe(
       'fase-0/modelo-cliente-servidor',
     );
   });
 
-  it('una lección indicada que no existe en ningún idioma es un error (falla el build)', () => {
+  it('a given lesson that does not exist in any language is an error (the build fails)', () => {
     expect(() => explained([{ id: 'port', lesson: 'ip-port-sockets' }])).toThrow(
       /"port".*"ip-port-sockets"/,
     );

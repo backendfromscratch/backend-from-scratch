@@ -1,6 +1,6 @@
 /**
- * Lo que la auditoría SEO necesita saber de una página generada. Se lee con expresiones regulares:
- * el HTML lo genera Astro, siempre con los atributos entre comillas dobles.
+ * What the SEO audit needs to know about a generated page. It is read with regular expressions:
+ * Astro generates the HTML, always with attributes in double quotes.
  */
 export interface Alternate {
   hreflang: string;
@@ -15,13 +15,13 @@ export interface PageFacts {
   alternates: Alternate[];
   robots: string | undefined;
   ogImage: string | undefined;
-  /** Los bloques JSON-LD de la cabecera; uno que no sea JSON válido llega como { invalidJson }. */
+  /** The JSON-LD blocks in the head; one that is not valid JSON comes as { invalidJson }. */
   jsonLd: unknown[];
-  /** Las URLs a las que lleva el selector de idioma. */
+  /** The URLs the language selector leads to. */
   languageOptions: string[];
   h1Count: number;
   mermaidBlocks: number;
-  /** Los href de los enlaces (<a>) de la página. */
+  /** The hrefs of the page's links (<a>). */
   links: string[];
 }
 
@@ -65,10 +65,10 @@ export function parsePage(html: string): PageFacts {
   const title = /<title>([\s\S]*?)<\/title>/i.exec(head)?.[1];
   const languageSelect =
     /<starlight-lang-select>([\s\S]*?)<\/starlight-lang-select>/i.exec(html)?.[1] ?? '';
-  // Sin el contenido de los atributos: el botón de copiar guarda el código en data-code, y un
-  // «<h1>» ahí dentro no es una etiqueta.
+  // Without the attribute contents: the copy button stores the code in data-code, and an
+  // «<h1>» inside it is not a tag.
   const markup = html.replace(/="[^"]*"/g, '=""');
-  // Lo mismo, pero conservando los href, para leer los enlaces.
+  // Same, but keeping the hrefs, to read the links.
   const anchors = html.replace(/(\s(?!href=)[a-zA-Z_:][-a-zA-Z0-9_:.]*)="[^"]*"/g, '$1=""');
   return {
     lang: attributes(/<html\b[^>]*>/i.exec(html)?.[0] ?? '').lang,

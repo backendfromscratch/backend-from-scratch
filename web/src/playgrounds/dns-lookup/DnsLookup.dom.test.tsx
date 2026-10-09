@@ -7,7 +7,7 @@ import { strings } from './strings';
 
 const t = strings.es;
 
-/** fetch con las respuestas grabadas; `blockCloudflare` simula una red de empresa que lo bloquea. */
+/** fetch with the recorded responses; `blockCloudflare` simulates a corporate network that blocks it. */
 function recordedFetch({ blockCloudflare = false } = {}): typeof fetch {
   return (async (input: RequestInfo | URL) => {
     const url = new URL(String(input));
@@ -15,7 +15,7 @@ function recordedFetch({ blockCloudflare = false } = {}): typeof fetch {
       throw new TypeError('Failed to fetch');
     }
     const key = `${url.searchParams.get('name')} ${url.searchParams.get('type')}`;
-    if (!(key in recorded)) throw new Error(`Sin respuesta grabada para «${key}»`);
+    if (!(key in recorded)) throw new Error(`No recorded response for «${key}»`);
     return new Response(JSON.stringify(recorded[key]), { status: 200 });
   }) as typeof fetch;
 }
@@ -33,8 +33,8 @@ const status = (container: HTMLElement) =>
 const domainField = (container: HTMLElement) =>
   container.querySelector<HTMLInputElement>('input[type="text"]')!;
 
-describe('DnsLookup con clics', () => {
-  it('consulta example.com, cuenta el recorrido paso a paso y enseña los registros', async () => {
+describe('DnsLookup with clicks', () => {
+  it('looks up example.com, tells the path step by step and shows the records', async () => {
     vi.stubGlobal('fetch', recordedFetch());
     const { container } = await render(<DnsLookup lang="es" />);
     await click(byText(container, 'button', t.submit));
@@ -49,7 +49,7 @@ describe('DnsLookup con clics', () => {
     );
   });
 
-  it('si Cloudflare está bloqueado, responde Google y el recorrido lo nombra', async () => {
+  it('if Cloudflare is blocked, Google answers and the path names it', async () => {
     vi.stubGlobal('fetch', recordedFetch({ blockCloudflare: true }));
     const { container } = await render(<DnsLookup lang="es" />);
     await click(byText(container, 'button', t.submit));
@@ -59,7 +59,7 @@ describe('DnsLookup con clics', () => {
     );
   });
 
-  it('una IP no se consulta: dice que es una IP', async () => {
+  it('an IP is not looked up: it says it is an IP', async () => {
     vi.stubGlobal('fetch', recordedFetch());
     const { container } = await render(<DnsLookup lang="es" />);
     await type(domainField(container), '192.168.1.1');
@@ -67,7 +67,7 @@ describe('DnsLookup con clics', () => {
     expect(status(container).trim()).toBe(t.errors.ip);
   });
 
-  it('dos errores iguales seguidos se anuncian los dos (el texto anunciado cambia)', async () => {
+  it('two identical errors in a row are both announced (the announced text changes)', async () => {
     vi.stubGlobal('fetch', recordedFetch());
     const { container } = await render(<DnsLookup lang="es" />);
     await type(domainField(container), '');
@@ -80,7 +80,7 @@ describe('DnsLookup con clics', () => {
     expect(second).not.toBe(first);
   });
 
-  it('una consulta nueva cancela las peticiones de la anterior', async () => {
+  it('a new lookup cancels the requests of the previous one', async () => {
     const signals: AbortSignal[] = [];
     const hanging = ((_input: RequestInfo | URL, init?: RequestInit) =>
       new Promise((_resolve, reject) => {

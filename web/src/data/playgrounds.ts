@@ -1,22 +1,22 @@
 import type { Locale } from '../lib/locales';
 
 /**
- * Laboratorio: una simulación paso a paso de lo más difícil de ver. Playground: una herramienta real
- * que funciona en el navegador. (Los ejercicios de terminal, el tercer nivel, no van aquí.)
+ * Lab: a step-by-step simulation of what is hardest to see. Playground: a real tool
+ * that works in the browser. (Terminal exercises, the third level, do not go here.)
  */
 export type PlaygroundLevel = 'lab' | 'playground';
 
 /**
- * Los playgrounds y laboratorios del curso, para la página /playgrounds/ (PlaygroundList.astro).
- * Cada uno vive en el «Pruébalo» de su lección. Al añadir uno nuevo, añádelo aquí: el test
- * comprueba que su lección existe en los dos idiomas y que de verdad lo usa.
+ * The course's playgrounds and labs, for the /playgrounds/ page (PlaygroundList.astro).
+ * Each one lives in the "Try it" section of its lesson. When adding a new one, add it here: the test
+ * checks that its lesson exists in both languages and really uses it.
  */
 export interface Playground {
-  /** Su carpeta en src/playgrounds/. */
+  /** Its folder in src/playgrounds/. */
   id: string;
   phase: number;
   level: PlaygroundLevel;
-  /** La translationKey de la lección donde está. */
+  /** The translationKey of the lesson it lives in. */
   lesson: string;
   title: Record<Locale, string>;
   summary: Record<Locale, string>;

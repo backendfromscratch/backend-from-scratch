@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import DnsLookup from './DnsLookup';
 
 describe('DnsLookup', () => {
-  it('se pinta en español, con el formulario listo y el aviso de que el recorrido se reconstruye', () => {
+  it('renders in Spanish, with the form ready and the notice that the path is reconstructed', () => {
     const html = renderToString(<DnsLookup lang="es" />);
     expect(html).toContain('laboratorio · consulta DNS');
     expect(html).toContain('Dominio');
@@ -14,7 +14,7 @@ describe('DnsLookup', () => {
     expect(html).toContain('aria-live="polite"');
   });
 
-  it('se pinta en inglés', () => {
+  it('renders in English', () => {
     const html = renderToString(<DnsLookup lang="en" />);
     expect(html).toContain('lab · DNS lookup');
     expect(html).toContain('Look up');

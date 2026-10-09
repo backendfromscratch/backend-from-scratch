@@ -10,11 +10,11 @@ interface Props {
   onLose: (id: number) => void;
 }
 
-/** La escalera: una fila por segmento o temporizador, entre la línea del cliente (izquierda) y la del servidor (derecha). */
+/** The ladder: one row per segment or timer, between the client line (left) and the server line (right). */
 export default function Ladder({ state, t, onLose }: Props) {
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  // Cada fila nueva se lleva a la vista; sin animación si el lector prefiere movimiento reducido.
+  // Each new row is scrolled into view; without animation if the reader prefers reduced motion.
   useEffect(() => {
     const element = scrollRef.current;
     if (!element) return;

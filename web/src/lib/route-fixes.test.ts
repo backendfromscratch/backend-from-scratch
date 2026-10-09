@@ -17,7 +17,7 @@ const group = (label: string, entries: SidebarEntry[]) =>
 const SITE = 'https://backenddesdecero.com/';
 
 describe('pruneSidebar', () => {
-  it('quita los enlaces a páginas que no existen de verdad (las copias de respaldo)', () => {
+  it('removes links to pages that do not really exist (the fallback copies)', () => {
     const sidebar = [
       link('/en/roadmap/'),
       group('Phase 0', [
@@ -34,13 +34,13 @@ describe('pruneSidebar', () => {
     ]);
   });
 
-  it('quita los grupos que se quedan vacíos', () => {
+  it('removes groups that end up empty', () => {
     expect(pruneSidebar([group('Phase 1', [link('/en/fase-1/')])], () => false)).toEqual([]);
   });
 });
 
 describe('paginationFrom', () => {
-  it('anterior y siguiente según el orden del sidebar, atravesando grupos', () => {
+  it('previous and next by sidebar order, crossing groups', () => {
     const sidebar = [
       link('/roadmap/'),
       group('Fase 0', [
@@ -54,18 +54,18 @@ describe('paginationFrom', () => {
     expect(pagination?.next?.href).toBe('/fase-0/tls-y-https/');
   });
 
-  it('la primera página no tiene anterior, y la última no tiene siguiente', () => {
+  it('the first page has no previous, and the last has no next', () => {
     expect(paginationFrom([link('/a/', true), link('/b/')])?.prev).toBeUndefined();
     expect(paginationFrom([link('/a/'), link('/b/', true)])?.next).toBeUndefined();
   });
 
-  it('si la página actual no está en el sidebar, devuelve undefined', () => {
+  it('if the current page is not in the sidebar, returns undefined', () => {
     expect(paginationFrom([link('/roadmap/')])).toBeUndefined();
   });
 });
 
 describe('alternateLinks', () => {
-  it('un hreflang por idioma y x-default al español, con URLs absolutas', () => {
+  it('one hreflang per language and x-default to Spanish, with absolute URLs', () => {
     expect(
       alternateLinks({ es: '/fase-0/que-es-dns/', en: '/en/phase-0/what-is-dns/' }, SITE),
     ).toEqual([
@@ -84,20 +84,20 @@ describe('alternateLinks', () => {
     ]);
   });
 
-  it('una página sin traducir no lleva hreflang', () => {
+  it('an untranslated page has no hreflang', () => {
     expect(alternateLinks({ es: '/fase-1/x/' }, SITE)).toEqual([]);
   });
 });
 
 describe('languageTargets', () => {
-  it('lleva a la traducción de la página', () => {
+  it('goes to the translation of the page', () => {
     expect(languageTargets({ es: '/fase-0/que-es-dns/', en: '/en/phase-0/what-is-dns/' })).toEqual({
       es: '/fase-0/que-es-dns/',
       en: '/en/phase-0/what-is-dns/',
     });
   });
 
-  it('sin traducción, lleva a la portada de ese idioma', () => {
+  it('without a translation, goes to the home page of that language', () => {
     expect(languageTargets({ es: '/fase-1/x/' }).en).toBe('/en/');
   });
 });
@@ -105,7 +105,7 @@ describe('languageTargets', () => {
 describe('keepSidebarLink', () => {
   const real = new Set(['/en/phase-0/']);
 
-  it('conserva las páginas reales y los enlaces externos; quita las rutas internas que no existen', () => {
+  it('keeps real pages and external links; removes internal routes that do not exist', () => {
     expect(keepSidebarLink('/en/phase-0/', real)).toBe(true);
     expect(keepSidebarLink('https://github.com/backendfromscratch', real)).toBe(true);
     expect(keepSidebarLink('/en/fase-0/', real)).toBe(false);
@@ -130,12 +130,12 @@ describe('fixPagination', () => {
     ]),
   ];
 
-  it('conserva lo que calculó Starlight si apunta a páginas reales: respeta prev y next del frontmatter', () => {
+  it('keeps what Starlight computed if it points to real pages: respects the prev and next of the frontmatter', () => {
     const custom = { prev: nav('/en/roadmap/'), next: undefined };
     expect(fixPagination(custom, pruned, real)).toEqual(custom);
   });
 
-  it('cambia lo que apunta a una copia de respaldo por el vecino del sidebar limpio', () => {
+  it('replaces what points to a fallback copy with the neighbour in the clean sidebar', () => {
     const fromStarlight = {
       prev: nav('/en/fase-0/que-es-dns/'),
       next: nav('/en/phase-0/tls-and-https/'),
@@ -145,7 +145,7 @@ describe('fixPagination', () => {
     expect(fixed.next?.href).toBe('/en/phase-0/tls-and-https/');
   });
 
-  it('si la página no está en el sidebar, quita lo que apunta a una copia', () => {
+  it('if the page is not in the sidebar, removes what points to a copy', () => {
     const fixed = fixPagination(
       { prev: nav('/en/fase-0/'), next: undefined },
       [link('/en/roadmap/')],

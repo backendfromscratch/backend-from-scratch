@@ -19,14 +19,14 @@ const PAGE = `<!doctype html><html lang="es" dir="ltr" data-theme="dark"><head>
 describe('parsePage', () => {
   const facts = parsePage(PAGE);
 
-  it('lee el idioma, el título, la descripción y la URL canónica', () => {
+  it('reads the language, title, description and canonical URL', () => {
     expect(facts.lang).toBe('es');
     expect(facts.title).toBe('DNS | Backend desde cero');
     expect(facts.description).toBe('Cómo se convierte un nombre en una IP & por qué');
     expect(facts.canonical).toBe('https://backenddesdecero.com/fase-0/que-es-dns/');
   });
 
-  it('lee los hreflang, la imagen para redes y el JSON-LD', () => {
+  it('reads the hreflang, the social image and the JSON-LD', () => {
     expect(facts.alternates).toEqual([
       { hreflang: 'es', href: 'https://backenddesdecero.com/fase-0/que-es-dns/' },
       { hreflang: 'en', href: 'https://backenddesdecero.com/en/phase-0/what-is-dns/' },
@@ -35,19 +35,19 @@ describe('parsePage', () => {
     expect(facts.jsonLd).toEqual([{ '@type': 'BreadcrumbList', itemListElement: [] }]);
   });
 
-  it('lee a dónde lleva el selector de idioma', () => {
+  it('reads where the language selector leads', () => {
     expect(facts.languageOptions).toEqual(['/fase-0/que-es-dns/', '/en/phase-0/what-is-dns/']);
   });
 
-  it('no cuenta como etiqueta el HTML que va dentro de un atributo (el botón de copiar)', () => {
+  it('does not count HTML inside an attribute as a tag (the copy button)', () => {
     expect(facts.h1Count).toBe(1);
   });
 
-  it('cuenta los diagramas Mermaid sin convertir', () => {
+  it('counts unconverted Mermaid diagrams', () => {
     expect(facts.mermaidBlocks).toBe(1);
   });
 
-  it('una página sin esas etiquetas da undefined o listas vacías', () => {
+  it('a page without those tags gives undefined or empty lists', () => {
     const empty = parsePage('<html><head><title>X</title></head><body></body></html>');
     expect(empty.lang).toBeUndefined();
     expect(empty.description).toBeUndefined();
@@ -59,7 +59,7 @@ describe('parsePage', () => {
     expect(empty.h1Count).toBe(0);
   });
 
-  it('lee robots y marca el JSON-LD que no se puede leer', () => {
+  it('reads robots and flags JSON-LD that cannot be parsed', () => {
     const page = parsePage(
       '<html lang="en"><head><meta name="robots" content="noindex"/><script type="application/ld+json">{roto</script></head></html>',
     );
@@ -67,7 +67,7 @@ describe('parsePage', () => {
     expect(page.jsonLd).toEqual([{ invalidJson: '{roto' }]);
   });
 
-  it('lee los enlaces de la página, pero no los que van dentro de un atributo', () => {
+  it('reads the page links, but not those inside an attribute', () => {
     const page = parsePage(
       '<html><body><a href="/fase-0/">x</a><a class="b" href="https://otra.com/">y</a><button data-code="<a href=&quot;/no/&quot;>z</a>"></button></body></html>',
     );

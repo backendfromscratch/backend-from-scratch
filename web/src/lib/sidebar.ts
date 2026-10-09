@@ -10,15 +10,15 @@ export interface PhaseSidebarGroup {
 
 const PHASE_WORD: Record<Locale, string> = { es: 'Fase', en: 'Phase' };
 
-/** «Fase 0 · Cómo funciona internet»: el nombre de una fase en el menú y en las migas. */
+/** «Fase 0 · Cómo funciona internet»: a phase's name in the menu and in the breadcrumbs. */
 export function phaseLabel(phase: Pick<Phase, 'number' | 'title'>, locale: Locale): string {
   return `${PHASE_WORD[locale]} ${phase.number} · ${phase.title[locale]}`;
 }
 
 /**
- * Un grupo del menú lateral por cada fase publicada. Cada idioma tiene su carpeta (fase-0 y
- * phase-0), y Starlight usa la misma configuración para todos: el grupo autogenera desde las dos, y
- * el middleware (src/routeData.ts) quita lo que en cada idioma son copias de respaldo.
+ * One side-menu group per published phase. Each language has its own folder (fase-0 and
+ * phase-0), and Starlight uses the same configuration for all of them: the group autogenerates from both, and
+ * the middleware (src/routeData.ts) removes what are fallback copies in each language.
  */
 export function buildPhaseSidebar(phases: readonly Phase[]): PhaseSidebarGroup[] {
   return phases

@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { recorded } from './fixtures';
 import { LookupError, lookup, RESOLVER, RESOLVERS } from './resolver';
 
-/** Un fetch que contesta con las respuestas grabadas y apunta las URL que le piden. */
+/** A fetch that answers with the recorded responses and records the URLs it is asked for. */
 function recordedFetch(asked: string[] = []): typeof fetch {
   return (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input));
@@ -10,7 +10,7 @@ function recordedFetch(asked: string[] = []): typeof fetch {
       `${url.origin}${url.pathname}?${url.search.slice(1)} ${JSON.stringify(init?.headers)}`,
     );
     const key = `${url.searchParams.get('name')} ${url.searchParams.get('type')}`;
-    if (!(key in recorded)) throw new Error(`Sin respuesta grabada para «${key}»`);
+    if (!(key in recorded)) throw new Error(`No recorded response for «${key}»`);
     return new Response(JSON.stringify(recorded[key]), { status: 200 });
   }) as typeof fetch;
 }
@@ -24,11 +24,11 @@ async function failure(promise: Promise<unknown>): Promise<string> {
     if (error instanceof LookupError) return error.reason;
     throw error;
   }
-  throw new Error('La consulta no ha fallado');
+  throw new Error('The lookup did not fail');
 }
 
-describe('lookup con respuestas reales grabadas', () => {
-  it('example.com A: dos direcciones y el recorrido raíz → com → example.com', async () => {
+describe('lookup with recorded real responses', () => {
+  it('example.com A: two addresses and the path root → com → example.com', async () => {
     const result = await lookup('example.com', 'A', {
       fetchImpl: recordedFetch(),
       isOnline: online,
@@ -41,7 +41,7 @@ describe('lookup con respuestas reales grabadas', () => {
     expect(result.path.map((zone) => zone.name)).toEqual(['.', 'com', 'example.com']);
   });
 
-  it('pregunta a Cloudflare por DoH, con el tipo de respuesta JSON', async () => {
+  it('asks Cloudflare over DoH, with the JSON response type', async () => {
     const asked: string[] = [];
     await lookup('example.com', 'A', { fetchImpl: recordedFetch(asked), isOnline: online });
     expect(RESOLVER.url).toBe('https://cloudflare-dns.com/dns-query');
@@ -51,7 +51,7 @@ describe('lookup con respuestas reales grabadas', () => {
     expect(asked).toHaveLength(4);
   });
 
-  it('www.github.com A: el CNAME y la dirección, en la zona github.com', async () => {
+  it('www.github.com A: the CNAME and the address, in the github.com zone', async () => {
     const result = await lookup('www.github.com', 'A', {
       fetchImpl: recordedFetch(),
       isOnline: online,
@@ -61,7 +61,7 @@ describe('lookup con respuestas reales grabadas', () => {
     expect(result.path.map((zone) => zone.name)).toEqual(['.', 'com', 'github.com']);
   });
 
-  it('gmail.com MX: cinco servidores de correo', async () => {
+  it('gmail.com MX: five mail servers', async () => {
     const result = await lookup('gmail.com', 'MX', {
       fetchImpl: recordedFetch(),
       isOnline: online,
@@ -70,7 +70,7 @@ describe('lookup con respuestas reales grabadas', () => {
     expect(result.records.every((record) => record.type === 'MX')).toBe(true);
   });
 
-  it('un dominio que no existe: NXDOMAIN, y el recorrido se queda en .com', async () => {
+  it('a domain that does not exist: NXDOMAIN, and the path stops at .com', async () => {
     const result = await lookup('no-existe-backend-desde-cero.com', 'A', {
       fetchImpl: recordedFetch(),
       isOnline: online,
@@ -79,7 +79,7 @@ describe('lookup con respuestas reales grabadas', () => {
     expect(result.path.map((zone) => zone.name)).toEqual(['.', 'com']);
   });
 
-  it('github.com AAAA: el nombre existe, pero no tiene ese tipo (NODATA)', async () => {
+  it('github.com AAAA: the name exists, but has no such type (NODATA)', async () => {
     const result = await lookup('github.com', 'AAAA', {
       fetchImpl: recordedFetch(),
       isOnline: online,
@@ -89,42 +89,42 @@ describe('lookup con respuestas reales grabadas', () => {
   });
 });
 
-describe('lookup cuando algo falla', () => {
+describe('lookup when something fails', () => {
   const networkDown = (async () => {
     throw new TypeError('Failed to fetch');
   }) as typeof fetch;
 
-  it('sin conexión', async () => {
+  it('offline', async () => {
     expect(
       await failure(lookup('example.com', 'A', { fetchImpl: networkDown, isOnline: () => false })),
     ).toBe('offline');
   });
 
-  it('con conexión, pero el resolver no contesta a la petición', async () => {
+  it('online, but the resolver does not answer the request', async () => {
     expect(
       await failure(lookup('example.com', 'A', { fetchImpl: networkDown, isOnline: online })),
     ).toBe('resolver');
   });
 
-  it('el resolver responde con un error HTTP', async () => {
-    const serverError = (async () => new Response('fallo', { status: 500 })) as typeof fetch;
+  it('the resolver answers with an HTTP error', async () => {
+    const serverError = (async () => new Response('failure', { status: 500 })) as typeof fetch;
     expect(
       await failure(lookup('example.com', 'A', { fetchImpl: serverError, isOnline: online })),
     ).toBe('resolver');
   });
 
-  it('el resolver responde algo que no es una respuesta DNS', async () => {
+  it('the resolver answers something that is not a DNS response', async () => {
     const odd = (async () => new Response('{"hola":1}', { status: 200 })) as typeof fetch;
     expect(await failure(lookup('example.com', 'A', { fetchImpl: odd, isOnline: online }))).toBe(
       'resolver',
     );
   });
 
-  it('el resolver no responde a tiempo', async () => {
+  it('the resolver does not answer in time', async () => {
     const silent = ((_input: RequestInfo | URL, init?: RequestInit) =>
       new Promise((_resolve, reject) => {
         init?.signal?.addEventListener('abort', () =>
-          reject(new DOMException('Cancelada', 'AbortError')),
+          reject(new DOMException('Cancelled', 'AbortError')),
         );
       })) as typeof fetch;
     expect(
@@ -135,24 +135,24 @@ describe('lookup cuando algo falla', () => {
   });
 });
 
-/** Un fetch que se queda esperando hasta que lo cancelan, y apunta las señales que recibe. */
+/** A fetch that waits until it is cancelled, and records the signals it receives. */
 function hanging(signals: AbortSignal[]): typeof fetch {
   return ((_input: RequestInfo | URL, init?: RequestInit) =>
     new Promise((_resolve, reject) => {
       if (init?.signal) signals.push(init.signal);
       init?.signal?.addEventListener('abort', () =>
-        reject(new DOMException('Cancelada', 'AbortError')),
+        reject(new DOMException('Cancelled', 'AbortError')),
       );
     })) as typeof fetch;
 }
 
-describe('lookup con respaldo: si Cloudflare no responde, Google', () => {
-  it('los resolvers, en orden: 1.1.1.1 (Cloudflare) y 8.8.8.8 (Google)', () => {
+describe('lookup with fallback: if Cloudflare does not answer, Google', () => {
+  it('the resolvers, in order: 1.1.1.1 (Cloudflare) and 8.8.8.8 (Google)', () => {
     expect(RESOLVERS.map((resolver) => resolver.address)).toEqual(['1.1.1.1', '8.8.8.8']);
     expect(RESOLVERS[1]?.url).toBe('https://dns.google/resolve');
   });
 
-  it('si Cloudflare está bloqueado (redes de empresa), responde Google, y se dice quién', async () => {
+  it('if Cloudflare is blocked (corporate networks), Google answers, and who answered is stated', async () => {
     const asked: string[] = [];
     const google = recordedFetch(asked);
     const blockedCloudflare = (async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -173,7 +173,7 @@ describe('lookup con respaldo: si Cloudflare no responde, Google', () => {
     expect(asked.every((url) => url.startsWith('https://dns.google/resolve?'))).toBe(true);
   });
 
-  it('con Cloudflare funcionando, ni se pregunta a Google', async () => {
+  it('with Cloudflare working, Google is not even asked', async () => {
     const result = await lookup('example.com', 'A', {
       fetchImpl: recordedFetch(),
       isOnline: online,
@@ -181,7 +181,7 @@ describe('lookup con respaldo: si Cloudflare no responde, Google', () => {
     expect(result.resolver).toBe('1.1.1.1');
   });
 
-  it('sin conexión no se prueba otro resolver: no serviría de nada', async () => {
+  it('when offline no other resolver is tried: it would be pointless', async () => {
     const tried: string[] = [];
     const networkDown = (async () => {
       throw new TypeError('Failed to fetch');
@@ -199,13 +199,13 @@ describe('lookup con respaldo: si Cloudflare no responde, Google', () => {
   });
 });
 
-describe('lookup cancela lo que ya no sirve', () => {
-  it('si una petición falla, cancela las demás (con nombres largos son decenas)', async () => {
+describe('lookup cancels what is no longer useful', () => {
+  it('if one request fails, it cancels the others (with long names there are dozens)', async () => {
     const signals: AbortSignal[] = [];
     const wait = hanging(signals);
     const oneFails = ((input: RequestInfo | URL, init?: RequestInit) =>
       new URL(String(input)).searchParams.get('type') === 'A'
-        ? Promise.resolve(new Response('fallo', { status: 500 }))
+        ? Promise.resolve(new Response('failure', { status: 500 }))
         : wait(input, init)) as typeof fetch;
     expect(
       await failure(
@@ -220,7 +220,7 @@ describe('lookup cancela lo que ya no sirve', () => {
     expect(signals.every((signal) => signal.aborted)).toBe(true);
   });
 
-  it('una consulta nueva cancela la anterior: con la señal de fuera se cancela todo, sin respaldo', async () => {
+  it('a new lookup cancels the previous one: with the outside signal everything is cancelled, with no fallback', async () => {
     const signals: AbortSignal[] = [];
     const tried: string[] = [];
     const controller = new AbortController();

@@ -4,9 +4,9 @@ export type PhaseStatus = 'available' | 'coming-soon';
 
 export interface Phase {
   number: number;
-  /** 'available' solo cuando la fase tiene contenido publicado. */
+  /** 'available' only when the phase has published content. */
   status: PhaseStatus;
-  /** Lecciones previstas en la fase (para «lección 2/8»). */
+  /** Lessons planned for the phase (for "lesson 2/8"). */
   lessonCount?: number;
   title: Record<Locale, string>;
   summary: Record<Locale, string>;

@@ -1,7 +1,7 @@
 /**
- * Las fuentes de las imágenes para redes. Satori no lee woff2, así que se usan los woff de las fuentes
- * estáticas. Se localizan por el sistema de módulos, no por el directorio de trabajo: el build
- * funciona se lance desde donde se lance.
+ * The fonts for the social images. Satori cannot read woff2, so the woff files of the static fonts
+ * are used. They are located through the module system, not the working directory: the build works
+ * wherever it is launched from.
  */
 import { createRequire } from 'node:module';
 
@@ -20,7 +20,7 @@ export const OG_FONTS = [
   },
 ] as const;
 
-/** La ruta en disco de un fichero de fuente, a partir de su nombre de paquete. */
+/** The on-disk path of a font file, from its package specifier. */
 export function fontFile(specifier: string): string {
   return require.resolve(specifier);
 }

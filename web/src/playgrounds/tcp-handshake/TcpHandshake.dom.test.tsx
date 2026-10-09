@@ -10,19 +10,19 @@ beforeEach(() => {
   document.body.innerHTML = '';
 });
 
-/** Lo que ha recibido la aplicación del servidor, tal como se ve. */
+/** What the application has received from the server, as displayed. */
 const delivered = (container: HTMLElement) =>
   container.querySelector('.tcp-lab__app dd')?.textContent ?? '';
 
 /**
- * Avanza hasta el final. Con `lose`, pierde la primera vez que pueda el segmento o datagrama de datos
- * número `lose` (contando los que llevan datos, en el orden en que aparecen sus botones «Perder»).
- * Devuelve el nombre del botón que ha pulsado.
+ * Advances to the end. With `lose`, loses at the first chance the data segment or datagram
+ * number `lose` (counting those that carry data, in the order their «Perder» buttons appear).
+ * Returns the name of the button it pressed.
  */
 async function playToEnd(container: HTMLElement, lose?: number): Promise<string | undefined> {
   let lost: string | undefined;
   for (let i = 0; i < 80; i++) {
-    // Solo los que llevan datos: su nombre cita el texto entre comillas («Hola, »).
+    // Only those that carry data: their name quotes the text between quotes («Hola, »).
     const loseButtons = [
       ...container.querySelectorAll<HTMLButtonElement>('button[aria-label^="Perder"]'),
     ].filter((button) => button.getAttribute('aria-label')?.includes(t.quoteOpen));
@@ -36,29 +36,29 @@ async function playToEnd(container: HTMLElement, lose?: number): Promise<string 
     if (next.getAttribute('aria-disabled') === 'true') return lost;
     await click(next);
   }
-  throw new Error('El laboratorio no ha terminado en 80 pasos');
+  throw new Error('The lab did not finish in 80 steps');
 }
 
-describe('TcpHandshake con clics', () => {
-  it('sin pérdidas, la aplicación recibe el mensaje entero', async () => {
+describe('TcpHandshake with clicks', () => {
+  it('without losses, the application receives the whole message', async () => {
     const { container } = await render(<TcpHandshake lang="es" />);
     await playToEnd(container);
     expect(delivered(container)).not.toBe(t.nothing);
   });
 
-  it('TCP recupera un segmento perdido: la aplicación recibe lo mismo', async () => {
+  it('TCP recovers a lost segment: the application receives the same', async () => {
     const clean = await render(<TcpHandshake lang="es" />);
     await playToEnd(clean.container);
     const whole = delivered(clean.container);
     document.body.innerHTML = '';
     const { container } = await render(<TcpHandshake lang="es" />);
     const lost = await playToEnd(container, 1);
-    // Lo perdido lleva datos (no es el SYN): si no, no se pondría a prueba la recuperación de datos.
+    // What is lost carries data (it is not the SYN): otherwise data recovery would not be tested.
     expect(lost).toContain(t.quoteOpen);
     expect(delivered(container)).toBe(whole);
   });
 
-  it('UDP no recupera un datagrama perdido: la aplicación recibe menos', async () => {
+  it('UDP does not recover a lost datagram: the application receives less', async () => {
     const clean = await render(<TcpHandshake lang="es" />);
     await playToEnd(clean.container);
     const whole = delivered(clean.container);
