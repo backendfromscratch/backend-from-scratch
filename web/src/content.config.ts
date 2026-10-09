@@ -59,6 +59,7 @@ export const collections = {
         'playgrounds.lab': z.string(),
         'playgrounds.playground': z.string(),
         'playgrounds.inLesson': z.string(),
+        'footer.license': z.string(),
       }),
     }),
   }),

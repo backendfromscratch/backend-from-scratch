@@ -34,7 +34,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 - [ ] **Together:** connect Cloudflare to the repository (the build command is `pnpm build`) and redirect `backendfromscratch.com` to `/en/`.
 - [ ] **Together, before announcing it:** Lighthouse with a simulated phone, Google Search Console, Bing Webmaster Tools and the rich results test.
 - [x] **You:** decide the license (2026-10-09): CC BY 4.0 for the course content (`web/src/content/docs/`, `glossary/` and `i18n/`) and MIT for everything else, code and tests included. `LICENSE`, `LICENSE-CONTENT` and the README say so.
-- [ ] **Claude:** say on the site that the content is CC BY 4.0, with a short line and a link in the footer, before publishing.
+- [x] **Claude:** say on the site that the content is CC BY 4.0 (2026-10-09): a line in the footer of every page, in both languages, linking to the license deed in the reader's language with `rel="license"`.
 
 ### 4. Continue with Phase 1, lesson by lesson
 
