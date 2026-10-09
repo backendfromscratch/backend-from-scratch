@@ -260,12 +260,12 @@ Levels: **1** = terminal exercise, **2** = playground with a real tool, **3** = 
 
 ## 7. Deployment
 
-- The site is served as a static site on **Cloudflare**. The plan will check the current documentation to see exactly which Cloudflare product to use.
-- At first, Cloudflare's free subdomain is used. The custom domain is added when the author decides.
-- Deployment will be automatic on push to `main`, through Cloudflare's Git integration. Deploying from GitHub Actions is left for Phase 8.
-- **Updated on 2026-10-07:** a GitHub Actions workflow (`.github/workflows/ci.yml`) checks formatting, types, tests and build on every PR and every push to `main`. It does not deploy.
-- Deployment is set up early (after the skeleton), so the author can see progress live.
-- **Updated on 2026-10-09:** the product is **Cloudflare Workers with static assets** (no server code). Pages, which this spec had in mind, is "legacy" in Cloudflare's dashboard. `wrangler.jsonc` at the root publishes `web/dist/`: `/x` redirects to `/x/` (the canonical URL) and an unknown URL gets `404.html` with a real 404. Workers Builds settings: build command `pnpm build`, deploy command `pnpm exec wrangler deploy`, preview command for the other branches `pnpm exec wrangler preview` (a preview URL per branch; open beta in October 2026), and the variables `NODE_VERSION=22` and `PNPM_VERSION=10.31.0`. `wrangler` is a pinned dev dependency, so every deploy uses the same version.
+- The site is served as a static site on **Cloudflare Workers with static assets** (no server code), decided on 2026-10-09. Pages, which this spec first had in mind, is "legacy" in Cloudflare's dashboard.
+- `wrangler.jsonc` at the root publishes `web/dist/`: `/x` redirects to `/x/` (the canonical URL) and an unknown URL gets `404.html` with a real 404. `wrangler` is a pinned dev dependency, so every deploy uses the same version.
+- Deployment is automatic on push to `main`, through Workers Builds (Cloudflare's Git integration). Settings: build command `pnpm build`, deploy command `pnpm exec wrangler deploy`, preview command for the other branches `pnpm exec wrangler preview` (a preview URL per branch; open beta in October 2026), and the variables `NODE_VERSION=22` and `PNPM_VERSION=10.31.0`. Deploying from GitHub Actions is left for Phase 8.
+- Domains (bought on 2026-10-09): `backenddesdecero.com` is the site's custom domain; `backendfromscratch.com` redirects (301) to the same path under `/en/`.
+- A GitHub Actions workflow (`.github/workflows/ci.yml`, since 2026-10-07) checks formatting, types, tests and build on every PR and every push to `main`. It does not deploy.
+- Deployment is set up early, so the author can see progress live.
 - **Creating the remote repository, pushing or connecting Cloudflare requires the author's explicit request.**
 
 ## 8. Testing and verification
