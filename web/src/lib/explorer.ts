@@ -143,6 +143,16 @@ export function homeFileName(locale: Locale): string {
   return HOME_FILE[locale];
 }
 
+/**
+ * Accessible name of a link that shows a file name: the real name first, so a screen reader does not
+ * start by spelling out «05-ip-puertos-y-sockets.md», and then the file name as it is shown, so
+ * someone using voice control can say what they see (WCAG 2.5.3, "Label in Name"). With a comma, not
+ * in parentheses: checkers such as axe (Lighthouse) drop what is in parentheses before comparing.
+ */
+export function fileLinkName(name: string, file: string): string {
+  return `${name}, ${file}`;
+}
+
 /** File name of the current page: inicio.md / home.md for the home pages. */
 export function pageFileName(routeId: string, title: string, position?: LessonPosition): string {
   if (position) return toFileName(position.links[position.index]!.label, position.index);
