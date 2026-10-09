@@ -144,7 +144,7 @@ src/lib/                        pure logic, no DOM, with tests:
                                 sequences (sequence.ts) and chains (chain.ts), with hast.ts and errors.ts as helpers
   seo/                          audit rules (audit.ts), HTML reading (page.ts) and JavaScript budget (js-budget.ts)
   og/                           social image (card.ts) and its fonts (fonts.ts)
-public/                         copied as is: favicon.svg and robots.txt
+public/                         copied as is: favicon.svg, robots.txt and _headers (Cloudflare response headers: cache for /_astro/)
 ```
 
 - **Translated routes.** Starlight assumes a page's translation has the same route with another language prefix, and that's not the case here (`/fase-0/que-es-dns/` ↔ `/en/phase-0/what-is-dns/`). The frontmatter's `translationKey` links each pair: `lib/translations.ts` builds the index and `routeData.ts` uses it to fix what Starlight gets wrong. The fallback pages Starlight would generate for untranslated pages are deleted from the build and the sitemap (`integrations/drop-fallbacks.ts`). Rules in `docs/style-guide.md`, "Routes, translations and SEO".

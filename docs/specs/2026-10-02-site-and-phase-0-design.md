@@ -263,7 +263,12 @@ Levels: **1** = terminal exercise, **2** = playground with a real tool, **3** = 
 - The site is served as a static site on **Cloudflare Workers with static assets** (no server code), decided on 2026-10-09. Pages, which this spec first had in mind, is "legacy" in Cloudflare's dashboard.
 - `wrangler.jsonc` at the root publishes `web/dist/`: `/x` redirects to `/x/` (the canonical URL) and an unknown URL gets `404.html` with a real 404. `wrangler` is a pinned dev dependency, so every deploy uses the same version.
 - Deployment is automatic on push to `main`, through Workers Builds (Cloudflare's Git integration). Settings: build command `pnpm build`, deploy command `pnpm exec wrangler deploy`, preview command for the other branches `pnpm exec wrangler preview` (a preview URL per branch; open beta in October 2026), and the variables `NODE_VERSION=22` and `PNPM_VERSION=10.31.0`. Deploying from GitHub Actions is left for Phase 8.
-- Domains (bought on 2026-10-09): `backenddesdecero.com` is the site's custom domain; `backendfromscratch.com` redirects (301) to the same path under `/en/`.
+- Domains (bought on 2026-10-09, connected on 2026-10-10). The site has a single public address, `https://backenddesdecero.com`; everything else redirects there with a 301 that keeps the path and the query:
+  - `backenddesdecero.com` is the Worker's custom domain, declared in `wrangler.jsonc` (`routes`). The production `workers.dev` address is off (`workers_dev: false`); preview URLs stay on `workers.dev`.
+  - `www.backenddesdecero.com`: a proxied DNS record (`A www 192.0.2.1`, a reserved documentation address that is never reached) and a Redirect Rule (hostname equals `www.backenddesdecero.com` → `concat("https://backenddesdecero.com", http.request.uri.path)`).
+  - `backendfromscratch.com` and its `www`: the same kind of proxied records and a Redirect Rule for all requests → `concat("https://backenddesdecero.com/en", http.request.uri.path)`.
+  - "Always Use HTTPS" is on in both domains: `http://` redirects to `https://`. HSTS is not on yet: it is hard to undo, because browsers remember it for months.
+- Caching: HTML is revalidated on every visit (Cloudflare's default), so a deploy is visible at once. Files under `/_astro/` have a content hash in their name and are cached for a year (`web/public/_headers`).
 - A GitHub Actions workflow (`.github/workflows/ci.yml`, since 2026-10-07) checks formatting, types, tests and build on every PR and every push to `main`. It does not deploy.
 - Deployment is set up early, so the author can see progress live.
 - **Creating the remote repository, pushing or connecting Cloudflare requires the author's explicit request.**
