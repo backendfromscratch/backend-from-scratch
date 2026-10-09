@@ -1,0 +1,239 @@
+---
+/**
+ * Arriba del editor, a todo el ancho y fijas al hacer scroll (desde 50rem): la franja de pestañas y,
+ * dentro de una fase, lo que la pestaña no dice: la fase y el tiempo de lectura. En la franja, primero
+ * y siempre visible, la pestaña de la página abierta; después, las fijadas (playgrounds y glosario).
+ * En la página de una fijada, esa es la abierta y no se repite, y la primera pestaña no se cierra:
+ * enlaza a la última página en la que estaba el lector (se guarda en su navegador; sin nada guardado,
+ * la portada). El orden: src/lib/pinned-tabs.ts.
+ */
+import { phases } from '~/data/phases';
+import {
+  currentLesson,
+  homeFileName,
+  pageFileName,
+  phaseFolderName,
+  toFileName,
+} from '~/lib/explorer';
+import { localizedHref } from '~/lib/links';
+import { toLocale } from '~/lib/locales';
+import { tabStrip, type StripTab } from '~/lib/pinned-tabs';
+import { readingMinutes } from '~/lib/reading';
+import { lastPageKey } from '~/lib/storage';
+
+const route = Astro.locals.starlightRoute;
+const t = Astro.locals.t;
+const { entry } = route;
+const locale = toLocale(route.locale);
+const current = currentLesson(route.sidebar, phases, locale);
+const fileName = pageFileName(route.id, entry.data.title, current?.position);
+const minutes = entry.data.lesson ? readingMinutes(entry.body ?? '') : undefined;
+const strip = tabStrip(locale, Astro.url.pathname);
+const showPageTab = strip[0]?.kind === 'page';
+const showLastTab = strip[0]?.kind === 'last';
+const pageName = fileName.replace(/\.md$/, '');
+// La última página abierta: la guardan todas las páginas menos las fijadas y la 404.
+const lastKey = lastPageKey(locale);
+const rememberPage = showPageTab && route.entry.id !== '404';
+const lastPage = { href: Astro.url.pathname, name: pageName };
+const homeHref = localizedHref(locale);
+const homeName = homeFileName(locale).replace(/\.md$/, '');
+// Lo que puede ser la última página en este idioma: una ruta interna (el español va en la raíz).
+const lastPrefix = locale === 'es' ? '/' : `/${locale}/`;
+const pinned = strip
+  .filter((tab): tab is Extract<StripTab, { kind: 'pinned' }> => tab.kind === 'pinned')
+  .map((tab) => {
+    const label = t(tab.id === 'playgrounds' ? 'tabs.playgrounds' : 'tabs.glossary');
+    return { ...tab, label, name: toFileName(label).replace(/\.md$/, '') };
+  });
+---
+
+<div class="ide-editor-head" data-pagefind-ignore>
+  <div class="ide-tabbar">
+    {showPageTab && (
+      <span class="ide-tab ide-tab--active ide-tab--page" aria-hidden="true">
+        <span class="ide-file-icon">#</span>
+        <span class="ide-tab__name">
+          {pageName}
+          <span class="ide-tab__ext">.md</span>
+        </span>
+      </span>
+    )}
+    {rememberPage && <script is:inline define:vars={{ lastKey, lastPage }}>
+      try {
+        localStorage.setItem(lastKey, JSON.stringify(lastPage));
+      } catch {}
+    </script>}
+    {showLastTab && (
+      <>
+        <a class="ide-tab ide-tab--page" id="ide-last-page" href={homeHref}>
+          <span class="ide-file-icon" aria-hidden="true">
+            #
+          </span>
+          <span class="ide-tab__name">
+            <span data-last-page-name>{homeName}</span>
+            <span class="ide-tab__ext">.md</span>
+          </span>
+        </a>
+        <script is:inline define:vars={{ lastKey, lastPrefix }}>
+          // Antes de pintar: la pestaña enlaza a la última página abierta, si hay una guardada.
+          try {
+            const page = JSON.parse(localStorage.getItem(lastKey) || 'null');
+            const tab = document.getElementById('ide-last-page');
+            const valid =
+              page &&
+              typeof page.href === 'string' &&
+              typeof page.name === 'string' &&
+              page.href.startsWith(lastPrefix) &&
+              !page.href.startsWith('//');
+            if (tab && valid) {
+              tab.href = page.href;
+              tab.querySelector('[data-last-page-name]').textContent = page.name;
+            }
+          } catch {}
+        </script>
+      </>
+    )}
+    <nav class="ide-tabbar__pinned" aria-label={t('tabs.pinned')}>
+      {pinned.map((tab) => (
+        <a
+          class:list={['ide-tab', { 'ide-tab--active': tab.current }]}
+          href={tab.href}
+          aria-current={tab.current ? 'page' : undefined}
+          aria-label={tab.label}
+          title={tab.label}
+        >
+          {tab.id === 'playgrounds' ? (
+            <svg class="ide-tab__icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 3h6" />
+              <path d="M10 3v6l-5.5 9.5A1.5 1.5 0 0 0 5.8 21h12.4a1.5 1.5 0 0 0 1.3-2.5L14 9V3" />
+              <path d="M7.5 15h9" />
+            </svg>
+          ) : (
+            <svg class="ide-tab__icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z" />
+              <path d="M5 17a3 3 0 0 1 3-3h11" />
+            </svg>
+          )}
+          <span>
+            {tab.name}
+            <span class="ide-tab__ext">.md</span>
+          </span>
+        </a>
+      ))}
+    </nav>
+  </div>
+  {current && (
+    <div class="ide-breadcrumbs">
+      <nav aria-label={t('breadcrumbs.label')}>
+        <a
+          href={localizedHref(locale, phaseFolderName(locale, current.phase.number))}
+          aria-current={current.position.index === 0 ? 'page' : undefined}
+        >
+          {phaseFolderName(locale, current.phase.number)} {current.phase.title[locale]}
+        </a>
+      </nav>
+      {minutes && <span>· {t('reading.minutes', { minutes })}</span>}
+    </div>
+  )}
+</div>
+
+<style>
+  .ide-editor-head {
+    background: var(--ide-bg);
+    font-family: var(--__sl-font-mono);
+  }
+  @media (min-width: 50rem) {
+    .ide-editor-head {
+      position: sticky;
+      top: var(--sl-nav-height);
+      z-index: 3;
+    }
+  }
+  /* Si las pestañas no caben (en el móvil), la franja se desplaza en horizontal, como en un editor. */
+  .ide-tabbar {
+    display: flex;
+    height: var(--ide-tabbar-height);
+    overflow-x: auto;
+    scrollbar-width: none;
+    background: var(--ide-chrome);
+    /* La raya de abajo, por debajo de las pestañas: la activa la tapa con su fondo. */
+    box-shadow: inset 0 -1px 0 var(--ide-border);
+    font-size: var(--sl-text-xs);
+  }
+  .ide-tabbar__pinned {
+    display: flex;
+  }
+  .ide-tab {
+    display: flex;
+    flex: none;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0 1rem;
+    border-top: 2px solid transparent;
+    border-inline-end: 1px solid var(--ide-border);
+    color: var(--ide-muted);
+    text-decoration: none;
+    white-space: nowrap;
+  }
+  /* La franja hace scroll en horizontal: el foco del teclado va por dentro para que no se recorte. */
+  a.ide-tab:focus-visible {
+    outline-offset: -2px;
+  }
+  a.ide-tab:hover {
+    color: var(--ide-strong);
+  }
+  .ide-tab--active {
+    border-top-color: var(--ide-accent);
+    background: var(--ide-bg);
+    color: var(--ide-strong);
+  }
+  .ide-tab__icon {
+    width: 1rem;
+    height: 1rem;
+    fill: none;
+    stroke: var(--ide-info);
+    stroke-width: 1.8;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  .ide-breadcrumbs {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0 1ch;
+    min-height: var(--ide-breadcrumbs-height);
+    padding: 0 1.25rem;
+    font-size: var(--sl-text-2xs);
+    color: var(--ide-muted);
+  }
+  .ide-breadcrumbs a {
+    color: var(--ide-muted);
+  }
+  /*
+   * En el móvil, sin «.md», y el nombre de la página abierta recortado con «…»: así caben las tres
+   * pestañas y las fijadas, que son enlaces, siempre se ven.
+   */
+  @media (max-width: 49.99rem) {
+    .ide-tab {
+      padding: 0 0.75rem;
+    }
+    .ide-tab__ext {
+      display: none;
+    }
+    .ide-tab--page {
+      flex: 0 1 auto;
+      min-width: 0;
+    }
+    .ide-tab__name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+  }
+  /* El estilo del componente manda sobre el de impresión de theme.css: la regla tiene que ir aquí. */
+  @media print {
+    .ide-tabbar {
+      display: none;
+    }
+  }
+</style>

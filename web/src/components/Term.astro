@@ -1,0 +1,170 @@
+---
+import { contentT } from '~/lib/content-i18n';
+import { getEntry } from 'astro:content';
+import { glossaryEntryId, termPopoverId, termsSeenIn } from '~/lib/glossary';
+import { localizedHref } from '~/lib/links';
+import { toLocale } from '~/lib/locales';
+
+interface Props {
+  /** Nombre del fichero del término sin extensión, p. ej. "port". */
+  id: string;
+}
+
+const { id } = Astro.props;
+// Idioma del CONTENIDO, no de la URL: en una página sin traducir (/en/… mostrando español),
+// las definiciones deben salir en español.
+const locale = toLocale(Astro.locals.starlightRoute.entryMeta.locale);
+const entry = await getEntry('glossary', glossaryEntryId(locale, id));
+if (!entry) {
+  throw new Error(
+    `[Term] No existe el término "${id}" en "${locale}". Créalo en src/content/glossary/${locale}/${id}.yaml`,
+  );
+}
+const popoverId = termPopoverId(termsSeenIn(Astro.locals), id);
+const anchorName = `--${popoverId}`;
+const href = `${localizedHref(locale, 'glossary')}#${id}`;
+// Ojo con los espacios: el compilador de Astro elimina los saltos de línea entre etiquetas,
+// y por eso no aparece un espacio antes de la puntuación que sigue al término («puerto .»).
+// Comprueba el HTML si cambias el marcado.
+---
+
+<span class="term">
+  <button
+    type="button"
+    class="term__trigger"
+    popovertarget={popoverId}
+    popovertargetaction="show"
+    style={`anchor-name: ${anchorName}`}
+  >
+    <slot />
+  </button>
+  {/* data-pagefind-ignore: la definición no es contenido de la lección; sin esto ensucia el buscador. */}
+  <span
+    id={popoverId}
+    popover
+    class="term__popover"
+    style={`position-anchor: ${anchorName}`}
+    data-pagefind-ignore
+  >
+    <span class="term__header">
+      <span class="term__kind">{contentT(Astro.locals)('term.kind')}</span>{' '}
+      <strong class="term__name">{entry.data.term}</strong>
+    </span>
+    <span class="term__short">{entry.data.short}</span>
+    <a class="term__link" href={href}>
+      {contentT(Astro.locals)('term.seeGlossary')}
+    </a>
+  </span>
+</span>
+
+<script>
+  // Con ratón: abrir al pasar por encima y cerrar al salir. Con teclado, pantalla táctil o un clic,
+  // el botón abre el popover, y Esc o tocar fuera lo cierran: el ratón ya no lo cierra al pasar.
+  if (window.matchMedia('(hover: hover)').matches) {
+    for (const term of document.querySelectorAll<HTMLElement>('.term')) {
+      const popover = term.querySelector<HTMLElement>('[popover]');
+      const trigger = term.querySelector<HTMLElement>('.term__trigger');
+      if (!popover || !trigger) continue;
+      let closeTimer: number | undefined;
+      let openedByHover = false;
+      popover.addEventListener('toggle', (event) => {
+        if ((event as ToggleEvent).newState === 'closed') openedByHover = false;
+      });
+      // Un clic (o Enter) sobre el término lo deja abierto, aunque se hubiera abierto al pasar.
+      trigger.addEventListener('click', () => {
+        openedByHover = false;
+      });
+      term.addEventListener('mouseenter', () => {
+        window.clearTimeout(closeTimer);
+        if (popover.matches(':popover-open')) return;
+        popover.showPopover();
+        openedByHover = true;
+      });
+      term.addEventListener('mouseleave', () => {
+        if (!openedByHover) return;
+        // Margen para poder mover el ratón del término a la definición sin que se cierre.
+        closeTimer = window.setTimeout(() => popover.hidePopover(), 200);
+      });
+    }
+  }
+</script>
+
+<style>
+  .term__trigger {
+    font: inherit;
+    color: inherit;
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: help;
+    text-decoration: underline wavy var(--ide-accent);
+    text-decoration-thickness: 1px;
+    text-underline-offset: 0.25em;
+  }
+  .term__trigger:focus-visible {
+    outline: 2px solid var(--ide-accent);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+  /* Como el recuadro de información de un IDE: cabecera, definición y pie. */
+  .term__popover {
+    max-width: min(24rem, calc(100vw - 2rem));
+    padding: 0;
+    border: 1px solid var(--ide-border);
+    border-radius: 0.375rem;
+    background: var(--ide-chrome);
+    color: var(--ide-text);
+    box-shadow: var(--sl-shadow-lg);
+    font-size: var(--sl-text-sm);
+    line-height: 1.5;
+    /* El recuadro vive dentro del párrafo: no debe heredar su negrita, cursiva o mayúsculas. */
+    font-weight: 400;
+    font-style: normal;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+  .term__popover:popover-open {
+    display: flex;
+    flex-direction: column;
+  }
+  .term__header,
+  .term__short,
+  .term__link {
+    padding: 0.625rem 0.875rem;
+  }
+  .term__header {
+    border-bottom: 1px solid var(--ide-border);
+    font-family: var(--__sl-font-mono);
+    font-size: var(--sl-text-xs);
+  }
+  .term__kind {
+    color: var(--ide-keyword);
+  }
+  .term__name {
+    color: var(--ide-strong);
+  }
+  .term__link {
+    border-top: 1px solid var(--ide-border);
+    font-family: var(--__sl-font-mono);
+    font-size: var(--sl-text-xs);
+    color: var(--ide-accent);
+  }
+  @supports (position-area: block-end) {
+    .term__popover {
+      inset: auto;
+      margin: 0.375rem 0;
+      position-area: block-end span-inline-end;
+      position-try-fallbacks: flip-block, flip-inline;
+    }
+    /* En pantallas estrechas, la definición ocupa todo el ancho en lugar de una columna junto al término. */
+    @media (max-width: 40rem) {
+      .term__popover {
+        position-area: block-end span-all;
+        position-try-fallbacks: flip-block;
+        justify-self: stretch;
+        max-width: none;
+        margin-inline: 1rem;
+      }
+    }
+  }
+</style>

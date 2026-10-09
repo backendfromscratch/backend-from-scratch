@@ -1,0 +1,315 @@
+---
+/**
+ * El panel lateral, como el de un editor: el árbol de ficheros del curso (la portada y las fases),
+ * siempre a la vista, y debajo el esquema de la página, que se pliega y empieza plegado. En el móvil (menú ☰) se
+ * ven el árbol y, debajo, el tema y el idioma. Los playgrounds y el glosario están en las pestañas
+ * fijadas (EditorTabs.astro).
+ */
+import MobileMenuFooter from '@astrojs/starlight/components/MobileMenuFooter.astro';
+import Outline from '~/components/Outline.astro';
+import { phases } from '~/data/phases';
+import {
+  findPhaseLinks,
+  folderOpenByDefault,
+  homeFileName,
+  phaseFolderName,
+  phaseSlugOf,
+  toFileName,
+  unexpectedSidebarEntries,
+} from '~/lib/explorer';
+import { localizedHref } from '~/lib/links';
+import { toLocale } from '~/lib/locales';
+import { flattenOutline } from '~/lib/outline';
+import { FOLDERS_KEY, OUTLINE_KEY } from '~/lib/storage';
+
+const route = Astro.locals.starlightRoute;
+const locale = toLocale(route.locale);
+const t = Astro.locals.t;
+const homeHref = localizedHref(locale);
+const isHome = Astro.url.pathname === homeHref;
+// Un esquema con una sola entrada (solo «Sinopsis», como el del temario) no ayuda: no se pinta.
+const hasOutline = route.toc !== undefined && flattenOutline(route.toc.items).length > 1;
+const phaseSlugs = phases.map((phase) => phaseFolderName(locale, phase.number));
+// El explorador solo pinta la portada y las fases: cualquier otra cosa en el menú es un error.
+const unexpected = unexpectedSidebarEntries(route.sidebar, phaseSlugs);
+if (unexpected.length > 0) {
+  throw new Error(
+    `[explorer] El menú tiene ${unexpected.map((label) => `«${label}»`).join(', ')}, que no son fases: el explorador no lo pintaría. Quítalo de astro.config.ts o dale un sitio en Sidebar.astro.`,
+  );
+}
+const folders = phases.map((phase) => ({
+  phase,
+  name: phaseFolderName(locale, phase.number),
+  links:
+    phase.status === 'available'
+      ? findPhaseLinks(route.sidebar, phaseFolderName(locale, phase.number))
+      : [],
+}));
+// Al llegar, solo se abre la carpeta de la fase actual (fuera de las fases, la primera publicada).
+const currentSlug = phaseSlugOf(Astro.url.pathname, phaseSlugs);
+const firstPublished = folders.find((folder) => folder.links.length > 0)?.name;
+---
+
+<div class="ide-side">
+  <div class="ide-panels">
+    <p class="ide-panels__title" aria-hidden="true">
+      {t('explorer.title')}
+    </p>
+    {/* El árbol no se pliega: la portada y las fases se ven siempre. */}
+    <div class="ide-section ide-section--files">
+      <nav class="explorer" aria-label={t('explorer.title')}>
+        <ul class="explorer__list" role="list">
+          <li>
+            <a
+              class="explorer__file"
+              href={homeHref}
+              aria-current={isHome ? 'page' : undefined}
+              aria-label={route.siteTitle}
+              title={route.siteTitle}
+            >
+              <span class="ide-file-icon" aria-hidden="true">
+                #
+              </span>
+              {homeFileName(locale)}
+            </a>
+          </li>
+          {folders.map(({ phase, name, links }) =>
+            links.length > 0 ? (
+              <li>
+                <details
+                  class="explorer__folder"
+                  data-folder={name}
+                  data-current={name === currentSlug ? 'true' : undefined}
+                  open={folderOpenByDefault(name, currentSlug, firstPublished)}
+                >
+                  <summary title={phase.title[locale]}>
+                    <svg class="ide-chevron" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="m6 9 6 6 6-6" />
+                    </svg>
+                    <span class="explorer__name">{name}</span>{' '}
+                    <span class="explorer__hint">{phase.title[locale]}</span>
+                  </summary>
+                  <ul class="explorer__list" role="list">
+                    {links.map((link, index) => (
+                      <li>
+                        <a
+                          class="explorer__file explorer__file--nested"
+                          href={link.href}
+                          aria-current={link.isCurrent ? 'page' : undefined}
+                          aria-label={link.label}
+                          title={link.label}
+                        >
+                          <span class="ide-file-icon" aria-hidden="true">
+                            #
+                          </span>
+                          {toFileName(link.label, index)}
+                        </a>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              </li>
+            ) : (
+              <li class="explorer__folder explorer__folder--soon" title={phase.title[locale]}>
+                <svg class="ide-chevron ide-chevron--closed" viewBox="0 0 24 24" aria-hidden="true">
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+                <span class="explorer__name">{name}</span>{' '}
+                <span class="explorer__hint">{phase.title[locale]}</span>
+                <span class="sr-only"> ({t('explorer.comingSoon')})</span>
+              </li>
+            ),
+          )}
+        </ul>
+      </nav>
+    </div>
+    {hasOutline && (
+      <details
+        id="ide-outline-section"
+        class="ide-section ide-section--outline sl-hidden md:sl-block"
+      >
+        <summary class="ide-section__summary">
+          <svg class="ide-chevron" viewBox="0 0 24 24" aria-hidden="true">
+            <path d="m6 9 6 6 6-6" />
+          </svg>
+          {t('tableOfContents.onThisPage')}
+        </summary>
+        <Outline />
+      </details>
+    )}
+  </div>
+</div>
+
+<script is:inline define:vars={{ outlineKey: OUTLINE_KEY, foldersKey: FOLDERS_KEY }}>
+  // Antes de pintar: el esquema empieza plegado y se abre si el lector lo abrió en otra página; las
+  // carpetas de fase que el lector abrió o plegó se quedan así (la de la fase actual, siempre abierta).
+  try {
+    const outline = document.getElementById('ide-outline-section');
+    if (outline && localStorage.getItem(outlineKey) === 'open') outline.open = true;
+    const folders = JSON.parse(localStorage.getItem(foldersKey) || '{}');
+    for (const folder of document.querySelectorAll('.explorer__folder[data-folder]')) {
+      const open = folders[folder.dataset.folder];
+      if (folder.dataset.current !== 'true' && typeof open === 'boolean') folder.open = open;
+    }
+  } catch {}
+</script>
+
+<div class="md:sl-hidden">
+  <MobileMenuFooter />
+</div>
+
+<script>
+  import { revealScrollTop } from '~/lib/explorer';
+  import { FOLDERS_KEY, OUTLINE_KEY, safeStorage } from '~/lib/storage';
+
+  // Si el lector abre o pliega el esquema o una carpeta, la página siguiente lo respeta.
+  const storage = safeStorage(() => window.localStorage);
+  for (const folder of document.querySelectorAll<HTMLDetailsElement>(
+    '.explorer__folder[data-folder]',
+  )) {
+    folder.addEventListener('toggle', () => {
+      // La carpeta de la fase actual se abre siempre al llegar: no se guarda.
+      if (folder.dataset.current === 'true') return;
+      let saved: Record<string, boolean> = {};
+      try {
+        saved = JSON.parse(storage.get(FOLDERS_KEY) ?? '{}') as Record<string, boolean>;
+      } catch {
+        // Lo guardado no se entiende: se empieza de cero.
+      }
+      storage.set(FOLDERS_KEY, JSON.stringify({ ...saved, [folder.dataset.folder!]: folder.open }));
+    });
+  }
+  const outline = document.querySelector<HTMLDetailsElement>('#ide-outline-section');
+  outline?.addEventListener('toggle', () => storage.set(OUTLINE_KEY, outline.open ? 'open' : ''));
+
+  // Como en un editor, el fichero abierto se ve en el árbol aunque esté muy abajo.
+  const scroller = document.querySelector<HTMLElement>('.ide-section--files');
+  const current = scroller?.querySelector<HTMLElement>('[aria-current="page"]');
+  if (scroller && current && matchMedia('(min-width: 50rem)').matches) {
+    const top =
+      current.getBoundingClientRect().top -
+      scroller.getBoundingClientRect().top +
+      scroller.scrollTop;
+    scroller.scrollTop = revealScrollTop(
+      { scrollTop: scroller.scrollTop, height: scroller.clientHeight },
+      { top, height: current.offsetHeight },
+    );
+  }
+</script>
+
+<style>
+  /* Dentro de los paneles con scroll, el foco del teclado va por dentro: por fuera se recortaría. */
+  .ide-side :global(:focus-visible) {
+    outline-offset: -2px;
+  }
+  .ide-side {
+    font-family: var(--__sl-font-mono);
+  }
+  .ide-panels__title {
+    margin: 0;
+    padding: 0.875rem 1.25rem 0.5rem;
+    font-size: var(--sl-text-2xs);
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--ide-muted);
+  }
+  .ide-section__summary {
+    display: block;
+    padding: 0.3rem 0.5rem;
+    list-style: none;
+    cursor: pointer;
+    background: var(--ide-chrome);
+    font-size: var(--sl-text-2xs);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ide-text);
+  }
+  .ide-section--outline {
+    border-top: 1px solid var(--ide-border);
+  }
+  summary::-webkit-details-marker {
+    display: none;
+  }
+  .ide-chevron {
+    width: 1rem;
+    height: 1rem;
+    margin-inline-end: 0.25rem;
+    vertical-align: -0.2em;
+    fill: none;
+    stroke: var(--ide-muted);
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+  details:not([open]) > summary > .ide-chevron,
+  .ide-chevron--closed {
+    transform: rotate(-90deg);
+  }
+  .explorer {
+    padding-bottom: 0.5rem;
+    font-size: var(--sl-text-sm);
+    line-height: 1.5;
+  }
+  .explorer__list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+  /* Como en un editor: una línea por entrada, recortada con «…»; el nombre completo va en title. */
+  .explorer__file,
+  .explorer__folder summary,
+  .explorer__folder--soon {
+    display: block;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .explorer__file {
+    padding: 0.2rem 0.5rem 0.2rem 1.75rem;
+    color: var(--ide-text);
+    text-decoration: none;
+  }
+  .explorer__file .ide-file-icon {
+    margin-inline-end: 0.375rem;
+  }
+  .explorer__file:hover {
+    background: var(--ide-selection);
+    color: var(--ide-strong);
+  }
+  .explorer__file[aria-current='page'] {
+    background: var(--ide-selection);
+    color: var(--ide-strong);
+    box-shadow: inset 2px 0 0 var(--ide-accent);
+  }
+  .explorer__folder summary {
+    padding: 0.2rem 0.5rem;
+    list-style: none;
+    cursor: pointer;
+    color: var(--ide-text);
+  }
+  /* La guía de sangría de una carpeta abierta. */
+  .explorer__folder > .explorer__list {
+    margin-inline-start: 0.95rem;
+    border-inline-start: 1px solid var(--ide-border);
+  }
+  .explorer__file--nested {
+    padding-inline-start: 0.75rem;
+  }
+  .explorer__name {
+    color: var(--ide-accent);
+  }
+  .explorer__hint {
+    color: var(--ide-muted);
+  }
+  .explorer__folder--soon {
+    /* Contiene el texto .sr-only (posición absoluta) dentro de la fila recortada. */
+    position: relative;
+    padding: 0.2rem 0.5rem;
+    color: var(--ide-muted);
+  }
+  .explorer__folder--soon .explorer__name {
+    color: var(--ide-muted);
+  }
+</style>

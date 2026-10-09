@@ -1,0 +1,118 @@
+---
+import { contentT } from '~/lib/content-i18n';
+import { getCollection } from 'astro:content';
+import { phases } from '~/data/phases';
+import { phaseFolderName, qualifiedFileName } from '~/lib/explorer';
+import { explainingLessons, sortGlossary, termIdFromEntryId } from '~/lib/glossary';
+import { phaseNumberOf } from '~/lib/lessons';
+import { toLocale } from '~/lib/locales';
+import { localeOfId, urlOfId } from '~/lib/translations';
+
+const locale = toLocale(Astro.locals.starlightRoute.entryMeta.locale);
+const entries = sortGlossary(
+  await getCollection('glossary', (entry) => entry.id.startsWith(`${locale}/`)),
+  locale,
+);
+const termsById = new Map(entries.map((entry) => [termIdFromEntryId(entry.id), entry.data.term]));
+
+// La lección que explica cada término: la que indica su YAML (`lesson`) o, si no, la primera del
+// curso que lo usa con <Term>. Cuentan también las introducciones de fase.
+const docs = await getCollection('docs');
+const knownKeys = new Set(docs.flatMap((doc) => doc.data.translationKey ?? []));
+const lessons = docs
+  .filter((doc) => localeOfId(doc.id) === locale && phaseNumberOf(doc.id) !== undefined)
+  .sort(
+    (a, b) =>
+      phaseNumberOf(a.id)! - phaseNumberOf(b.id)! ||
+      (a.data.sidebar.order ?? 0) - (b.data.sidebar.order ?? 0),
+  );
+const lessonOf = explainingLessons(
+  entries.map((entry) => ({ id: termIdFromEntryId(entry.id), lesson: entry.data.lesson })),
+  lessons.map((doc) => ({
+    id: doc.id,
+    translationKey: doc.data.translationKey,
+    body: doc.body ?? '',
+  })),
+  knownKeys,
+);
+const phaseSlugs = phases.map((phase) => phaseFolderName(locale, phase.number));
+const sidebar = Astro.locals.starlightRoute.sidebar;
+function explainedIn(termId: string) {
+  const doc = lessons.find((lesson) => lesson.id === lessonOf.get(termId));
+  if (!doc) return undefined;
+  const href = urlOfId(doc.id);
+  const label = doc.data.sidebar.label ?? doc.data.title;
+  return {
+    href,
+    // El fichero se ve; el título es lo que lee un lector de pantalla.
+    title: doc.data.title,
+    file: qualifiedFileName(sidebar, phaseSlugs, { href, label }, Astro.url.pathname),
+  };
+}
+---
+
+<dl class="glossary">
+  {entries.map((entry) => {
+    const id = termIdFromEntryId(entry.id);
+    return (
+      <>
+        <dt id={id}>{entry.data.term}</dt>
+        <dd>
+          <p>{entry.data.short}</p>
+          {entry.data.related.length > 0 && (
+            <p class="glossary__related">
+              {contentT(Astro.locals)('glossary.related')}{' '}
+              {entry.data.related.map((relatedId, index) => {
+                const relatedTerm = termsById.get(relatedId);
+                if (!relatedTerm) {
+                  throw new Error(
+                    `[GlossaryList] "${id}" se relaciona con "${relatedId}", que no existe en "${locale}"`,
+                  );
+                }
+                return (
+                  <>
+                    {index > 0 && ', '}
+                    <a href={`#${relatedId}`}>{relatedTerm}</a>
+                  </>
+                );
+              })}
+            </p>
+          )}
+          {(() => {
+            const lesson = explainedIn(id);
+            return (
+              lesson && (
+                <p class="glossary__lesson">
+                  {contentT(Astro.locals)('glossary.explainedIn')}{' '}
+                  <a href={lesson.href} title={lesson.title} aria-label={lesson.title}>
+                    {lesson.file}
+                  </a>
+                </p>
+              )
+            );
+          })()}
+        </dd>
+      </>
+    );
+  })}
+</dl>
+
+<style>
+  .glossary dt {
+    font-weight: 600;
+    color: var(--sl-color-white);
+    scroll-margin-top: calc(var(--sl-nav-height) + 1rem);
+  }
+  .glossary dd {
+    margin: 0.25rem 0 1.25rem;
+  }
+  .glossary__lesson {
+    font-family: var(--__sl-font-mono);
+    font-size: var(--sl-text-xs);
+    color: var(--ide-muted);
+  }
+  .glossary__related {
+    font-size: var(--sl-text-sm);
+    color: var(--sl-color-gray-2);
+  }
+</style>

@@ -1,0 +1,344 @@
+---
+translationKey: ip-ports-sockets
+title: "IP addresses, ports and sockets explained"
+description: "What an IP address is, public vs. private addresses, what NAT and routers do, and what ports and sockets are, with exercises in your terminal."
+sidebar:
+  label: "IP, ports and sockets"
+  order: 5
+lesson:
+  oneLiner: The IP address says which computer each packet goes to, routers decide which way, and the port says which program. A socket is what ties the three together.
+  objectives:
+    - Tell a private IP address from a public one and explain how NAT lets your whole home share a single one.
+    - Understand how a packet travels from router to router without anyone knowing the whole path.
+    - Explain what a port is, why the web uses 80 and 443, and what a socket is.
+    - Find out from the terminal which programs are listening on your computer, and on which address.
+  prerequisites: [tcp-ip-model]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import NatTranslation from '~/components/diagrams/NatTranslation.astro';
+
+## The problem
+
+In the previous lesson you saw that your laptop's IP address looks something like `192.168.1.133`, and that it's private. Your neighbor's laptop may have the same one, and so may someone's in Tokyo.
+
+So when example.com answers you, how does it know which of all the `192.168.1.133`s in the world to send the response to? Which way does it send it, across thousands of networks? And once it reaches your laptop, where your browser, Spotify and Slack are all open, which program does it hand it to?
+
+That's three questions: **which computer**, **which path** and **which program**.
+
+## The analogy
+
+<Analogy>
+
+Think of an office building with a single mailing address and a front desk at the entrance. Inside, each office has an internal number that only means something inside the building. The building across the street also has an office 3, and that's fine.
+
+When someone in office 3 sends a letter, the front desk replaces the return address with the building's address, adds a reference, “ref. 61000”, and writes in its notebook: “61000 → office 3”. When the reply arrives with that reference, the front desk checks the notebook and takes it up to office 3. From the outside, nobody knows office 3 exists. And inside each office, every person has their own mailbox.
+
+The building's address is your public IP address; the office number, your private IP address; each mailbox, a port; and the front desk with its notebook, your router. The reference is also a port: the router's.
+
+<div slot="limits">
+
+- The front desk throws away letters whose reference isn't in the notebook: it can't ask “who is this for?”.
+- In the building, each mailbox is fixed. On the network, only servers use fixed ports; a client, like your browser, gets a brand-new one for each conversation.
+- With IPv6 there are addresses to spare: each office can have its own public address, and the front desk doesn't have to translate anything.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### Which computer: IP addresses
+
+An <Term id="ip-address">IP address</Term> identifies a computer on a network, and there are two versions in use.
+
+An **IPv4** address is four numbers from 0 to 255 separated by dots, like `192.168.1.133`: 32 bits, enough for about 4.3 billion addresses. Today there are more connected devices than addresses: the last free blocks were handed out in 2011.
+
+To make them last, some ranges were set aside for internal use. <Term id="private-ip">Private IP addresses</Term> only work inside their own local network, which is why they can repeat all over the world. A <Term id="public-ip">public IP address</Term>, on the other hand, is unique across the whole internet.
+
+| Range | What it is |
+|---|---|
+| `10.0.0.0` to `10.255.255.255` | Private. Company and internet provider networks |
+| `172.16.0.0` to `172.31.255.255` | Private. For example, Docker's internal network (Phase 7) |
+| `192.168.0.0` to `192.168.255.255` | Private. Almost every home network |
+| `127.0.0.0` to `127.255.255.255` | Not private: it's this same computer (*loopback*). The most used one is `127.0.0.1`, the one behind <Term id="localhost">localhost</Term> |
+
+An **IPv6** address is 128 bits: a 34 followed by 37 zeros, enough for every device to have its own public address. It's written as eight groups of four hexadecimal digits separated by colons. To shorten it, you drop the leading zeros in each group and replace, only once, a run of all-zero groups with `::`. The example.com address you saw in the previous lesson, `2606:4700:10::6814:179a`, is really `2606:4700:0010:0000:0000:0000:6814:179a`. And `::1` is the IPv6 version of `127.0.0.1`.
+
+The two versions live side by side: your computer probably has at least one of each, and `curl` tries both. In a URL, an IPv6 address goes inside square brackets so its colons don't get mixed up with the port's: `http://[::1]:4321`.
+
+### How your private IP address gets out to the internet: NAT
+
+If your private IP address doesn't work outside your home, something has to change it on the way out. Your <Term id="router">router</Term> does it, and it's called <Term id="nat">NAT</Term> (*Network Address Translation*). Your router has two addresses: a private one facing inside (`192.168.1.1`) and a public one facing outside, assigned by your internet provider.
+
+Here's how a request of yours to example.com goes out and comes back:
+
+<NatTranslation
+  caption="The router rewrites the source on the way out and the destination on the way back. The server only sees the router's public IP address (in this example, 203.0.113.7) and never knows 192.168.1.133 exists. The addresses are examples, except for example.com's."
+  labels={{ src: 'source', dst: 'destination', changed: 'rewritten by the router' }}
+  steps={[
+    {
+      hop: 'Your laptop → router',
+      src: '192.168.1.133:54321',
+      dst: '104.20.23.154:80',
+      note: 'Your laptop sends the request with its private IP address as the source.',
+    },
+    {
+      hop: 'Router → example.com',
+      src: '203.0.113.7:61000',
+      dst: '104.20.23.154:80',
+      changed: 'src',
+      note: 'The router replaces the source with its public IP address and a free port (sometimes the same one), and writes the change down in its table.',
+    },
+    {
+      hop: 'example.com → router',
+      src: '104.20.23.154:80',
+      dst: '203.0.113.7:61000',
+      note: 'The server answers whoever it thinks wrote to it: the router.',
+    },
+    {
+      hop: 'Router → your laptop',
+      src: '104.20.23.154:80',
+      dst: '192.168.1.133:54321',
+      changed: 'dst',
+      note: 'The router looks up port 61000 in its table and puts back the original destination.',
+    },
+  ]}
+  table={{
+    title: "The router's NAT table",
+    columns: ['Outside (public)', 'Inside (private)'],
+    rows: [
+      ['203.0.113.7:61000', '192.168.1.133:54321'],
+      ['203.0.113.7:61001', '192.168.1.140:50122'],
+    ],
+  }}
+/>
+
+The second row could be your phone, on the same Wi-Fi. Thanks to ports, the router can tell apart the conversations of all your devices, even though they all go out through the same public IP address. It usually also notes who each one is talking to, and deletes the entry when the conversation ends or after a while without traffic.
+
+The important consequence is that **a conversation can only be started from inside**. If someone on the internet sends a <Term id="packet">packet</Term> to your public IP address without you having started anything, the router doesn't find an entry for it in the table, doesn't know who to give it to and throws it away. “Opening a port” on the router means adding a fixed entry: “whatever arrives at port 8080, send it to 192.168.1.133”. That's why real servers live in data centers, with public IP addresses (Phase 8).
+
+Two caveats:
+
+- **Some internet providers do a second NAT inside their own network** (CGNAT, *Carrier-Grade NAT*). Not even your router has a public IP address, and you share one with other customers. In that case, opening a port on your router doesn't help.
+- **With IPv6 you don't need NAT.** Your laptop has its own public IPv6 address (you'll check it in the Try it section). What stops unrequested connections from outside is the router, which almost always blocks them by default.
+
+### Which path: routing
+
+What's left is knowing which way the packet goes. Deciding that is called <Term id="routing">routing</Term>, and every device along the way does it.
+
+Simplified, your laptop's routing table looks like this:
+
+| If the destination is… | It sends it… |
+|---|---|
+| `127.0.0.1` or `::1` | To itself, without leaving the computer |
+| `192.168.1.…`, its local network | Directly, over Wi-Fi |
+| Any other address (*default*) | To `192.168.1.1`, its <Term id="gateway">gateway</Term>: the router at home |
+
+It knows which addresses belong to its local network thanks to the mask (*netmask*) you saw in the previous lesson. `0xffffff00`, that is, `255.255.255.0`, means that the addresses sharing the first three numbers, `192.168.1.…`, are neighbors.
+
+The router at home does the same: whatever belongs to your network goes inside, and everything else goes to your internet provider. Routers on the internet have huge tables, with routes to every network, and they share them with each other using a protocol called BGP.
+
+The key point is that **no router knows the whole path**. Each one only decides the next hop, like on a highway: every sign brings you closer to Chicago, but none of them gives you the whole route.
+
+What if two misconfigured routers keep passing a packet back and forth forever? To prevent that, the IP header carries a counter, the TTL (*time to live*, nothing to do with the DNS TTL in lesson 7). It starts at, say, 64, and every router subtracts one. If it reaches zero, the router throws the packet away and warns the source with an error message. In the Try it section, you'll use those warnings to see the path.
+
+### Which program: ports
+
+When the packet reaches the computer, the operating system has to hand it to the right program. That's what the <Term id="port">port</Term> is for: a number from 0 to 65535. The <Term id="tcp">TCP</Term> (or UDP) header carries the destination port, which says which program the data is for, and the source port.
+
+IANA, the organization that assigns them, splits them into three ranges:
+
+| Range | Name | Examples |
+|---|---|---|
+| 0 to 1023 | Well-known ports | 22 (SSH), 53 (DNS), 80 (HTTP), 443 (HTTPS) |
+| 1024 to 49151 | Registered | 5432 (PostgreSQL), 3306 (MySQL). Out of habit, also the ones used by tools for building websites: 3000, 5173, 8080 |
+| 49152 to 65535 | Dynamic or ephemeral | The ones the operating system picks for clients |
+
+**Why the web uses 80 and 443.** It's a convention: IANA assigned 80 to HTTP and 443 to HTTPS. If a URL has no port, the browser uses 80 with `http://` and 443 with `https://`. That's why `https://example.com` and `https://example.com:443` are the same address, and why in lesson 2 you typed `:8080`.
+
+**Ephemeral ports.** Your browser doesn't have a fixed port. When it opens a connection, the operating system gives it a free port for that conversation and releases it when the conversation is over. macOS picks them between 49152 and 65535, and Linux, by default, between 32768 and 60999.
+
+### What ties the three together: sockets
+
+A program doesn't build IP packets itself. It asks the operating system for a <Term id="socket">socket</Term>, named after the kind you plug things into: a communication endpoint, with its protocol, its IP address and its port. If it's connected, it also knows the IP address and port of the other end.
+
+A socket is used in two ways:
+
+- **To listen.** The server asks for a socket, ties it to a port (*bind*) and starts listening (*listen*), like `nc -l 8080` in lesson 2. When a client arrives, the operating system creates **a new socket** for that conversation, and the listening one keeps waiting.
+- **To connect.** The client asks for a socket and connects it to the server's IP address and port. The operating system gives it your IP address and an ephemeral port.
+
+A TCP connection is identified by **four values**: the source IP address and port, and the destination IP address and port. That's why a server can handle thousands of clients at once on the same port 443: each conversation is told apart by the client's IP address or port.
+
+**Which address a server listens on.** When it binds the socket, the server also picks the IP address, and that decides who can connect:
+
+| Listens on | Who can connect |
+|---|---|
+| `127.0.0.1` | Only programs on your computer, over IPv4 |
+| `::1` | Only programs on your computer, over IPv6 |
+| `0.0.0.0` | Anyone who reaches any of your computer's IPv4 addresses, including from your network |
+| `::` | Anyone who reaches any of your IP addresses, over IPv6 and usually over IPv4 too |
+
+Here's the answer to what you saw in lesson 2. `localhost` is a name that points to two addresses, `::1` and `127.0.0.1`, and on macOS `nc -l 8080` only listens on IPv4. So `curl` first tried `::1`, found nobody there (“Connection refused”) and then tried `127.0.0.1`, where `nc` was waiting.
+
+## Try it
+
+First, your two IP addresses:
+
+<TryIt
+  title="1. Your private IP and your public IP"
+  cmd={`ipconfig getifaddr en0\ncurl -4 icanhazip.com\ncurl -6 icanhazip.com`}
+  output={`192.168.1.133
+203.0.113.7
+2001:db8:4f2a:1c00:9d3e:71b2:a85c:3e10`}
+>
+
+Each command prints one line:
+
+- **`ipconfig getifaddr en0`** gives you your **private IP address**: your laptop's address on your home Wi-Fi. On Linux, use `hostname -I`.
+- **`curl -4 icanhazip.com`** asks a Cloudflare server which address your request is coming from, over IPv4 (`-4`). That's your **public IP address**. It doesn't belong to your laptop but to your router (or, with CGNAT, to your internet provider): from your phone, on the same Wi-Fi, you'd see the same one.
+- **`curl -6 icanhazip.com`** does the same over IPv6. Then run `ifconfig en0 | grep inet6` and you'll find that address in the list. It belongs to your laptop, untranslated, because with IPv6 there's no NAT. If your network doesn't have IPv6, you'll get an error, and that's fine.
+
+We've replaced both public IP addresses with example ones. Yours will be different.
+
+</TryIt>
+
+Now, sockets. Open a terminal and leave a server listening, like in lesson 2:
+
+```sh
+nc -l 8080
+```
+
+In a second terminal, ask which programs are listening:
+
+<TryIt
+  title="2. Who's listening?"
+  cmd="lsof -nP -iTCP -sTCP:LISTEN"
+  output={`COMMAND     PID      USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+limactl    5445 your-user   14u  IPv4 0x376dab910c3f4fd7      0t0  TCP 127.0.0.1:52593 (LISTEN)
+…
+node      15218 your-user   19u  IPv6 0x3bfa7c36078a5081      0t0  TCP [::1]:5173 (LISTEN)
+nc        26159 your-user    3u  IPv4 0xd0ac77b78e83fcc3      0t0  TCP *:8080 (LISTEN)
+…`}
+>
+
+`lsof` lists open files, and to the operating system a socket is a file too. `-iTCP -sTCP:LISTEN` asks only for TCP sockets that are listening, and `-n` and `-P` show addresses and ports as numbers.
+
+Each line is a listening socket. `COMMAND` and `PID` are the program and its <Term id="process">process</Term> number; `TYPE`, whether it's IPv4 or IPv6; and `NAME`, where it's listening:
+
+- `127.0.0.1:52593` and `[::1]:5173` (Vite, for building websites) only accept connections from your computer, over IPv4 and IPv6.
+- `*:8080`, your `nc`, listens on all your IPv4 addresses: the `0.0.0.0` from the table above. `lsof` writes `*` for both `0.0.0.0` and `::`, and `TYPE` tells you which one it is.
+
+Your programs and numbers will be different, and we've replaced the username with `your-user`. On macOS, without `sudo`, `lsof` only shows your own programs. On Linux you can also use `ss -tln`.
+
+</TryIt>
+
+Leave `nc` listening. In a third terminal, connect to it with `nc localhost 8080`, and go back to the second one:
+
+<TryIt
+  title="3. One conversation, three sockets"
+  cmd="lsof -nP -i :8080"
+  output={`COMMAND   PID      USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME
+nc      26159 your-user    3u  IPv4 0xd0ac77b78e83fcc3      0t0  TCP *:8080 (LISTEN)
+nc      26159 your-user    4u  IPv4  0x433842aea8e4ffc      0t0  TCP 127.0.0.1:8080->127.0.0.1:49823 (ESTABLISHED)
+nc      26179 your-user    5u  IPv4  0xb04bd315e3db3fc      0t0  TCP 127.0.0.1:49823->127.0.0.1:8080 (ESTABLISHED)`}
+>
+
+`-i :8080` asks for every socket on port 8080. There are three:
+
+1. **`*:8080 (LISTEN)`:** the listening socket, waiting for more clients.
+2. **`127.0.0.1:8080->127.0.0.1:49823`:** the socket the operating system created for this conversation, in the same process as the server (look at the `PID`).
+3. **`127.0.0.1:49823->127.0.0.1:8080`:** the client's socket, in another process, with the ephemeral port `49823`.
+
+Sockets 1 and 2 share port 8080, but socket 2 also knows the other end, and that's how the operating system tells them apart. Lines 2 and 3 are the same connection (`ESTABLISHED`, that is, open) seen from each end, with the same four values. Your ephemeral port will be different. When you're done, press <kbd>Ctrl</kbd> + <kbd>C</kbd> in both `nc` terminals.
+
+</TryIt>
+
+Finally, the path your packets take to example.com:
+
+<TryIt
+  title="4. The path, hop by hop"
+  cmd="traceroute -n example.com"
+  output={`traceroute: Warning: example.com has multiple addresses; using 172.66.147.243
+traceroute to example.com (172.66.147.243), 64 hops max, 40 byte packets
+ 1  192.168.1.1  3.171 ms  3.506 ms  1.866 ms
+ 2  10.0.33.135  5.687 ms  3.461 ms  7.890 ms
+ 3  * 172.16.4.129  5.818 ms  3.314 ms
+ 4  10.221.236.69  4.825 ms
+    10.220.106.138  6.570 ms  6.740 ms
+ 5  10.221.223.12  6.005 ms  5.590 ms  5.462 ms
+ 6  198.51.100.46  6.193 ms
+    198.51.100.60  8.876 ms
+    198.51.100.12  20.815 ms
+ 7  188.114.108.68  7.125 ms  5.646 ms
+    198.51.100.155  22.526 ms
+ 8  188.114.108.67  7.222 ms
+    188.114.108.31  15.326 ms
+    188.114.108.23  9.224 ms
+ 9  172.66.147.243  6.541 ms  5.953 ms  5.127 ms`}
+>
+
+`traceroute` uses the TTL on purpose. It sends packets that only survive one hop, then two, then three… Each router that throws one away warns the source, and that's how you find out who it is. `-n` shows addresses as numbers.
+
+- **Each line is a hop.** Hop 1 is your router, your gateway, and the last one is example.com (`172.66.…` is public: the private range only goes from 172.16 to 172.31). The `188.114.…` addresses already belong to Cloudflare's network.
+- **Hops 2 to 5 have private IP addresses:** they're your internet provider's internal routers, which don't need to be reachable from the internet.
+- **The three times** are the three probes for each hop, there and back, in milliseconds. A `*` is a probe that didn't get an answer in time, and several IP addresses on one hop mean the probes took parallel paths.
+
+We've replaced the provider's public IP addresses with example ones, and your path will be different. If it keeps printing `* * *` without getting anywhere, stop it with <kbd>Ctrl</kbd> + <kbd>C</kbd>. On Linux you may need to install it (`sudo apt install traceroute`) or use `tracepath -n example.com`.
+
+</TryIt>
+
+## You have already seen it
+
+- **Your router's settings page** is at its private IP address, often `192.168.1.1`: your gateway.
+- **“Opening ports” to play online**, which some consoles ask for, means adding a fixed entry to the router's NAT table.
+
+And if you code:
+
+- **`Network: use --host to expose` in Vite.** By default, Vite only listens on localhost; on macOS, only on `[::1]` (exercise 2): `http://localhost:5173` works (`::1` gets tried), but `http://127.0.0.1:5173` gives “Connection refused”, lesson 2 in reverse. With `--host` it listens on every address and shows your private IP address: `Network: http://192.168.1.133:5173/`.
+- **In Node**, `http.createServer(…).listen(3000)` asks for the socket, does *bind* and *listen*; every `fetch` uses a client socket.
+- **`Error: listen EADDRINUSE: address already in use :::3000`:** there's already a socket listening on that port, often a server you left running. `:::3000` is `::` (by default, Node listens on every address) plus `:3000`. To see who's using it: `lsof -nP -iTCP:3000 -sTCP:LISTEN`.
+- **`new URL('https://example.com:443').port`** is an empty string: the default port isn't even stored.
+
+## Common mistakes
+
+- **“localhost, 127.0.0.1 and 0.0.0.0 are the same thing.”** `localhost` is a name for `127.0.0.1` and `::1`, which can only be reached from your own computer. Listening on `0.0.0.0` means listening on all your IPv4 addresses, so others on your network can reach you. This will matter with Docker (Phase 7): a server listening on `127.0.0.1` inside a container can't be reached from outside the container, not even from your own computer.
+- **“A port only accepts one connection.”** A listening socket accepts every connection that arrives, and each one is told apart by its four values. What you can't do is have two sockets listening on the same port and the same address: that's the `EADDRINUSE` error (“address already in use”).
+- **“A socket is a WebSocket.”** They're not the same thing, even though the names are similar. WebSocket is an application protocol that lets the browser and the server send each other messages in both directions, and it runs over a TCP connection, that is, over sockets. You'll see it in Phase 4.
+
+## Summary
+
+- An IP address identifies a computer on a network. IPv4 ran out of free addresses; IPv6 has plenty to spare.
+- With IPv4, your devices have private IP addresses, and the router translates them to its public IP address with NAT. That's why nobody outside can start a conversation with your laptop.
+- Each router only decides the next hop, and nobody knows the whole path.
+- The port says which program each piece of data is for: servers use well-known ports (80, 443) and clients use ephemeral ones.
+- A socket is what the operating system gives a program to use the network. A connection is identified by the IP address and port of each end.
+
+## Did you get it?
+
+<SelfCheck question="Your laptop and a friend's, each in their own home, both have the IP address 192.168.1.133. Is that a problem?">
+
+No. They're private IP addresses, and each one only works inside its own local network. On the way out to the internet, each home's router replaces it with its own public IP address, which is unique.
+
+</SelfCheck>
+
+<SelfCheck question="A server is listening on port 443 and has 5,000 clients connected at the same time. How does the operating system know which connection each incoming packet belongs to?">
+
+By the four values. The destination is the same for all of them (the server's IP address and 443), but each client comes from a different IP address, or from the same one with a different ephemeral port. Each combination is a different socket on the server.
+
+</SelfCheck>
+
+<SelfCheck question="You leave nc -l 8080 listening on your laptop. Can your phone, on your Wi-Fi, connect to it? What about a friend from their home?">
+
+Your phone, yes: it's on your network and can reach your private IP address, `http://192.168.1.133:8080`. Your friend, no. Your private IP address doesn't work outside your home, and if they connect to your public IP address, your router doesn't find that connection in its NAT table and throws it away. Nor over IPv6: on macOS, `nc` only listens on IPv4, and even if it didn't, the router usually blocks connections nobody asked for. You'd have to open a port on the router, and for a test server that's not a good idea.
+
+</SelfCheck>
+
+## Further reading
+
+- [What is routing?](https://www.cloudflare.com/learning/network-layer/what-is-routing/) (Cloudflare Learning): routing tables and BGP, in more detail.
+- [RFC 1918](https://www.rfc-editor.org/rfc/rfc1918.html): the 1996 document that set aside the private ranges, and why they were needed.
+- [Beej's Guide to Network Programming](https://beej.us/guide/bgnet/): how sockets are programmed in C, the foundation of what Node does under the hood. For the curious.

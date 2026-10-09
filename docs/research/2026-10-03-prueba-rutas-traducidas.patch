@@ -1,0 +1,470 @@
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/astro.config.ts spike/web/astro.config.ts
+--- backup-web/astro.config.ts	2026-10-03 08:54:27
++++ spike/web/astro.config.ts	2026-10-03 12:30:24
+@@ -5,9 +5,47 @@
+ import starlightLinksValidator from 'starlight-links-validator';
+ import { phases } from './src/data/phases';
+ import { buildPhaseSidebar } from './src/lib/sidebar';
++import fs from 'node:fs';
++import path from 'node:path';
++// PRUEBA: en el proyecto real, `@astrojs/sitemap` sería una dependencia directa.
++import sitemap from '/Users/gianmarco/Documents/backend-course/node_modules/.pnpm/@astrojs+sitemap@3.7.4/node_modules/@astrojs/sitemap/dist/index.js';
+ 
++/**
++ * PRUEBA: las copias de respaldo que Starlight crea en /en/ para cada página en español
++ * cuya ruta no existe en inglés. Con rutas traducidas, son todas: se borran y no van al sitemap.
++ */
++function fallbackPaths(): string[] {
++  const root = path.resolve('src/content/docs');
++  const ids: string[] = [];
++  const walk = (dir: string) => {
++    for (const f of fs.readdirSync(dir, { withFileTypes: true })) {
++      const full = path.join(dir, f.name);
++      if (f.isDirectory()) { if (full !== path.join(root, 'en')) walk(full); }
++      else if (/\.mdx?$/.test(f.name)) ids.push(path.relative(root, full).replace(/\.mdx?$/, '').replace(/(^|\/)index$/, ''));
++    }
++  };
++  walk(root);
++  const exists = (id: string) => ['.md', '.mdx', '/index.md', '/index.mdx'].some((ext) => fs.existsSync(path.join(root, 'en', (id || 'index') + ext)) || (id === '' && fs.existsSync(path.join(root, 'en', 'index.mdx'))));
++  return ids.filter((id) => !exists(id)).map((id) => `/en/${id ? id + '/' : ''}`);
++}
++const fallbacks = new Set(fallbackPaths());
++
++const dropFallbacks = {
++  name: 'spike-drop-fallbacks',
++  hooks: {
++    'astro:build:done': ({ dir }: { dir: URL }) => {
++      for (const p of fallbacks) fs.rmSync(new URL('.' + p, dir), { recursive: true, force: true });
++      console.log(`[spike] copias de respaldo borradas: ${fallbacks.size}`);
++    },
++  },
++};
++
+ export default defineConfig({
++  site: 'https://backenddesdecero.com',
+   integrations: [
++    // Antes que Starlight: borra las copias de respaldo antes de que Pagefind indexe.
++    dropFallbacks,
++    sitemap({ filter: (page) => !fallbacks.has(new URL(page).pathname) }),
+     // Antes que Starlight: astro-mermaid tiene que transformar los bloques ```mermaid primero.
+     mermaid({
+       autoTheme: true,
+@@ -16,9 +54,8 @@
+     }),
+     starlight({
+       title: { es: 'Backend desde cero', en: 'Backend from Scratch' },
+-      defaultLocale: 'es',
+       locales: {
+-        es: { label: 'Español', lang: 'es' },
++        root: { label: 'Español', lang: 'es' },
+         en: { label: 'English', lang: 'en' },
+       },
+       customCss: [
+@@ -40,12 +77,14 @@
+         SiteTitle: './src/components/overrides/SiteTitle.astro',
+         Footer: './src/components/overrides/Footer.astro',
+         Pagination: './src/components/overrides/Pagination.astro',
++        LanguageSelect: './src/components/overrides/LanguageSelect.astro',
+       },
+       sidebar: [
+         { label: 'Roadmap', slug: 'roadmap' },
+         { label: 'Glosario', translations: { en: 'Glossary' }, slug: 'glossary' },
+         ...buildPhaseSidebar(phases),
+       ],
++      routeMiddleware: './src/routeData.ts',
+       plugins: [
+         starlightLinksValidator({
+           // Enlazar a /en/… sin traducir es correcto: Starlight muestra el contenido en español.
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/public/_redirects spike/web/public/_redirects
+--- backup-web/public/_redirects	2026-10-02 16:22:26
++++ spike/web/public/_redirects	1970-01-01 01:00:00
+@@ -1 +0,0 @@
+-/  /es/  302
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/components/LessonIntro.astro spike/web/src/components/LessonIntro.astro
+--- backup-web/src/components/LessonIntro.astro	2026-10-02 23:34:57
++++ spike/web/src/components/LessonIntro.astro	2026-10-03 12:29:19
+@@ -1,9 +1,9 @@
+ ---
+ import { contentT } from '~/lib/content-i18n';
+-import { getEntry, type CollectionEntry } from 'astro:content';
++import type { CollectionEntry } from 'astro:content';
++import { translationIndex, urlOfId } from '~/lib/translations';
+ import { phases } from '~/data/phases';
+-import { fileNameFor, linkLabel } from '~/lib/explorer';
+-import { localizedHref } from '~/lib/links';
++import { fileNameFor, linkLabel, phaseFolderName } from '~/lib/explorer';
+ import { defaultLocale, toLocale } from '~/lib/locales';
+ 
+ interface Props {
+@@ -16,22 +16,19 @@
+ // Los enlaces van al idioma de la URL; los títulos, en el idioma del contenido.
+ const urlLocale = toLocale(Astro.locals.starlightRoute.locale);
+ const contentLocale = toLocale(Astro.locals.starlightRoute.entryMeta.locale);
+-const phaseSlugs = phases.map((p) => p.slug);
++const phaseSlugs = phases.map((p) => phaseFolderName(urlLocale, p.number));
+ 
+-const prerequisites = await Promise.all(
+-  lesson.prerequisites.map(async (slug) => {
+-    // Si el requisito aún no está traducido, usamos su título en el idioma por defecto.
+-    const entry =
+-      (await getEntry('docs', `${contentLocale}/${slug}`)) ??
+-      (await getEntry('docs', `${defaultLocale}/${slug}`));
+-    if (!entry) throw new Error(`[LessonIntro] El requisito previo "${slug}" no existe`);
+-    const href = localizedHref(urlLocale, slug);
+-    const title = entry.data.title;
+-    // El nombre y el fichero, los mismos que da el sidebar de esta página (su idioma).
+-    const name = linkLabel(sidebar, href) ?? title;
+-    return { href, name, file: fileNameFor(sidebar, phaseSlugs, { href, label: title }) };
+-  }),
+-);
++const { byKey } = await translationIndex();
++const prerequisites = lesson.prerequisites.map((key) => {
++  // PRUEBA: el requisito es una clave de traducción; se enlaza la versión del idioma de la URL.
++  const pair = byKey.get(key);
++  const entry = pair?.[urlLocale] ?? pair?.[contentLocale] ?? pair?.[defaultLocale];
++  if (!entry) throw new Error(`[LessonIntro] El requisito previo "${key}" no existe`);
++  const href = urlOfId(entry.id);
++  const title = entry.data.title;
++  const name = linkLabel(sidebar, href) ?? title;
++  return { href, name, file: fileNameFor(sidebar, phaseSlugs, { href, label: title }) };
++});
+ ---
+ 
+ <div class="lesson-intro">
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/components/PhaseList.astro spike/web/src/components/PhaseList.astro
+--- backup-web/src/components/PhaseList.astro	2026-10-02 23:34:57
++++ spike/web/src/components/PhaseList.astro	2026-10-03 12:28:27
+@@ -23,7 +23,7 @@
+             {available ? '- [x]' : '- [ ]'}
+           </span>
+           {available ? (
+-            <a href={localizedHref(locale, phase.slug)}>{name}</a>
++            <a href={localizedHref(locale, name)}>{name}</a>
+           ) : (
+             <span class="phase__name">{name}</span>
+           )}
+@@ -34,7 +34,7 @@
+                 //
+               </span>{' '}
+               {t('phase.lessons', {
+-                published: countLessons(ids, defaultLocale, phase.slug),
++                published: countLessons(ids, defaultLocale, phaseFolderName(defaultLocale, phase.number)),
+                 total: phase.lessonCount,
+               })}
+             </span>
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/components/overrides/Footer.astro spike/web/src/components/overrides/Footer.astro
+--- backup-web/src/components/overrides/Footer.astro	2026-10-02 23:35:39
++++ spike/web/src/components/overrides/Footer.astro	2026-10-03 12:28:27
+@@ -7,7 +7,7 @@
+ const route = Astro.locals.starlightRoute;
+ const t = Astro.locals.t;
+ const locale = toLocale(route.locale);
+-const current = currentLesson(route.sidebar, phases);
++const current = currentLesson(route.sidebar, phases, locale);
+ 
+ let where = toKebab(route.siteTitle);
+ if (current) {
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/components/overrides/LanguageSelect.astro spike/web/src/components/overrides/LanguageSelect.astro
+--- backup-web/src/components/overrides/LanguageSelect.astro	1970-01-01 01:00:00
++++ spike/web/src/components/overrides/LanguageSelect.astro	2026-10-03 12:29:19
+@@ -0,0 +1,34 @@
++---
++/** PRUEBA DE CONCEPTO (desechable): el selector lleva a la traducción real, no a la misma ruta con otro prefijo. */
++import Select from '@astrojs/starlight/components/Select.astro';
++import config from 'virtual:starlight/user-config';
++import { translationsOf } from '~/lib/translations';
++import { localizedHref } from '~/lib/links';
++import { toLocale } from '~/lib/locales';
++
++const route = Astro.locals.starlightRoute;
++const urls = await translationsOf(route.entry.id);
++const current = toLocale(route.locale);
++const options = Object.entries(config.locales ?? {}).map(([code, locale]) => {
++  const lang = toLocale(code === 'root' ? undefined : code);
++  // Sin traducción: a la portada de ese idioma.
++  return { value: urls[lang] ?? localizedHref(lang), selected: lang === current, label: locale!.label };
++});
++---
++
++<starlight-lang-select>
++  <Select icon="translate" label={Astro.locals.t('languageSelect.accessibleLabel')} options={options} width="7em" />
++</starlight-lang-select>
++
++<script>
++  class StarlightLanguageSelect extends HTMLElement {
++    constructor() {
++      super();
++      const select = this.querySelector('select');
++      select?.addEventListener('change', (e) => {
++        if (e.currentTarget instanceof HTMLSelectElement) window.location.pathname = e.currentTarget.value;
++      });
++    }
++  }
++  customElements.define('starlight-lang-select', StarlightLanguageSelect);
++</script>
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/components/overrides/PageTitle.astro spike/web/src/components/overrides/PageTitle.astro
+--- backup-web/src/components/overrides/PageTitle.astro	2026-10-02 23:34:27
++++ spike/web/src/components/overrides/PageTitle.astro	2026-10-03 12:28:27
+@@ -19,7 +19,7 @@
+ }
+ 
+ const locale = toLocale(route.locale);
+-const current = currentLesson(route.sidebar, phases);
++const current = currentLesson(route.sidebar, phases, locale);
+ const phase = current?.phase;
+ const fileName = pageFileName(route.id, entry.data.title, current?.position);
+ const minutes = lesson ? readingMinutes(entry.body ?? '') : undefined;
+@@ -31,7 +31,7 @@
+ <nav class="ide-breadcrumbs" aria-label={Astro.locals.t('breadcrumbs.label')} data-pagefind-ignore>
+   {phase && (
+     <>
+-      <a href={localizedHref(locale, phase.slug)}>{phaseFolderName(locale, phase.number)}</a>
++      <a href={localizedHref(locale, phaseFolderName(locale, phase.number))}>{phaseFolderName(locale, phase.number)}</a>
+       <span aria-hidden="true"> › </span>
+     </>
+   )}
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/components/overrides/Pagination.astro spike/web/src/components/overrides/Pagination.astro
+--- backup-web/src/components/overrides/Pagination.astro	2026-10-02 23:03:53
++++ spike/web/src/components/overrides/Pagination.astro	2026-10-03 12:28:27
+@@ -1,10 +1,11 @@
+ ---
+ import { phases } from '~/data/phases';
+-import { fileNameFor } from '~/lib/explorer';
++import { fileNameFor, phaseFolderName } from '~/lib/explorer';
++import { toLocale } from '~/lib/locales';
+ 
+ const { pagination, sidebar } = Astro.locals.starlightRoute;
+ const t = Astro.locals.t;
+-const slugs = phases.map((p) => p.slug);
++const slugs = phases.map((p) => phaseFolderName(toLocale(Astro.locals.starlightRoute.locale), p.number));
+ const prev = pagination.prev;
+ const next = pagination.next;
+ ---
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/components/overrides/Sidebar.astro spike/web/src/components/overrides/Sidebar.astro
+--- backup-web/src/components/overrides/Sidebar.astro	2026-10-02 23:01:02
++++ spike/web/src/components/overrides/Sidebar.astro	2026-10-03 12:28:27
+@@ -16,7 +16,7 @@
+ const folders = phases.map((phase) => ({
+   phase,
+   name: phaseFolderName(locale, phase.number),
+-  links: phase.status === 'available' ? findPhaseLinks(route.sidebar, phase.slug) : [],
++  links: phase.status === 'available' ? findPhaseLinks(route.sidebar, phaseFolderName(locale, phase.number)) : [],
+ }));
+ ---
+ 
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/content.config.ts spike/web/src/content.config.ts
+--- backup-web/src/content.config.ts	2026-10-02 23:07:55
++++ spike/web/src/content.config.ts	2026-10-03 12:28:27
+@@ -9,6 +9,8 @@
+     loader: docsLoader(),
+     schema: docsSchema({
+       extend: z.object({
++        // PRUEBA: une una página con su traducción cuando sus rutas difieren.
++        translationKey: z.string().optional(),
+         // Cabecera obligatoria de cada lección (ver isLessonId y overrides/PageTitle.astro).
+         lesson: z
+           .object({
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/lib/explorer.ts spike/web/src/lib/explorer.ts
+--- backup-web/src/lib/explorer.ts	2026-10-02 23:34:28
++++ spike/web/src/lib/explorer.ts	2026-10-03 12:28:27
+@@ -110,12 +110,11 @@
+ export function currentLesson(
+   sidebar: readonly ExplorerEntry[],
+   phases: readonly Phase[],
++  locale: Locale,
+ ): CurrentLesson | undefined {
+-  const position = locateCurrent(
+-    sidebar,
+-    phases.map((p) => p.slug),
+-  );
+-  const phase = position && phases.find((p) => p.slug === position.phaseSlug);
++  const slugOf = (p: Phase) => phaseFolderName(locale, p.number); // PRUEBA
++  const position = locateCurrent(sidebar, phases.map(slugOf));
++  const phase = position && phases.find((p) => slugOf(p) === position.phaseSlug);
+   return phase && position ? { phase, position } : undefined;
+ }
+ 
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/lib/lessons.ts spike/web/src/lib/lessons.ts
+--- backup-web/src/lib/lessons.ts	2026-10-02 23:08:30
++++ spike/web/src/lib/lessons.ts	2026-10-03 12:28:27
+@@ -5,7 +5,7 @@
+  * "es/phase-0/dns" sí; "es/phase-0" (la introducción) y "es/roadmap" no.
+  */
+ export function isLessonId(entryId: string): boolean {
+-  return /^[a-z]{2}\/phase-\d+\/[^/]+$/.test(entryId);
++  return /^(?:en\/)?(?:fase|phase)-\d+\/[^/]+$/.test(entryId); // PRUEBA
+ }
+ 
+ /** Lecciones publicadas de una fase en un idioma (sin contar la introducción). */
+@@ -14,5 +14,5 @@
+   locale: Locale,
+   phaseSlug: string,
+ ): number {
+-  return entryIds.filter((id) => isLessonId(id) && id.startsWith(`${locale}/${phaseSlug}/`)).length;
++  return entryIds.filter((id) => isLessonId(id) && id.startsWith(`${locale === 'es' ? '' : locale + '/'}${phaseSlug}/`)).length;
+ }
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/lib/links.ts spike/web/src/lib/links.ts
+--- backup-web/src/lib/links.ts	2026-10-02 16:22:11
++++ spike/web/src/lib/links.ts	2026-10-03 12:28:27
+@@ -3,5 +3,6 @@
+ /** URL interna con prefijo de idioma: localizedHref('es', 'phase-0/dns') → '/es/phase-0/dns/'. */
+ export function localizedHref(locale: Locale, slug = ''): string {
+   const cleanSlug = slug.replace(/^\/+|\/+$/g, '');
+-  return cleanSlug ? `/${locale}/${cleanSlug}/` : `/${locale}/`;
++  const prefix = locale === 'es' ? '' : `/${locale}`; // PRUEBA: español en la raíz
++  return cleanSlug ? `${prefix}/${cleanSlug}/` : `${prefix}/`;
+ }
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/lib/locales.ts spike/web/src/lib/locales.ts
+--- backup-web/src/lib/locales.ts	2026-10-02 16:22:11
++++ spike/web/src/lib/locales.ts	2026-10-03 12:28:27
+@@ -8,6 +8,8 @@
+ 
+ /** Convierte el locale de Starlight (string | undefined) en un Locale del curso. */
+ export function toLocale(value: string | undefined): Locale {
++  // PRUEBA: el español es el idioma raíz y Starlight lo representa como undefined.
++  if (value === undefined) return defaultLocale;
+   if (!isLocale(value)) {
+     throw new Error(
+       `[locales] Idioma desconocido: "${value}". Los idiomas válidos son: ${locales.join(', ')}`,
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/lib/sidebar.ts spike/web/src/lib/sidebar.ts
+--- backup-web/src/lib/sidebar.ts	2026-10-02 16:22:11
++++ spike/web/src/lib/sidebar.ts	2026-10-03 12:28:27
+@@ -3,7 +3,7 @@
+ export interface PhaseSidebarGroup {
+   label: string;
+   translations: { en: string };
+-  items: [{ autogenerate: { directory: string } }];
++  items: { autogenerate: { directory: string } }[];
+ }
+ 
+ /** Un grupo del menú lateral por cada fase publicada, con sus lecciones autogeneradas desde su carpeta. */
+@@ -13,6 +13,10 @@
+     .map((phase) => ({
+       label: `Fase ${phase.number} · ${phase.title.es}`,
+       translations: { en: `Phase ${phase.number} · ${phase.title.en}` },
+-      items: [{ autogenerate: { directory: phase.slug } }],
++      // PRUEBA: una carpeta por idioma; el middleware quita las páginas de respaldo.
++      items: [
++        { autogenerate: { directory: `fase-${phase.number}` } },
++        { autogenerate: { directory: `phase-${phase.number}` } },
++      ],
+     }));
+ }
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/lib/translations.ts spike/web/src/lib/translations.ts
+--- backup-web/src/lib/translations.ts	1970-01-01 01:00:00
++++ spike/web/src/lib/translations.ts	2026-10-03 12:29:19
+@@ -0,0 +1,61 @@
++/**
++ * PRUEBA DE CONCEPTO (desechable): une cada página con su traducción cuando sus rutas difieren.
++ * La clave es `translationKey` del frontmatter o, si no hay, la ruta sin el prefijo de idioma.
++ */
++import { getCollection, type CollectionEntry } from 'astro:content';
++import type { Locale } from './locales';
++
++type Doc = CollectionEntry<'docs'>;
++
++export function localeOfId(id: string): Locale {
++  return id === 'en' || id.startsWith('en/') ? 'en' : 'es';
++}
++
++/** URL pública de una entrada: 'index' → '/', 'fase-0/que-es-dns' → '/fase-0/que-es-dns/'. */
++export function urlOfId(id: string): string {
++  const clean = id === 'index' ? '' : id.replace(/\/index$/, '');
++  return clean ? `/${clean}/` : '/';
++}
++
++function keyOf(doc: Doc): string {
++  const base = doc.id === 'index' ? '' : doc.id;
++  return doc.data.translationKey ?? base.replace(/^en(\/|$)/, '');
++}
++
++export interface TranslationIndex {
++  /** clave → { es: entrada, en: entrada } */
++  byKey: Map<string, Partial<Record<Locale, Doc>>>;
++  keyById: Map<string, string>;
++  /** URLs de las páginas que existen de verdad (sin las copias de respaldo de Starlight). */
++  realUrls: Set<string>;
++}
++
++let cache: Promise<TranslationIndex> | undefined;
++
++export function translationIndex(): Promise<TranslationIndex> {
++  cache ??= getCollection('docs').then((docs) => {
++    const byKey = new Map<string, Partial<Record<Locale, Doc>>>();
++    for (const doc of docs) {
++      const key = keyOf(doc);
++      const locale = localeOfId(doc.id);
++      const pair = byKey.get(key) ?? {};
++      if (pair[locale]) {
++        throw new Error(`[translations] Dos páginas en "${locale}" con la clave "${key}": ${pair[locale]!.id} y ${doc.id}`);
++      }
++      byKey.set(key, { ...pair, [locale]: doc });
++    }
++    return {
++      byKey,
++      keyById: new Map(docs.map((d) => [d.id, keyOf(d)])),
++      realUrls: new Set(docs.map((d) => urlOfId(d.id))),
++    };
++  });
++  return cache;
++}
++
++/** URLs de la página `entryId` en cada idioma en que existe. */
++export async function translationsOf(entryId: string): Promise<Partial<Record<Locale, string>>> {
++  const { byKey, keyById } = await translationIndex();
++  const pair = byKey.get(keyById.get(entryId) ?? '') ?? {};
++  return Object.fromEntries(Object.entries(pair).map(([l, d]) => [l, urlOfId(d!.id)]));
++}
+diff --color -ruN --exclude node_modules --exclude dist --exclude .astro --exclude docs backup-web/src/routeData.ts spike/web/src/routeData.ts
+--- backup-web/src/routeData.ts	1970-01-01 01:00:00
++++ spike/web/src/routeData.ts	2026-10-03 12:29:19
+@@ -0,0 +1,49 @@
++/** PRUEBA DE CONCEPTO (desechable): corrige lo que Starlight deduce de «misma ruta en cada idioma». */
++import { defineRouteMiddleware, type StarlightRouteData } from '@astrojs/starlight/route-data';
++import { translationsOf, translationIndex } from './lib/translations';
++
++type SidebarEntry = StarlightRouteData['sidebar'][number];
++type Link = Extract<SidebarEntry, { type: 'link' }>;
++
++function prune(entries: SidebarEntry[], real: Set<string>): SidebarEntry[] {
++  return entries.flatMap((entry) => {
++    if (entry.type === 'link') return real.has(entry.href) ? [entry] : [];
++    const children = prune(entry.entries, real);
++    return children.length ? [{ ...entry, entries: children }] : [];
++  });
++}
++
++function flatten(entries: SidebarEntry[]): Link[] {
++  return entries.flatMap((e) => (e.type === 'link' ? [e] : flatten(e.entries)));
++}
++
++export const onRequest = defineRouteMiddleware(async (context) => {
++  const route = context.locals.starlightRoute;
++  const { realUrls } = await translationIndex();
++
++  // 1. El sidebar en inglés incluye las copias de respaldo de las páginas en español: fuera.
++  route.sidebar = prune(route.sidebar, realUrls);
++
++  // 2. La paginación se calculó con el sidebar sin limpiar: se recalcula.
++  const links = flatten(route.sidebar);
++  const i = links.findIndex((l) => l.isCurrent);
++  if (i !== -1) route.pagination = { prev: links[i - 1], next: links[i + 1] };
++
++  // 3. hreflang: Starlight los deduce cambiando el prefijo de idioma. Se reconstruyen desde las claves.
++  route.head = route.head.filter((tag) => !(tag.tag === 'link' && tag.attrs?.rel === 'alternate' && tag.attrs?.hreflang));
++  if (route.isFallback) {
++    // 4. Una copia de respaldo no debe indexarse (y el build la borra).
++    route.head.push({ tag: 'meta', attrs: { name: 'robots', content: 'noindex' } });
++  } else if (context.site) {
++    const urls = await translationsOf(route.entry.id);
++    const langs = Object.entries(urls);
++    if (langs.length > 1) {
++      for (const [lang, url] of langs) {
++        route.head.push({ tag: 'link', attrs: { rel: 'alternate', hreflang: lang, href: new URL(url, context.site).href } });
++      }
++      if (urls.es) {
++        route.head.push({ tag: 'link', attrs: { rel: 'alternate', hreflang: 'x-default', href: new URL(urls.es, context.site).href } });
++      }
++    }
++  }
++});

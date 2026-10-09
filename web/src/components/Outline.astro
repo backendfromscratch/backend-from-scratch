@@ -1,0 +1,142 @@
+---
+/**
+ * El esquema de la página: la sección ESQUEMA del explorador (Sidebar.astro). Sustituye en
+ * escritorio al índice de Starlight, que marca la sección que pasa por una franja fija bajo la
+ * cabecera; aquí esa franja queda debajo de las pestañas fijas, y al saltar a una sección marcaba la
+ * anterior. Este marca la última sección cuyo título ya ha llegado a donde aterriza un salto
+ * (scroll-padding-top, en theme.css). La lógica, con tests: src/lib/outline.ts.
+ */
+import { flattenOutline } from '~/lib/outline';
+
+const { toc } = Astro.locals.starlightRoute;
+const items = toc ? flattenOutline(toc.items) : [];
+---
+
+{items.length > 0 && (
+  <ide-outline>
+    <nav aria-label={Astro.locals.t('tableOfContents.onThisPage')}>
+      <ul class="ide-outline__list" role="list">
+        {items.map((item) => (
+          <li>
+            <a class="ide-outline__link" href={`#${item.slug}`} data-depth={item.mark.length}>
+              <span class="ide-outline__mark" aria-hidden="true">
+                {item.mark}
+              </span>
+              {item.text}
+            </a>
+          </li>
+        ))}
+      </ul>
+    </nav>
+  </ide-outline>
+)}
+
+<script>
+  import { revealScrollTop } from '~/lib/explorer';
+  import { currentSection } from '~/lib/outline';
+
+  /** La línea de lectura: donde aterriza un salto a un ancla, con un poco de margen. */
+  const readingLine = () =>
+    parseFloat(getComputedStyle(document.documentElement).scrollPaddingTop) + 8 || 0;
+
+  class IdeOutline extends HTMLElement {
+    connectedCallback() {
+      const links = Array.from(this.querySelectorAll<HTMLAnchorElement>('a[href^="#"]'));
+      const headings = links.map((link) =>
+        document.getElementById(decodeURIComponent(link.hash.slice(1))),
+      );
+      // La sección a la que se acaba de saltar (clic en el esquema o URL con #): al final de la
+      // página, su título no llega a subir y hay que saber cuál era.
+      const indexOfHash = () => links.findIndex((link) => link.hash === window.location.hash);
+      let jumpTarget = indexOfHash();
+      // La sección del esquema que hace scroll (Sidebar.astro): al cambiar la marca, la muestra.
+      const scroller = this.closest<HTMLElement>('.ide-section');
+      let shown = -1;
+      const reveal = (link: HTMLElement) => {
+        if (!scroller) return;
+        const top =
+          link.getBoundingClientRect().top -
+          scroller.getBoundingClientRect().top +
+          scroller.scrollTop;
+        scroller.scrollTop = revealScrollTop(
+          { scrollTop: scroller.scrollTop, height: scroller.clientHeight },
+          { top, height: link.offsetHeight },
+        );
+      };
+      let frame = 0;
+      const update = () => {
+        frame = 0;
+        const tops = headings.map((heading) => heading?.getBoundingClientRect().top ?? Infinity);
+        const page = document.documentElement;
+        const atBottom =
+          window.scrollY > 0 && window.scrollY + window.innerHeight >= page.scrollHeight - 2;
+        const jump = { target: jumpTarget, viewHeight: window.innerHeight };
+        const index = currentSection(tops, readingLine(), atBottom, jump);
+        links.forEach((link, i) => {
+          if (i === index) link.setAttribute('aria-current', 'true');
+          else link.removeAttribute('aria-current');
+        });
+        const marked = links[index];
+        if (index !== shown && marked) {
+          shown = index;
+          reveal(marked);
+        }
+      };
+      const schedule = () => {
+        if (!frame) frame = requestAnimationFrame(update);
+      };
+      links.forEach((link, i) =>
+        link.addEventListener('click', () => {
+          jumpTarget = i;
+          schedule();
+        }),
+      );
+      // Plegado, el esquema no se puede desplazar: al abrirlo, muestra la sección marcada.
+      scroller?.addEventListener('toggle', () => {
+        shown = -1;
+        schedule();
+      });
+      window.addEventListener('hashchange', () => {
+        jumpTarget = indexOfHash();
+        schedule();
+      });
+      window.addEventListener('scroll', schedule, { passive: true });
+      window.addEventListener('resize', schedule);
+      update();
+    }
+  }
+  customElements.define('ide-outline', IdeOutline);
+</script>
+
+<style>
+  .ide-outline__list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .ide-outline__link {
+    display: block;
+    padding: 0.2rem 0.75rem 0.2rem 1.75rem;
+    font-size: var(--sl-text-xs);
+    line-height: 1.5;
+    color: var(--ide-text);
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .ide-outline__link[data-depth='3'] {
+    padding-inline-start: 2.75rem;
+  }
+  .ide-outline__link:hover {
+    background: var(--ide-selection);
+    color: var(--ide-strong);
+  }
+  .ide-outline__link[aria-current='true'] {
+    color: var(--ide-accent);
+  }
+  .ide-outline__mark {
+    margin-inline-end: 0.5ch;
+    color: var(--ide-keyword);
+  }
+</style>
