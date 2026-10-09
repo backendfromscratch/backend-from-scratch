@@ -184,6 +184,22 @@ export const breadcrumbsOnPhasePages = perPage('breadcrumbs', ({ url, facts }, {
     : 'is missing the BreadcrumbList (JSON-LD) that ends at the page itself';
 });
 
+/** Google reads the site name only from the domain's home page: a WebSite (JSON-LD) with its name and URL. */
+export const siteNameOnHome = perPage('site-name', ({ url, facts }, { site }) => {
+  if (url !== '/') return undefined;
+  const website = facts.jsonLd.find(
+    (data) => (data as { '@type'?: unknown })['@type'] === 'WebSite',
+  ) as { name?: unknown; url?: unknown } | undefined;
+  if (!website) return 'is missing the WebSite (JSON-LD) that gives Google the site name';
+  if (typeof website.name !== 'string' || website.name === '') {
+    return 'the WebSite (JSON-LD) has no name';
+  }
+  const root = new URL('/', site).href;
+  return website.url === root
+    ? undefined
+    : `the WebSite (JSON-LD) has url=${String(website.url)}, but it should be ${root}`;
+});
+
 export const ogImageExists = perPage('og-image', ({ facts }, { site, files }) => {
   if (!facts.ogImage) return 'has no og:image';
   const image = new URL(facts.ogImage);
@@ -258,6 +274,7 @@ export const defaultRules: Rule[] = [
   jsBudget,
   titleNotDuplicated,
   breadcrumbsOnPhasePages,
+  siteNameOnHome,
   ogImageExists,
   internalLinksResolve,
   titleLength,

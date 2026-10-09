@@ -137,7 +137,7 @@ src/lib/                        pure logic, no DOM, with tests:
   minimap.ts, pinned-tabs.ts    minimap and tab strip
   reading.ts                    reading minutes
   storage.ts                    localStorage that doesn't fail (private browsing, full quota)
-  structured-data.ts            breadcrumb JSON-LD
+  structured-data.ts            JSON-LD: breadcrumbs and the site name (WebSite, home page only)
   color.ts                      WCAG contrast
   fill.ts, live-text.ts         {placeholder} slots in strings and the playgrounds' aria-live regions
   diagrams/                     Sätteri plugin (diagrams-plugin.ts) that turns mermaid blocks into HTML at build time:

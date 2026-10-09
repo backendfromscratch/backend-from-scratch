@@ -19,6 +19,7 @@ import {
   ogImageExists,
   oneH1,
   robotsTxtPointsToSitemap,
+  siteNameOnHome,
   sitemapMatchesPages,
   TITLE_MAX,
   titleAndDescription,
@@ -118,6 +119,7 @@ describe('auditSite', () => {
       jsBudget,
       titleNotDuplicated,
       breadcrumbsOnPhasePages,
+      siteNameOnHome,
       ogImageExists,
       internalLinksResolve,
       titleLength,
@@ -324,6 +326,37 @@ describe('breadcrumbsOnPhasePages', () => {
       '/fase-0/que-es-dns/',
       '/fase-0/tls-y-https/',
     ]);
+  });
+});
+
+describe('siteNameOnHome', () => {
+  const website = (overrides: Record<string, unknown> = {}) => ({
+    '@type': 'WebSite',
+    name: 'Backend desde cero',
+    url: `${SITE}/`,
+    ...overrides,
+  });
+
+  it('the home page has a WebSite with a name and the URL of the root', () => {
+    expect(siteNameOnHome(input([page('/', { jsonLd: [website()] })]))).toEqual([]);
+  });
+
+  it('other pages, the English home included, do not need it', () => {
+    expect(siteNameOnHome(input([page('/en/', { lang: 'en' }), page('/roadmap/')]))).toEqual([]);
+  });
+
+  it.each([
+    ['is missing', [], /is missing the WebSite/],
+    ['has no name', [website({ name: '' })], /has no name/],
+    [
+      'points elsewhere',
+      [website({ url: `${SITE}/en/` })],
+      /should be https:\/\/backenddesdecero\.com\//,
+    ],
+  ])('reports it if it %s', (_, jsonLd, message) => {
+    const issues = siteNameOnHome(input([page('/', { jsonLd })]));
+    expect(issues).toHaveLength(1);
+    expect(issues[0]!.message).toMatch(message);
   });
 });
 

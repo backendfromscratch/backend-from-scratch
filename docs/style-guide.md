@@ -169,7 +169,7 @@ A playground is a React component inside a lesson (Phase 0 spec, §6.4). The fir
   - one `<h1>`, title and description;
   - canonical, sitemap and reciprocal `hreflang`;
   - no fallback pages;
-  - breadcrumbs and social image;
+  - breadcrumbs, the site name (`WebSite`) on the home page and social image;
   - at most 400 KB of JavaScript per page.
 
   If it fails, the log says the page and the rule.

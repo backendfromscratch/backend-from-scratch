@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { breadcrumbJsonLd } from './structured-data';
+import { breadcrumbJsonLd, websiteJsonLd } from './structured-data';
 
 const SITE = 'https://backenddesdecero.com/';
 
@@ -33,5 +33,27 @@ describe('breadcrumbJsonLd', () => {
     const json = breadcrumbJsonLd([{ name: '</script><b>', url: '/' }], SITE);
     expect(json).not.toContain('<');
     expect(JSON.parse(json).itemListElement[0].name).toBe('</script><b>');
+  });
+});
+
+describe('websiteJsonLd', () => {
+  it('is a schema.org WebSite with the name, the alternate names and the URL of the domain root', () => {
+    const json = websiteJsonLd(
+      { name: 'Backend desde cero', alternateName: ['Backend from Scratch'] },
+      `${SITE}en/`,
+    );
+    expect(JSON.parse(json)).toEqual({
+      '@context': 'https://schema.org',
+      '@type': 'WebSite',
+      name: 'Backend desde cero',
+      alternateName: ['Backend from Scratch'],
+      url: SITE,
+    });
+  });
+
+  it('escapes «<» so no text can close the <script>', () => {
+    const json = websiteJsonLd({ name: '</script>', alternateName: [] }, SITE);
+    expect(json).not.toContain('<');
+    expect(JSON.parse(json).name).toBe('</script>');
   });
 });
