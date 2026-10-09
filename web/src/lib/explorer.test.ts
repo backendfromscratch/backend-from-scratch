@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  fileLinkName,
   type ExplorerEntry,
   currentLesson,
   fileNameFor,
@@ -292,5 +293,13 @@ describe('unexpectedSidebarEntries', () => {
     expect(
       unexpectedSidebarEntries([{ type: 'group', label: 'Phase 1', entries: [] }], ['phase-1']),
     ).toEqual([]);
+  });
+});
+
+describe('fileLinkName', () => {
+  it('puts the real name first and then the file name as it is shown', () => {
+    expect(fileLinkName('IP, puertos y sockets', '05-ip-puertos-y-sockets.md')).toBe(
+      'IP, puertos y sockets, 05-ip-puertos-y-sockets.md',
+    );
   });
 });
