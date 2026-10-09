@@ -112,7 +112,7 @@ src/content/i18n/               our own UI strings (es.json, en.json)
 src/content/*.test.ts           content tests: lesson order and UI keys defined and used
 src/data/phases.ts              the 12 phases: title, summary, status and planned lessons
 src/data/playgrounds.ts         labs and playgrounds, for the /playgrounds/ page
-src/data/site.ts                public URL and site name in each language
+src/data/site.ts                public URL, site name in each language and the content license
 src/routeData.ts                Starlight middleware: fixes the sidebar, pagination, hreflang and language picker for translated routes
 src/pages/og/[...route].png.ts  a 1200 × 630 PNG per page (og:image), generated at build time
 src/integrations/               our own Astro integrations: drop-fallbacks (deletes the fallback pages), diagrams and seo-audit
