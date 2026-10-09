@@ -50,5 +50,5 @@ docs/           style guide, design specs and the to-do list
 
 ## License
 
-- **Code** (everything outside `web/src/content/`): [MIT](LICENSE).
-- **Course content** (everything in `web/src/content/`: lessons, glossary and UI texts): [Creative Commons Attribution 4.0 International](LICENSE-CONTENT) (CC BY 4.0). You may share and adapt it, including commercially, as long as you give credit, for example: "Based on *Backend desde cero* by Gianmarco Segura, backenddesdecero.com, CC BY 4.0".
+- **Code** (everything except the course content below, including the tests in `web/src/content/`): [MIT](LICENSE).
+- **Course content** (the lessons in `web/src/content/docs/`, the glossary in `web/src/content/glossary/` and the UI texts in `web/src/content/i18n/`): [Creative Commons Attribution 4.0 International](LICENSE-CONTENT) (CC BY 4.0). You may share and adapt it, including commercially, as long as you give credit, for example: "Based on *Backend desde cero* by Gianmarco Segura, backenddesdecero.com, CC BY 4.0".

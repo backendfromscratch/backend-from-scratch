@@ -48,7 +48,7 @@ Only what is needed to keep working gets committed. Git history keeps the rest.
 - Routes and technical SEO: Spanish at the root, translated routes linked by `translationKey`, and an SEO audit that fails the build (design in `docs/specs/2026-10-03-seo-design.md`; rules in `docs/style-guide.md`, "Routes, translations and SEO").
 - CI: GitHub Actions checks format, types, tests and build on every PR and every push to `main` (decided on 2026-10-07). Deployment stays with Cloudflare's Git integration; deploying from GitHub Actions is left for Phase 8.
 - Repository language: English (decided on 2026-10-09). The site stays bilingual.
-- License: MIT for the code and CC BY 4.0 for the course content in `web/src/content/` (decided on 2026-10-09; `LICENSE` and `LICENSE-CONTENT`).
+- License: CC BY 4.0 for the course content (`web/src/content/docs/`, `glossary/` and `i18n/`) and MIT for everything else, code and tests included (decided on 2026-10-09; `LICENSE` and `LICENSE-CONTENT`).
 - Style guide for writing lessons: `docs/style-guide.md`.
 - The next steps, in order, and what the author still has to review or decide: `docs/todo.md`. Keep it up to date.
 
