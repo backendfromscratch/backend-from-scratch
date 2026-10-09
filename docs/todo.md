@@ -32,9 +32,11 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 
 - [x] **You:** buy `backenddesdecero.com` and `backendfromscratch.com` (2026-10-09, on Cloudflare Registrar, in the author's name, until 2027-10-09). The `.dev` ones were skipped.
 - [x] **Claude:** the Cloudflare Workers configuration (`wrangler.jsonc`, 2026-10-09). Settings in `docs/specs/2026-10-02-site-and-phase-0-design.md`, §7.
-- [ ] **Together:** connect Cloudflare to the repository with Workers Builds, add `backenddesdecero.com` as a custom domain (with `www` redirecting to it) and redirect `backendfromscratch.com` to `/en/` with a 301 that keeps the path.
+- [x] **Together:** connect Cloudflare to the repository with Workers Builds, add `backenddesdecero.com` as a custom domain, redirect `www` to it and `backendfromscratch.com` to `/en/`, and turn on "Always Use HTTPS" (2026-10-10). The site is live at `https://backenddesdecero.com`. Setup in `docs/specs/2026-10-02-site-and-phase-0-design.md`, §7.
+- [x] **Claude:** one year of cache for `/_astro/` and no production `workers.dev` address (2026-10-10).
 - [ ] **You:** check that auto-renewal is on for both domains.
 - [ ] **Together, before announcing it:** Lighthouse with a simulated phone, Google Search Console, Bing Webmaster Tools and the rich results test.
+- [ ] **Together, a few weeks after publishing:** turn on HSTS once the domain has worked without problems (start with a short `max-age`).
 - [x] **You:** decide the license (2026-10-09): CC BY 4.0 for the course content (`web/src/content/docs/`, `glossary/` and `i18n/`) and MIT for everything else, code and tests included. `LICENSE`, `LICENSE-CONTENT` and the README say so.
 - [x] **Claude:** say on the site that the content is CC BY 4.0 (2026-10-09): a line in the footer of every page, in both languages, linking to the license deed in the reader's language with `rel="license"`.
 
