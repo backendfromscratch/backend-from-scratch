@@ -4,7 +4,7 @@
  * - Cifrado con RSA-OAEP (2048 bits, SHA-256): cifra la clave pública, descifra la privada.
  * - Firma con ECDSA (curva P-256, SHA-256): firma la clave privada, verifica la pública.
  *
- * No sabe de React ni de idiomas. Plan: docs/plans/2026-10-03-playground-crypto-y-leccion-7.md
+ * No sabe de React ni de idiomas.
  */
 
 const RSA_OAEP: RsaHashedKeyGenParams = {

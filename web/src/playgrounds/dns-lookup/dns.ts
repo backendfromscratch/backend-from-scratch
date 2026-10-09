@@ -4,7 +4,7 @@
  * Lee las respuestas DoH (DNS sobre HTTPS, en su formato JSON), encuentra las zonas que hay entre
  * la raíz y el nombre consultado y cuenta el recorrido que hace un resolver para responder.
  * No sabe de React ni de idiomas: resolver.ts hace las consultas y strings.ts pone las frases.
- * Spec: docs/specs/2026-10-02-web-fase-0-design.md (§6.4) y docs/plans/2026-10-03-laboratorio-dns-y-leccion-6.md
+ * Spec: docs/specs/2026-10-02-site-and-phase-0-design.md (§6.4)
  */
 
 /** Los tipos de registro que se pueden pedir en el laboratorio. */

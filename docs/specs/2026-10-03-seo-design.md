@@ -1,183 +1,183 @@
-# Diseño: SEO de la web
+# Design: site SEO
 
-- **Fecha:** 2026-10-03
-- **Estado:** §2.1, §2.2 y §2.3 decididas; §2.2 y §3 implementadas el 2026-10-03 (`docs/plans/2026-10-03-seo-tecnico.md`), salvo Lighthouse; §4 y §2.3 (Fase 0) aplicados el 2026-10-03 (`docs/plans/2026-10-03-contenido-fase-0.md`)
-- **Origen:** el autor fijó como prioridad n.º 1 que la web posicione lo más alto posible en Google y que lo explique todo de la forma más sencilla posible, para todos los públicos (`CLAUDE.md`).
+- **Date:** 2026-10-03
+- **Status:** §2.1, §2.2 and §2.3 decided; §2.2 and §3 implemented on 2026-10-03, except Lighthouse; §4 and §2.3 (Phase 0) applied on 2026-10-03
+- **Origin:** the author set as priority no. 1 that the site ranks as high as possible on Google and explains everything in the simplest possible way, for everyone (`CLAUDE.md`).
 
-## 1. Qué pesa de verdad, por orden
+## 1. What really matters, in order
 
-1. **El contenido:** que cada lección responda mejor que nadie a una búsqueda concreta («qué es el DNS», «diferencia entre TCP y UDP»). Es lo que más pesa, y es donde ya está el esfuerzo del curso.
-2. **Los enlaces de otras webs:** foros, newsletters, Reddit, blogs, la comunidad hispanohablante. No se construyen con código, sino publicando y compartiendo.
-3. **La parte técnica:** que Google encuentre e indexe bien cada página en su idioma. Hoy tiene huecos (§3). Son baratos de cerrar, pero algunos dependen del dominio.
-4. **Los detalles** (palabras en la URL, el nombre del dominio): pesan poco, pero son caros de cambiar después de publicar. Por eso se deciden antes.
+1. **The content:** that each lesson answers a specific search better than anyone («qué es el DNS», «diferencia entre TCP y UDP»). It is what matters most, and it is where the course's effort already goes.
+2. **Links from other sites:** forums, newsletters, Reddit, blogs, the Spanish-speaking community. They are not built with code, but by publishing and sharing.
+3. **The technical side:** that Google finds and indexes each page well in its language. Today it has gaps (§3). They are cheap to close, but some depend on the domain.
+4. **The details** (words in the URL, the domain name): they matter little, but they are expensive to change after publishing. That is why they are decided first.
 
-Otra cosa a favor de publicar pronto: Google tarda meses en confiar en una web nueva, y ese tiempo empieza a contar el día que se publica.
+Another point in favour of publishing early: Google takes months to trust a new site, and that time starts counting the day it is published.
 
-## 2. Decisiones del autor antes de publicar
+## 2. Author decisions before publishing
 
-Son las que, una vez publicada la web, cuestan redirecciones y posiciones perdidas.
+These are the ones that, once the site is published, cost redirects and lost rankings.
 
-### 2.1 Nombre y dominio
+### 2.1 Name and domain
 
-**Decidido el 2026-10-03:** «Backend desde cero» en `backenddesdecero.com`. Análisis en `docs/research/2026-10-03-idiomas-y-nombres.md`. Era la recomendación revisada: **«Backend desde cero / Backend from Scratch» en `backenddesdecero.com`**, un solo dominio para los dos idiomas. Coincide con las búsquedas reales («aprender backend desde cero» es la primera sugerencia de Google para «aprender backend»), y lo entiende cualquiera.
+**Decided on 2026-10-03:** «Backend desde cero» at `backenddesdecero.com`. Analysis in `docs/research/2026-10-03-languages-and-names.md`. It was the revised recommendation: **«Backend desde cero / Backend from Scratch» at `backenddesdecero.com`**, one domain for both languages. It matches real searches («aprender backend desde cero» is Google's first suggestion for «aprender backend»), and anyone understands it.
 
-### 2.2 Estructura de las URLs
+### 2.2 URL structure
 
-Hoy: `/es/phase-0/dns/` y `/en/phase-0/dns/`, y la raíz `/` redirige a `/es/` con un 302 (temporal).
+Today: `/es/phase-0/dns/` and `/en/phase-0/dns/`, and the root `/` redirects to `/es/` with a 302 (temporary).
 
-| Opción | Español | Inglés | Coste |
+| Option | Spanish | English | Cost |
 |---|---|---|---|
-| A. Como hoy | `/es/phase-0/dns/` | `/en/phase-0/dns/` | Ninguno |
-| B. Español en la raíz | `/phase-0/dns/` | `/en/phase-0/dns/` | Bajo: mover `docs/es/*` a `docs/` y cambiar los enlaces internos |
-| **C. Español en la raíz y rutas traducidas** | `/fase-0/que-es-dns/` | `/en/phase-0/what-is-dns/` | Medio (ver abajo) |
+| A. As today | `/es/phase-0/dns/` | `/en/phase-0/dns/` | None |
+| B. Spanish at the root | `/phase-0/dns/` | `/en/phase-0/dns/` | Low: move `docs/es/*` to `docs/` and change the internal links |
+| **C. Spanish at the root and translated routes** | `/fase-0/que-es-dns/` | `/en/phase-0/what-is-dns/` | Medium (see below) |
 
-**Recomendación: C.**
-- **La portada:** con el español en la raíz, la portada se sirve en `/` sin redirección. Es la página que más enlaces recibirá.
-- **Las rutas:** la guía de Google pide usar en la URL el idioma del público. Y la ruta se ve en el resultado de búsqueda (`backenddesdecero.com › fase-0 › que-es-dns`).
+**Recommendation: C.**
+- **The home page:** with Spanish at the root, the home page is served at `/` without a redirect. It is the page that will receive the most links.
+- **The routes:** Google's guidance asks to use the audience's language in the URL. And the route shows in the search result (`backenddesdecero.com › fase-0 › que-es-dns`).
 
-El efecto en el ranking es pequeño, pero hoy hay 9 lecciones, y cada lección nueva encarece el cambio.
+The effect on ranking is small, but today there are 9 lessons, and every new lesson makes the change more expensive.
 
-**Lo que cuesta C** (revisado tras leer el código de Starlight 0.42.5): Starlight no admite rutas distintas por idioma, y no hay ningún plugin que lo haga (búsqueda en npm, 2026-10-03). Para encontrar la traducción de una página, cambia el prefijo de idioma de la URL (`/es/…` → `/en/…`) y deja el resto igual (`localizedUrl`). Con rutas traducidas, eso rompe cinco cosas, y cada una se arregla por un punto de extensión oficial:
+**What C costs** (revised after reading the Starlight 0.42.5 code): Starlight does not support different routes per language, and there is no plugin that does (npm search, 2026-10-03). To find a page's translation, it changes the URL's language prefix (`/es/…` → `/en/…`) and leaves the rest the same (`localizedUrl`). With translated routes, that breaks five things, and each is fixed through an official extension point:
 
-1. **El emparejamiento:** cada página declara su pareja con un `translationKey` en el frontmatter, y un test comprueba que todas la tienen y que no se repite.
-2. **El selector de idioma** llevaría a una página que no existe. Se sustituye el componente `LanguageSelect`, como ya hacemos con `Sidebar` o `PageTitle`.
-3. **Los `hreflang`** apuntarían a URLs que no existen. Un *route middleware* de Starlight los corrige.
-4. **Las páginas de respaldo:** Starlight creería que la página en inglés no existe y generaría una copia con el texto en español en `/en/fase-0/que-es-dns/`. Eso es contenido duplicado, y Google lo penaliza. El middleware las marca con `noindex` y se excluyen del sitemap (esto hará falta igualmente en cuanto haya lecciones sin traducir, sea cual sea la opción).
-5. **El sidebar y los requisitos:** el explorador (`buildPhaseSidebar`) busca la carpeta de la fase con el mismo nombre en los dos idiomas, y `prerequisites` usa la ruta. Las dos cosas pasan a resolverse por idioma.
+1. **Pairing:** each page declares its counterpart with a `translationKey` in the frontmatter, and a test checks that all of them have one and that it is not repeated.
+2. **The language selector** would lead to a page that does not exist. The `LanguageSelect` component is replaced, as we already do with `Sidebar` or `PageTitle`.
+3. **The `hreflang`s** would point to URLs that do not exist. A Starlight *route middleware* fixes them.
+4. **Fallback pages:** Starlight would believe the English page does not exist and would generate a copy with the Spanish text at `/en/fase-0/que-es-dns/`. That is duplicate content, and Google penalises it. The middleware marks them `noindex` and they are excluded from the sitemap (this will be needed anyway as soon as there are untranslated lessons, whichever option is chosen).
+5. **The sidebar and the prerequisites:** the explorer (`buildPhaseSidebar`) looks for the phase folder with the same name in both languages, and `prerequisites` uses the route. Both are now resolved per language.
 
-**Prueba de concepto (2026-10-03): funciona.** Se hizo con toda la Fase 0 sobre `web/`, que después se restauró y se comprobó idéntica (huellas SHA de los 202 ficheros). El código está en `docs/research/2026-10-03-prueba-rutas-traducidas.patch`; es desechable y sirve de referencia, porque la implementación real va con tests desde cero. No apareció una sexta pieza. Resultado:
+**Proof of concept (2026-10-03): it works.** It was done with all of Phase 0 on `web/`, which was then restored and checked to be identical (SHA fingerprints of the 202 files). Its code was disposable, because the real implementation was written from scratch with tests; it is kept in the first commit (`3bcdc57`, `docs/research/2026-10-03-prueba-rutas-traducidas.patch`). No sixth piece appeared. Result:
 
-- **Rutas:** español en `/fase-0/que-es-dns/` y en la raíz (`/`, `/roadmap/`); inglés en `/en/phase-0/dns/`. El build pasa y el validador da todos los enlaces internos por buenos.
-- **`hreflang` y canónicas:** correctos en las dos direcciones, con `x-default` al español.
-- **Selector de idioma:** lleva a la traducción real (probado en el navegador).
-- **Explorador, paginación, requisitos, pestaña y pie:** correctos en los dos idiomas.
-- **Copias de respaldo:** Starlight generó 9 y el build las borró. No están en el sitemap (24 URLs) ni en el buscador (24 páginas).
-- **El laboratorio DNS** funciona en la ruta nueva.
+- **Routes:** Spanish at `/fase-0/que-es-dns/` and at the root (`/`, `/roadmap/`); English at `/en/phase-0/dns/`. The build passes and the validator accepts all internal links.
+- **`hreflang` and canonicals:** correct in both directions, with `x-default` pointing to Spanish.
+- **Language selector:** leads to the real translation (tested in the browser).
+- **Explorer, pagination, prerequisites, tab and footer:** correct in both languages.
+- **Fallback pages:** Starlight generated 9 and the build deleted them. They are not in the sitemap (24 URLs) or in the search (24 pages).
+- **The DNS lab** works on the new route.
 
-**Cómo se resolvió cada pieza** (para el plan):
-1. **Emparejamiento:**
-   - `translationKey` opcional en el frontmatter; sin clave, se usa la ruta sin idioma, así que `roadmap` y la portada se emparejan solas;
-   - `src/lib/translations.ts` construye el índice desde la colección y falla si dos páginas del mismo idioma comparten clave.
-2. **Selector:** override de `LanguageSelect`. Si no hay traducción, lleva a la portada de ese idioma.
+**How each piece was solved** (for the plan):
+1. **Pairing:**
+   - optional `translationKey` in the frontmatter; without a key, the route without the language is used, so `roadmap` and the home page pair up on their own;
+   - `src/lib/translations.ts` builds the index from the collection and fails if two pages of the same language share a key.
+2. **Selector:** override of `LanguageSelect`. If there is no translation, it leads to the home page of that language.
 3. **`src/routeData.ts`** (*route middleware*):
-   - quita del sidebar los enlaces a páginas que no existen de verdad (las copias);
-   - recalcula la paginación, que Starlight calcula antes del middleware;
-   - rehace los `hreflang`;
-   - marca las copias con `noindex`.
-4. **Copias de respaldo:**
-   - una integración propia, colocada **antes** de Starlight, las borra en `astro:build:done`, antes de que Pagefind indexe;
-   - `@astrojs/sitemap` pasa a ser dependencia directa, con un `filter` que las excluye y sin su opción `i18n`, que deduce las traducciones por la ruta: los `hreflang` ya van en el HTML.
-5. **Carpetas por idioma:**
-   - cada grupo del sidebar autogenera desde `fase-N` y `phase-N`, y el middleware limpia lo que sobra;
-   - `phaseFolderName(locale, n)`, que ya existía, da la carpeta de cada idioma;
-   - `currentLesson` recibe el idioma;
-   - `prerequisites` usa claves (`[tls-https]`) en vez de rutas.
-6. **Idioma raíz:**
-   - `toLocale(undefined)` devuelve `es`;
-   - `localizedHref('es', …)` va sin prefijo;
-   - `isLessonId` y `countLessons` aceptan ids sin prefijo de idioma;
-   - desaparece `public/_redirects`.
+   - removes from the sidebar the links to pages that do not really exist (the copies);
+   - recomputes the pagination, which Starlight computes before the middleware;
+   - rebuilds the `hreflang`s;
+   - marks the copies with `noindex`.
+4. **Fallback pages:**
+   - a custom integration, placed **before** Starlight, deletes them in `astro:build:done`, before Pagefind indexes;
+   - `@astrojs/sitemap` becomes a direct dependency, with a `filter` that excludes them and without its `i18n` option, which deduces translations from the route: the `hreflang`s already go in the HTML.
+5. **Folders per language:**
+   - each sidebar group autogenerates from `fase-N` and `phase-N`, and the middleware cleans up what is left over;
+   - `phaseFolderName(locale, n)`, which already existed, gives each language's folder;
+   - `currentLesson` receives the language;
+   - `prerequisites` uses keys (`[tls-https]`) instead of routes.
+6. **Root language:**
+   - `toLocale(undefined)` returns `es`;
+   - `localizedHref('es', …)` goes without a prefix;
+   - `isLessonId` and `countLessons` accept ids without a language prefix;
+   - `public/_redirects` goes away.
 
-**Lo que rompe** y hay que adaptar con tests: `lessons.test.ts`, `links.test.ts`, `locales.test.ts`, `sidebar.test.ts` y `explorer.test.ts`. Además, los enlaces internos del contenido en español cambian (lo comprueba el validador).
+**What breaks** and has to be adapted with tests: `lessons.test.ts`, `links.test.ts`, `locales.test.ts`, `sidebar.test.ts` and `explorer.test.ts`. In addition, the internal links of the Spanish content change (the validator checks them).
 
-**Cosas que quedan para el plan:**
-- elegir los nombres definitivos de las rutas (de §4), también `glosario`;
-- hacer que el script que borra las copias reutilice el índice de traducciones en vez de recorrer el disco.
+**Things left for the plan:**
+- choose the final route names (from §4), also `glosario`;
+- make the script that deletes the copies reuse the translation index instead of walking the disk.
 
-### 2.3 Para quién escribimos
+### 2.3 Who we write for
 
-El spec de la web dice: «personas que ya programan (por ejemplo, frontend) pero no saben backend». El autor pide ahora «entendible para todos los públicos». Y quien busca «qué es el DNS» en Google es de todo: estudiantes, gente de sistemas, curiosos.
+The site spec says: «personas que ya programan (por ejemplo, frontend) pero no saben backend» (people who already code, for example frontend, but do not know backend). The author now asks for «entendible para todos los públicos» (understandable for everyone). And whoever searches «qué es el DNS» on Google is of all kinds: students, sysadmins, curious people.
 
-**Decidido el 2026-10-03: todo el curso para cualquiera.** Ninguna lección da por sabido nada de programación. Consecuencias:
-- **Guía de estilo:** regla nueva («Escribe para todos los públicos»), y la sección «Ya lo has visto» conecta con lo que ve cualquiera (el navegador, el móvil, el wifi de casa) y, como extra, con el código de quien programa.
-- **Las 9 lecciones de la Fase 0** se revisan con ese criterio: frases que den por sabido `fetch`, DevTools o qué es una función sin explicarlo.
-- **Antes de la Fase 3** (programar un servidor) hará falta enseñar a programar. Propuesta, para decidir al llegar ahí: una fase corta, «Programar desde cero con JavaScript y TypeScript», con solo lo que el backend necesita (variables, funciones, objetos, módulos, `async`/`await`, npm), y enlaces a javascript.info para profundizar.
+**Decided on 2026-10-03: the whole course for anyone.** No lesson takes any programming knowledge for granted. Consequences:
+- **Style guide:** a new rule («Escribe para todos los públicos», "Write for everyone"), and the «Ya lo has visto» ("You have already seen it") section connects with what anyone sees (the browser, the phone, the home wifi) and, as an extra, with the code of those who program.
+- **The 9 lessons of Phase 0** are reviewed with that criterion: sentences that take `fetch`, DevTools or what a function is for granted without explaining it.
+- **Before Phase 3** (programming a server) it will be necessary to teach programming. Proposal, to decide when we get there: a short phase, «Programar desde cero con JavaScript y TypeScript» ("Programming from scratch with JavaScript and TypeScript"), with only what the backend needs (variables, functions, objects, modules, `async`/`await`, npm), and links to javascript.info for going deeper.
 
-## 3. Estado técnico hoy (build del 2026-10-03)
+## 3. Technical state today (build of 2026-10-03)
 
-| Qué | Estado | Arreglo |
+| What | State | Fix |
 |---|---|---|
-| `site` en `astro.config.ts` | ✗ No está | Poner el dominio. **De él depende lo siguiente** |
-| Sitemap (`sitemap-index.xml`) | ✗ No se genera (Starlight lo hace solo cuando hay `site`) | Automático con `site` |
-| URL canónica (`<link rel="canonical">`) y `og:url` | ✗ | Automático con `site` |
-| `hreflang` entre idiomas | ✗ | Automático con `site` (con la opción C, corregido por el middleware) |
-| `robots.txt` | ✗ No existe | Crearlo en `web/public/`, con la URL del sitemap |
-| Raíz `/` | 302 a `/es/` | Desaparece con las opciones B o C; si no, 301 |
-| Imagen para redes (`og:image`) | ✗ Ninguna, aunque se declara `twitter:card` grande | Generarla en el build para cada página, con el título y el tema IDE (`astro-og-canvas` o `satori`) |
-| Datos estructurados (JSON-LD) | ✗ | `BreadcrumbList` en todas las lecciones; `Course` en la portada, si cumple los requisitos de Google |
-| `<title>` de la portada | «Backend desde cero \| Backend desde cero», repetido | Título propio con `head` en el frontmatter |
-| `<title>` de las lecciones | Etiquetas cortas («DNS \| Backend desde cero») | Títulos que responden a la búsqueda (§4) |
-| Meta descripciones | 10 de las 16 lecciones (5 por idioma) superan los 160 caracteres, y Google las corta | Reescribirlas por debajo de 155 |
-| `lang` del HTML, un H1 por página, encabezados en orden | ✓ | — |
-| Velocidad: diagramas | ✗ Mermaid dibuja en el navegador del lector. Una lección con un diagrama descarga 884 KB de JavaScript (30 ficheros), y una página sin diagramas, 106 KB (medido el 2026-10-03, sin comprimir). El HTML lleva el texto del diagrama, no el dibujo | Dibujar los diagramas al hacer el build (SVG en el HTML, con versión clara y oscura) o pasarlos a componentes HTML, como ya pide la guía de estilo para algunos. Quita casi todo ese JavaScript |
-| Velocidad: resto | Web estática, sin saltos de diseño (CLS 0) | Pasar Lighthouse con un móvil simulado antes de publicar |
+| `site` in `astro.config.ts` | ✗ Missing | Set the domain. **The following depends on it** |
+| Sitemap (`sitemap-index.xml`) | ✗ Not generated (Starlight does it on its own when `site` is set) | Automatic with `site` |
+| Canonical URL (`<link rel="canonical">`) and `og:url` | ✗ | Automatic with `site` |
+| `hreflang` between languages | ✗ | Automatic with `site` (with option C, fixed by the middleware) |
+| `robots.txt` | ✗ Does not exist | Create it in `web/public/`, with the sitemap URL |
+| Root `/` | 302 to `/es/` | Goes away with options B or C; otherwise 301 |
+| Social image (`og:image`) | ✗ None, even though a large `twitter:card` is declared | Generate it in the build for each page, with the title and the IDE theme (`astro-og-canvas` or `satori`) |
+| Structured data (JSON-LD) | ✗ | `BreadcrumbList` on all lessons; `Course` on the home page, if it meets Google's requirements |
+| Home page `<title>` | «Backend desde cero \| Backend desde cero», repeated | Own title with `head` in the frontmatter |
+| Lesson `<title>`s | Short labels («DNS \| Backend desde cero») | Titles that answer the search (§4) |
+| Meta descriptions | 10 of the 16 lessons (5 per language) exceed 160 characters, and Google cuts them | Rewrite them under 155 |
+| HTML `lang`, one H1 per page, headings in order | ✓ | — |
+| Speed: diagrams | ✗ Mermaid draws in the reader's browser. A lesson with one diagram downloads 884 KB of JavaScript (30 files), and a page without diagrams, 106 KB (measured on 2026-10-03, uncompressed). The HTML carries the diagram's text, not the drawing | Draw the diagrams at build time (SVG in the HTML, with light and dark versions) or turn them into HTML components, as the style guide already asks for some. It removes almost all that JavaScript |
+| Speed: the rest | Static site, no layout shifts (CLS 0) | Pass Lighthouse with a simulated phone before publishing |
 
-**Descartado:** las preguntas frecuentes (`FAQPage`) ya no dan resultados enriquecidos salvo a webs oficiales de gobierno y salud (Google, 2023). No compensa marcarlas.
+**Discarded:** frequently asked questions (`FAQPage`) no longer give rich results except to official government and health sites (Google, 2023). It is not worth marking them up.
 
-### ¿Es el mejor stack para SEO?
+### Is it the best stack for SEO?
 
-Sí. La tecnología no es el cuello de botella.
-- **Astro genera HTML estático:** todo el texto está en el HTML que recibe Google, sin esperar a JavaScript, y las páginas no cargan JavaScript salvo donde hay una isla (los laboratorios).
-- **Starlight trae de serie** sitemap, canónicas, `hreflang`, descripciones, HTML semántico y accesible, y búsqueda sin servidor.
-- **Cloudflare sirve la web desde su CDN,** cerca de cada lector.
+Yes. The technology is not the bottleneck.
+- **Astro generates static HTML:** all the text is in the HTML Google receives, without waiting for JavaScript, and the pages do not load JavaScript except where there is an island (the labs).
+- **Starlight ships out of the box** sitemap, canonicals, `hreflang`, descriptions, semantic and accessible HTML, and serverless search.
+- **Cloudflare serves the site from its CDN,** close to each reader.
 
-Las alternativas habituales (Next.js, Docusaurus, VitePress, WordPress) no posicionan mejor. Las dos primeras mandan más JavaScript al navegador, y WordPress es más lento y depende de plugins. Lo que hay que corregir son los huecos de esta tabla y las rutas traducidas, que Starlight no admite de serie.
+The usual alternatives (Next.js, Docusaurus, VitePress, WordPress) do not rank better. The first two send more JavaScript to the browser, and WordPress is slower and depends on plugins. What needs fixing are the gaps in this table and the translated routes, which Starlight does not support out of the box.
 
-**Herramientas para el día de la publicación,** todas gratis:
-- **Google Search Console y Bing Webmaster Tools:** indexación y búsquedas reales.
-- **PageSpeed Insights:** los datos de velocidad que ve Google.
-- **Prueba de resultados enriquecidos:** comprueba el JSON-LD.
-- **Ahrefs Webmaster Tools:** auditoría y enlaces que recibe la web.
-- **Google Trends y Keyword Planner:** volumen de búsquedas, para elegir temas y títulos.
+**Tools for launch day,** all free:
+- **Google Search Console and Bing Webmaster Tools:** indexing and real searches.
+- **PageSpeed Insights:** the speed data Google sees.
+- **Rich results test:** checks the JSON-LD.
+- **Ahrefs Webmaster Tools:** audit and links the site receives.
+- **Google Trends and Keyword Planner:** search volume, to choose topics and titles.
 
-## 4. Títulos que responden a búsquedas reales
+## 4. Titles that answer real searches
 
-Sacados del autocompletado de Google del 2026-10-03.
-- **El `title`** de la lección pasa a ser la pregunta que hace la gente. Es el H1 y el `<title>`.
-- **`sidebar.label`** guarda el nombre corto. El explorador lateral ya lo usa, así que no cambia.
+Taken from Google's autocomplete of 2026-10-03.
+- **The lesson's `title`** becomes the question people ask. It is the H1 and the `<title>`.
+- **`sidebar.label`** keeps the short name. The side explorer already uses it, so it does not change.
 
-| Lección | Título en español | Título en inglés | Búsquedas que lo justifican |
+| Lesson | Spanish title | English title | Searches that justify it |
 |---|---|---|---|
 | 1 | Qué es el backend: diferencias con el frontend | What is the backend? Frontend vs backend | «que es backend y frontend», «frontend y backend diferencias», «frontend vs backend» |
 | 2 | Modelo cliente-servidor: qué es y cómo funciona | The client-server model, explained | «modelo cliente servidor como funciona», «client server model explained» |
-| 3 | Qué es un protocolo de red | What is a network protocol? | «que es un protocolo» se mezcla con protocolos notariales y laborales, así que hace falta «de red» |
+| 3 | Qué es un protocolo de red | What is a network protocol? | «que es un protocolo» gets mixed with notarial and labour protocols, so «de red» is needed |
 | 4 | El modelo TCP/IP y sus capas (y el modelo OSI) | The TCP/IP model and its layers (vs. OSI) | «modelo tcp/ip capas», «tcp/ip model vs osi model» |
 | 5 | IP, puertos y sockets: qué son y cómo funcionan | IP addresses, ports and sockets explained | «que es un socket en redes» |
 | 6 | Diferencia entre TCP y UDP | TCP vs UDP: what's the difference? | «diferencia entre tcp y udp», «tcp vs udp» |
 | 7 | Qué es el DNS y cómo funciona | What is DNS and how does it work? | «que es dns», «what is dns and how it works» |
 | 8 | Qué es TLS y cómo funciona HTTPS | What is TLS and how does HTTPS work? | «que es tls», «how does https work step by step» |
-| 9 | Qué pasa cuando escribes una URL en el navegador | What happens when you type a URL in the browser | Las dos tienen muchas variantes sugeridas |
+| 9 | Qué pasa cuando escribes una URL en el navegador | What happens when you type a URL in the browser | Both have many suggested variants |
 
-**Fase 1** (autocompletado del 2026-10-07):
+**Phase 1** (autocomplete of 2026-10-07):
 
-| Página | Título en español | Búsquedas que lo justifican |
+| Page | Spanish title | Searches that justify it |
 |---|---|---|
-| Introducción | Aprender Linux desde cero: terminal y SSH | «aprender linux desde cero», «linux desde cero» |
+| Introduction | Aprender Linux desde cero: terminal y SSH | «aprender linux desde cero», «linux desde cero» |
 | 1 | Comandos básicos de la terminal en Mac y Linux | «comandos basicos terminal mac», «comandos basicos terminal linux», «10 comandos básicos de terminal y su utilidad» |
 
-**Regla para la guía de estilo:**
-- El primer texto bajo el título, la frase destacada (`lesson.oneLiner`), responde la pregunta del título en una o dos frases sencillas. Es lo que Google suele mostrar como fragmento destacado, y lo que el lector necesita primero. Los párrafos narrativos que siguen son libres.
-- La descripción no pasa de 155 caracteres y contiene las palabras de la búsqueda.
+**Rule for the style guide:**
+- The first text under the title, the highlighted sentence (`lesson.oneLiner`), answers the title's question in one or two simple sentences. It is what Google usually shows as a featured snippet, and what the reader needs first. The narrative paragraphs that follow are free.
+- The description does not exceed 155 characters and contains the words of the search.
 
-## 5. Medir
+## 5. Measuring
 
-- **Google Search Console y Bing Webmaster Tools** el día de la publicación: enviar el sitemap y ver qué búsquedas traen a la gente. Son gratis.
-- **Cloudflare Web Analytics** para las visitas: no usa cookies, así que no hace falta banner.
+- **Google Search Console and Bing Webmaster Tools** on launch day: submit the sitemap and see which searches bring people. They are free.
+- **Cloudflare Web Analytics** for visits: it does not use cookies, so no banner is needed.
 
-## 6. Orden de trabajo propuesto
+## 6. Proposed order of work
 
-1. **El autor decide §2.1, §2.2 y §2.3.**
-2. **Técnico:** URLs (opción elegida), `site`, `robots.txt`, `<title>` de la portada, imágenes para redes, JSON-LD y Lighthouse. Con tests donde haya lógica.
-3. **Contenido:**
-   - títulos y descripciones de §4, en los dos idiomas;
-   - revisión de «para todos los públicos»;
-   - reglas nuevas en la guía de estilo.
-4. **Publicar** (cuando el autor lo pida) y dar de alta Search Console.
+1. **The author decides §2.1, §2.2 and §2.3.**
+2. **Technical:** URLs (chosen option), `site`, `robots.txt`, home page `<title>`, social images, JSON-LD and Lighthouse. With tests where there is logic.
+3. **Content:**
+   - titles and descriptions from §4, in both languages;
+   - review for "everyone";
+   - new rules in the style guide.
+4. **Publish** (when the author asks) and register Search Console.
 
-## Fuentes
+## Sources
 
 - [Google: URL structure best practices](https://developers.google.com/search/docs/crawling-indexing/url-structure)
 - [Google: Localized versions of your pages (hreflang)](https://developers.google.com/search/docs/specialty/international/localized-versions)
 - [Google: Changes to HowTo and FAQ rich results (2023)](https://developers.google.com/search/blog/2023/08/howto-faq-changes)
-- [Starlight: i18n y root locale](https://starlight.astro.build/guides/i18n/) y su código de `head.ts` (`hreflang` y sitemap solo con `site`)
-- Autocompletado de Google (`suggestqueries.google.com`), consultado el 2026-10-03.
+- [Starlight: i18n and root locale](https://starlight.astro.build/guides/i18n/) and its `head.ts` code (`hreflang` and sitemap only with `site`)
+- Google autocomplete (`suggestqueries.google.com`), consulted on 2026-10-03.

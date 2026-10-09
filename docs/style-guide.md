@@ -1,56 +1,56 @@
-# Guía de estilo de las lecciones
+# Lesson style guide
 
-## Voz
+## Voice
 
-- Tutea al lector y escribe como le explicarías algo a un compañero, sin condescendencia.
-- **Escribe para todos los públicos:** no des por sabido nada de programación. Si una lección usa `fetch`, una variable o una función, explica en una frase qué es, o enlaza a donde se explica. Las referencias al trabajo de un dev frontend son un extra para quien lo es, nunca un requisito para entender la lección.
-- **DevTools es para todos** desde la lección 4 de la Fase 0, que explica cómo abrirlo en Chrome. Las lecciones siguientes lo usan sin esconderlo tras «Y si programas:» y remiten a esa lección.
-- Frases cortas. Una idea por párrafo.
-- Prohibido: «simplemente», «obviamente», «es fácil», «como todo el mundo sabe». Hacen sentir torpe a quien no lo entiende.
-- Muestra antes de contar: un ejemplo, un comando o un diagrama antes de la definición formal.
-- Cada término técnico se define la primera vez que aparece en la lección, o se marca con `<Term>`.
-- Términos en inglés: se usa el término en español si existe y es habitual (*petición*, *respuesta*), con el inglés entre paréntesis la primera vez («petición (*request*)»). Si en la práctica se usa en inglés (*socket*, *handshake*), se deja en inglés en cursiva.
-- Entre 10 y 15 minutos de lectura por lección. Si pasa de ahí, se divide.
+- Address the reader informally (in Spanish, with *tú*) and write as you would explain something to a colleague, without condescension.
+- **Write for a general audience:** do not assume any programming knowledge. If a lesson uses `fetch`, a variable or a function, explain in one sentence what it is, or link to where it is explained. References to the work of a frontend dev are an extra for those who are one, never a requirement to understand the lesson.
+- **DevTools is for everyone** from lesson 4 of Phase 0, which explains how to open it in Chrome. The following lessons use it without hiding it behind «Y si programas:» ("If you code:") and refer back to that lesson.
+- Short sentences. One idea per paragraph.
+- Forbidden: «simplemente», «obviamente», «es fácil», «como todo el mundo sabe» (in English: "simply", "obviously", "it's easy", "as everyone knows"). They make people who don't get it feel clumsy.
+- Show before telling: an example, a command or a diagram before the formal definition.
+- Every technical term is defined the first time it appears in the lesson, or marked with `<Term>`.
+- English terms in the Spanish version: use the Spanish term if it exists and is common (*petición*, *respuesta*), with the English one in parentheses the first time («petición (*request*)»). If in practice it is used in English (*socket*, *handshake*), leave it in English in italics.
+- Between 10 and 15 minutes of reading per lesson. If it goes over, split it.
 
-## Estructura de una lección
+## Lesson structure
 
-El orden es fijo. Cada sección es un `##`, salvo la cabecera, que sale del frontmatter.
+The order is fixed. Each section is an `##`, except the header, which comes from the frontmatter.
 
-1. **Cabecera** (frontmatter `lesson`): `oneLiner`, de 2 a 4 `objectives` y `prerequisites`.
-2. `## El problema`: por qué existe esto.
-3. `## La analogía`: con `<Analogy>`, siempre con su slot `limits`.
-4. `## Cómo funciona de verdad`: el mecanismo, con diagramas.
-5. `## Pruébalo`: con `<TryIt>` o un playground.
-6. `## Ya lo has visto`: dónde se ha cruzado ya el lector con esto sin saberlo (el navegador, el móvil, el wifi de casa) y, si programa, en su código (`fetch`, DevTools). Lo que ve cualquiera va primero; los puntos para quien programa, al final, después de una línea suelta «Y si programas:» («And if you code:»).
+1. **Header** (frontmatter `lesson`): `oneLiner`, 2 to 4 `objectives` and `prerequisites`.
+2. `## El problema`: why this exists.
+3. `## La analogía`: with `<Analogy>`, always with its `limits` slot.
+4. `## Cómo funciona de verdad`: the mechanism, with diagrams.
+5. `## Pruébalo`: with `<TryIt>` or a playground.
+6. `## Ya lo has visto`: where the reader has already come across this without knowing it (the browser, the phone, the home wifi) and, if they code, in their code (`fetch`, DevTools). What anyone can see goes first; the points for people who code go at the end, after a standalone line «Y si programas:» («And if you code:»).
 7. `## Errores comunes`
-8. `## Resumen`: de 3 a 5 puntos.
-9. `## ¿Lo has entendido?`: de 2 a 4 `<SelfCheck>`.
-10. `## Para profundizar`: enlaces externos (MDN, RFC…).
+8. `## Resumen`: 3 to 5 points.
+9. `## ¿Lo has entendido?`: 2 to 4 `<SelfCheck>`.
+10. `## Para profundizar`: external links (MDN, RFCs…).
 
-En inglés, los títulos son: The problem, The analogy, How it really works, Try it, You have already seen it, Common mistakes, Summary, Did you get it?, Further reading.
+In English, the headings are: The problem, The analogy, How it really works, Try it, You have already seen it, Common mistakes, Summary, Did you get it?, Further reading.
 
-## Frontmatter de una lección
+## Lesson frontmatter
 
 ```yaml
 ---
-translationKey: client-server   # la misma en las dos versiones de la lección
-title: "Modelo cliente-servidor: qué es y cómo funciona"   # lo que busca la gente; entre comillas si lleva «:»
+translationKey: client-server   # the same in both versions of the lesson
+title: "Modelo cliente-servidor: qué es y cómo funciona"   # what people search for; in quotes if it has a «:»
 description: "De 70 a 155 caracteres, con las palabras de la búsqueda."
 sidebar:
-  label: "Modelo cliente-servidor"   # el nombre corto: el del explorador y la paginación
-  order: 1            # posición dentro de la fase; la introducción es 0
+  label: "Modelo cliente-servidor"   # the short name: the one in the explorer and the pagination
+  order: 1            # position within the phase; the introduction is 0
 lesson:
   oneLiner: Responde la pregunta del título en una o dos frases. Es lo primero que se lee bajo el título, y lo que Google suele mostrar.
   objectives:
     - Primer objetivo, empezando por un verbo.
     - Segundo objetivo.
-  prerequisites: []   # translationKey de las lecciones previas, p. ej. [client-server]
+  prerequisites: []   # translationKey of the previous lessons, e.g. [client-server]
 ---
 ```
 
-## Componentes
+## Components
 
-Se importan con el alias `~/`:
+They are imported with the `~/` alias:
 
 ```mdx
 import Term from '~/components/Term.astro';
@@ -59,117 +59,117 @@ import Analogy from '~/components/Analogy.astro';
 import SelfCheck from '~/components/SelfCheck.astro';
 ```
 
-**Regla de MDX:** deja una línea en blanco después de abrir y antes de cerrar cualquier componente que contenga Markdown, y alrededor del contenido de `<div slot="limits">`. Sin esas líneas, MDX lo trata como texto en línea y el contenido acaba en el sitio equivocado.
+**MDX rule:** leave a blank line after opening and before closing any component that contains Markdown, and around the contents of `<div slot="limits">`. Without those lines, MDX treats it as inline text and the content ends up in the wrong place.
 
-- `<Term id="port">puerto</Term>`: el `id` es el nombre del fichero en `src/content/glossary/<idioma>/`. Si no existe, el build falla.
-- `<TryIt cmd="…" output={`…`}>explicación</TryIt>`:
-  - `output` se copia de una ejecución real, nunca se inventa;
-  - no se usa `windows`: en Windows, el curso se sigue con WSL, con los mismos comandos que en Linux (decidido el 2026-10-07; spec de la Fase 1, §2.2). La prop sigue en el componente por si algún día hace falta;
-  - para varias líneas, usa una plantilla literal: ``cmd={`línea 1\nlínea 2`}``.
-  - `lang` cambia el resaltado de `cmd` (por defecto `sh`); usa `lang="http"` cuando lo que el lector escribe es un mensaje HTTP y no un comando.
-- `<Analogy>…<div slot="limits">…</div></Analogy>`: sin `limits`, el build falla.
-- `<SelfCheck question="¿…?">respuesta</SelfCheck>`
-- De Starlight (`@astrojs/starlight/components`): `Aside`, `Tabs`/`TabItem`, `Steps`, `FileTree`, `Code`, `Badge`, `Card`/`CardGrid`, `LinkCard`.
+- `<Term id="port">puerto</Term>`: the `id` is the file name in `src/content/glossary/<language>/`. If it does not exist, the build fails.
+- `<TryIt cmd="…" output={`…`}>explanation</TryIt>`:
+  - `output` is copied from a real run, never made up;
+  - `windows` is not used: on Windows, the course is followed with WSL, with the same commands as on Linux (decided on 2026-10-07; Phase 1 spec, §2.2). The prop stays in the component in case it is needed some day;
+  - for several lines, use a template literal: ``cmd={`línea 1\nlínea 2`}``.
+  - `lang` changes the highlighting of `cmd` (default `sh`); use `lang="http"` when what the reader types is an HTTP message and not a command.
+- `<Analogy>…<div slot="limits">…</div></Analogy>`: without `limits`, the build fails.
+- `<SelfCheck question="¿…?">answer</SelfCheck>`
+- From Starlight (`@astrojs/starlight/components`): `Aside`, `Tabs`/`TabItem`, `Steps`, `FileTree`, `Code`, `Badge`, `Card`/`CardGrid`, `LinkCard`.
 
-## Diagramas
+## Diagrams
 
-- **Secuencias y cadenas:** un bloque ```` ```mermaid ````. Al hacer el build se convierte en HTML (`web/src/lib/diagrams/`): sin JavaScript, con los colores del tema, y con el texto en la página para los buscadores y los lectores de pantalla. Los textos van en el idioma de la lección. Solo se admite:
-  - `sequenceDiagram` con entre 2 y 6 participantes: `participant X as Nombre`, `X->>Y: texto` (mensaje), `X-->>Y: texto` (respuesta) y `Note over X: texto` o `Note over X,Y: texto`. `<br/>` parte una línea;
-  - `flowchart TB` en cadena, sin ramas: `A["Nombre<br/>detalle"] -->|enlace| B["…"]`.
+- **Sequences and chains:** a ```` ```mermaid ```` block. At build time it is converted to HTML (`web/src/lib/diagrams/`): no JavaScript, with the theme colors, and with the text on the page for search engines and screen readers. The texts go in the language of the lesson. Only this is supported:
+  - `sequenceDiagram` with 2 to 6 participants: `participant X as Nombre`, `X->>Y: texto` (message), `X-->>Y: texto` (response) and `Note over X: texto` or `Note over X,Y: texto`. `<br/>` breaks a line;
+  - `flowchart TB` as a chain, without branches: `A["Nombre<br/>detalle"] -->|enlace| B["…"]`.
 
-  Cualquier otra cosa hace fallar el build con el fichero y la línea. Para otros diagramas, un componente propio (siguiente punto).
-- **Lo que Mermaid no dibuja bien** (capas, encapsulación, NAT): un componente propio en `web/src/components/diagrams/`, con los textos por props y los colores de las variables `--sl-color-*`. Mejor HTML y CSS (grid o flex) que SVG: un SVG se encoge entero en móvil y el texto se vuelve ilegible, mientras que con HTML el texto conserva su tamaño y lo leen los lectores de pantalla. Usa SVG solo para formas que el HTML no pueda dibujar.
-  - Ya existe `<Encapsulation caption layers blocks />`: cómo cada capa añade su cabecera.
-  - Ya existe `<NatTranslation caption labels steps table />`: cómo el router reescribe el origen y el destino de un paquete con NAT, tramo a tramo, y su tabla de traducciones.
-  - Ya existe `<DataToScreen caption labels json card />`: los datos que envía un backend (JSON) junto a lo que pinta el frontend con ellos (una tarjeta del tiempo).
-- Nunca imágenes con texto incrustado, porque habría que duplicarlas por idioma.
+  Anything else makes the build fail with the file and the line. For other diagrams, a custom component (next point).
+- **What Mermaid does not draw well** (layers, encapsulation, NAT): a custom component in `web/src/components/diagrams/`, with the texts as props and the colors from the `--sl-color-*` variables. HTML and CSS (grid or flex) are better than SVG: an SVG shrinks as a whole on mobile and the text becomes unreadable, whereas with HTML the text keeps its size and screen readers can read it. Use SVG only for shapes that HTML cannot draw.
+  - `<Encapsulation caption layers blocks />` already exists: how each layer adds its header.
+  - `<NatTranslation caption labels steps table />` already exists: how the router rewrites the source and destination of a packet with NAT, hop by hop, and its translation table.
+  - `<DataToScreen caption labels json card />` already exists: the data a backend sends (JSON) next to what the frontend draws with it (a weather card).
+- Never images with embedded text, because they would have to be duplicated per language.
 
-## Glosario
+## Glossary
 
-Cada término es un fichero `src/content/glossary/<idioma>/<id>.yaml`:
+Each term is a file `src/content/glossary/<language>/<id>.yaml`:
 
 ```yaml
 term: Puerto
 short: Una o dos frases. Sin jerga que no esté a su vez en el glosario.
-related: [server, localhost]   # ids de otros términos; deben existir en el mismo idioma
-lesson: ip-ports-sockets       # opcional: la translationKey de la lección que lo explica
+related: [server, localhost]   # ids of other terms; they must exist in the same language
+lesson: ip-ports-sockets       # optional: the translationKey of the lesson that explains it
 ```
 
-El glosario enlaza cada término a la lección que lo explica («Se explica en…»): por defecto, la primera del curso que lo usa con `<Term>`, contando las introducciones de fase. Si esa lección solo lo menciona y otra lo explica, indica la buena con `lesson`. Si la clave no existe en ningún idioma, el build falla.
+The glossary links each term to the lesson that explains it («Se explica en…», "Explained in…"): by default, the first one in the course that uses it with `<Term>`, counting the phase introductions. If that lesson only mentions it and another one explains it, point to the right one with `lesson`. If the key does not exist in any language, the build fails.
 
-Si `short` contiene dos puntos seguidos de espacio («Nombre: valor»), ponlo entre comillas simples. Si no, YAML lo interpreta como una clave nueva y el build falla.
+If `short` contains a colon followed by a space («Nombre: valor»), put it in single quotes. Otherwise YAML interprets it as a new key and the build fails.
 
-## Ejercicios de terminal
+## Terminal exercises
 
-- Antes de publicar, ejecuta el comando de verdad (en macOS) y copia la salida en `output`.
-- Si la salida cambia de un ordenador a otro (IPs, fechas, versiones), dilo en la explicación: «tus números serán distintos».
-- Si el comando se queda esperando a propósito (`nc -l`), explica que se para con <kbd>Ctrl</kbd> + <kbd>C</kbd>.
-- Los datos personales de la salida (direcciones MAC, IPs públicas, nombres de usuario o de equipo) se sustituyen por valores de ejemplo, y la explicación lo avisa: «hemos cambiado la dirección MAC por una de ejemplo».
-- El usuario de ejemplo es `ana`, en el equipo `portatil`, con la carpeta `/Users/ana` y el grupo `staff`; en el servidor de prácticas, `ubuntu`, en la VM `curso`. Las salidas se capturan en una carpeta personal de ejemplo, nunca en la del autor (plan `docs/plans/2026-10-07-fase-1-piloto.md`, Tarea 4, paso 1).
-- Los comandos se ejecutan también en un Ubuntu de verdad (por ejemplo, `docker run --rm -it ubuntu:24.04 bash`), y cada diferencia con macOS que el lector vaya a notar se dice en la explicación del `<TryIt>`.
+- Before publishing, run the command for real (on macOS) and copy the output into `output`.
+- If the output changes from one computer to another (IPs, dates, versions), say so in the explanation: «tus números serán distintos» ("your numbers will be different").
+- If the command waits on purpose (`nc -l`), explain that it is stopped with <kbd>Ctrl</kbd> + <kbd>C</kbd>.
+- Personal data in the output (MAC addresses, public IPs, user or computer names) is replaced with example values, and the explanation says so: «hemos cambiado la dirección MAC por una de ejemplo» ("we have replaced the MAC address with an example one").
+- The example user is `ana`, on the computer `portatil`, with the folder `/Users/ana` and the group `staff`; on the practice server, `ubuntu`, on the VM `curso`. Outputs are captured in an example home folder, never in the author's.
+- Commands are also run on a real Ubuntu (for example, `docker run --rm -it ubuntu:24.04 bash`), and every difference from macOS that the reader is going to notice is mentioned in the explanation of the `<TryIt>`.
 
-## Traducción
+## Translation
 
-- El español es el original. La traducción al inglés se hace cuando el autor aprueba la versión en español.
-- Se traducen a la vez la lección, sus términos de glosario nuevos y los textos de sus diagramas.
-- Una lección en inglés que usa `<Term>` necesita sus términos en `glossary/en/`. Si faltan, el build falla, y así es como queremos que funcione.
+- Spanish is the original. The English translation is done when the author approves the Spanish version.
+- The lesson, its new glossary terms and the texts of its diagrams are translated at the same time.
+- An English lesson that uses `<Term>` needs its terms in `glossary/en/`. If they are missing, the build fails, and that is how we want it to work.
 
-## Tema (editor de código)
+## Theme (code editor)
 
-La web imita un editor de código (spec: `docs/specs/2026-10-02-tema-ide-design.md`).
+The site imitates a code editor (spec: `docs/specs/2026-10-02-ide-theme-design.md`).
 
-- **Color:** la única fuente son los tokens `--ide-*` de `web/src/styles/theme.css`, con un bloque para el oscuro (`:root`) y otro para el claro (`:root[data-theme='light']`). Los componentes no llevan hexadecimales: usan `var(--ide-…)`.
-- **Contraste:** `web/src/styles/tokens.test.ts` exige al menos 4,5:1 a cada token de texto sobre `bg`, `chrome`, `deep`, `selection` y `line` (el fondo de la línea resaltada), en los dos temas, y 3:1 al borde de los campos de formulario (`--ide-control`, WCAG 1.4.11; `--ide-border` no llega y es solo para separar paneles). `--ide-sun` (el sol de `<DataToScreen>`) es decorativo y no tiene requisito de contraste. Si cambias un color, pasa los tests.
-- **Tipografía:** el marco (explorador, pestañas, títulos, paneles, código) va en `var(--__sl-font-mono)` (JetBrains Mono); la prosa, en `--sl-font` (Atkinson Hyperlegible Next).
-- **Marcas decorativas** (`#`, `##`, números de línea, `- [ ]`, `//`, `>`): en CSS con `content: "…" / ""`, para que no se lean ni se copien; en el HTML, con `aria-hidden="true"`. El texto con significado va siempre visible o en `.sr-only`.
-- **Nombres de fichero:** los genera `web/src/lib/explorer.ts` a partir de la etiqueta del sidebar (`sidebar.label`, o el título si no hay etiqueta): `02-que-es-un-protocolo.md`. El nombre accesible de cada enlace es esa misma etiqueta.
-- **El editor no puede meter jerga:** los nombres que se ven los tiene que entender cualquiera. Por eso la portada es `inicio.md` / `home.md` (no `README.md`) y el temario, `temario.md` en español. Si una palabra técnica le sirve al SEO, va en el `<title>` y en la descripción, no en el explorador.
-- **Espacios en Astro:** el compilador elimina los saltos de línea entre etiquetas. Si dos elementos en línea necesitan un espacio entre ellos, usa `{' '}` y comprueba el HTML.
-- **Anchos:**
-  - la prosa (párrafos, listas, `dl` y citas) llega como mucho a `--ide-measure` (75ch);
-  - las cajas, a `--ide-box-width`;
-  - las piezas anchas usan todo el editor: tablas, `figure`, bloques de código, `TryIt`, laboratorios (`astro-island`) y la lista de fases.
-  Un componente nuevo que necesite ancho se añade a esa lista en `theme.css` («Prosa legible»).
-- **Números de línea:** el título es la 1 y la entrada de la lección, la 2. Las piezas que hacen scroll (tablas, diagramas de secuencia y de cadena, laboratorios) no llevan número.
-- **Minimapa:** dibuja cada palabra del título, la entrada y el contenido, como el de VS Code. Lo que va en `pre`, `code` o un bloque de Expressive Code sale en verde; si un componente nuevo enseña código de otra forma, añádelo a `wordKind` (`web/src/lib/minimap.ts`).
-- **Pestañas y panel lateral:**
-  - los playgrounds y el glosario son pestañas fijadas (`web/src/lib/pinned-tabs.ts`), no ficheros del explorador; el tema y el idioma están en la cabecera (escritorio) y en el menú (móvil);
-  - el esquema de la página está en el explorador (`Outline.astro`) y empieza plegado: marca la sección cuyo título ha llegado a donde aterriza un salto (`scroll-padding-top`), así que si cambia el alto de las pestañas, cambia también `scroll-padding-top` en `theme.css`;
-  - lo que se recuerda en el navegador (`web/src/lib/storage.ts`): el tema (`starlight-theme`, de Starlight), si el esquema está abierto (`ide-outline`) y la última página abierta, para la primera pestaña de playgrounds y glosario (`ide-last-page:<idioma>`).
-- **Playgrounds:** cada laboratorio o playground nuevo se añade a `web/src/data/playgrounds.ts` (nivel, lección y textos en los dos idiomas) y a la página `playgrounds.mdx` de su fase, si es la primera de esa fase. Va siempre en el «Pruébalo» de su lección: el enlace de la página apunta ahí.
+- **Color:** the only source is the `--ide-*` tokens in `web/src/styles/theme.css`, with one block for dark (`:root`) and another for light (`:root[data-theme='light']`). Components carry no hex values: they use `var(--ide-…)`.
+- **Contrast:** `web/src/styles/tokens.test.ts` requires at least 4.5:1 for every text token over `bg`, `chrome`, `deep`, `selection` and `line` (the background of the highlighted line), in both themes, and 3:1 for the border of form fields (`--ide-control`, WCAG 1.4.11; `--ide-border` does not reach it and is only for separating panels). `--ide-sun` (the sun in `<DataToScreen>`) is decorative and has no contrast requirement. If you change a color, make the tests pass.
+- **Typography:** the frame (explorer, tabs, titles, panels, code) uses `var(--__sl-font-mono)` (JetBrains Mono); the prose, `--sl-font` (Atkinson Hyperlegible Next).
+- **Decorative marks** (`#`, `##`, line numbers, `- [ ]`, `//`, `>`): in CSS with `content: "…" / ""`, so they are neither read nor copied; in the HTML, with `aria-hidden="true"`. Text with meaning is always visible or in `.sr-only`.
+- **File names:** they are generated by `web/src/lib/explorer.ts` from the sidebar label (`sidebar.label`, or the title if there is no label): `02-que-es-un-protocolo.md`. The accessible name of each link is that same label.
+- **The editor cannot use jargon:** the names that are visible must be understandable by anyone. That is why the home page is `inicio.md` / `home.md` (not `README.md`) and the syllabus is `temario.md` in Spanish. If a technical word helps SEO, it goes in the `<title>` and in the description, not in the explorer.
+- **Spaces in Astro:** the compiler removes line breaks between tags. If two inline elements need a space between them, use `{' '}` and check the HTML.
+- **Widths:**
+  - prose (paragraphs, lists, `dl` and quotes) reaches at most `--ide-measure` (75ch);
+  - boxes, `--ide-box-width`;
+  - wide pieces use the whole editor: tables, `figure`, code blocks, `TryIt`, labs (`astro-island`) and the phase list.
+  A new component that needs width is added to that list in `theme.css` («Prosa legible», "Readable prose").
+- **Line numbers:** the title is 1 and the lesson's lead-in is 2. Pieces that scroll (tables, sequence and chain diagrams, labs) carry no number.
+- **Minimap:** it draws every word of the title, the lead-in and the content, like VS Code's. What goes in `pre`, `code` or an Expressive Code block comes out green; if a new component shows code in some other way, add it to `wordKind` (`web/src/lib/minimap.ts`).
+- **Tabs and side panel:**
+  - playgrounds and the glossary are pinned tabs (`web/src/lib/pinned-tabs.ts`), not files in the explorer; the theme and the language are in the header (desktop) and in the menu (mobile);
+  - the page outline is in the explorer (`Outline.astro`) and starts collapsed: it marks the section whose heading has reached where a jump lands (`scroll-padding-top`), so if the height of the tabs changes, `scroll-padding-top` in `theme.css` changes too;
+  - what is remembered in the browser (`web/src/lib/storage.ts`): the theme (`starlight-theme`, from Starlight), whether the outline is open (`ide-outline`) and the last page opened, for the first tab of playgrounds and glossary (`ide-last-page:<language>`).
+- **Playgrounds:** every new lab or playground is added to `web/src/data/playgrounds.ts` (level, lesson and texts in both languages) and to the `playgrounds.mdx` page of its phase, if it is the first of that phase. It always goes in the «Pruébalo» ("Try it") of its lesson: the link on the page points there.
 
 ## Playgrounds
 
-Un playground es un componente React dentro de una lección (spec de la Fase 0, §6.4). El primero, y el modelo para los demás, es `tcp-handshake` (`docs/specs/2026-10-03-laboratorio-tcp-design.md`).
+A playground is a React component inside a lesson (Phase 0 spec, §6.4). The first, and the model for the rest, is `tcp-handshake` (`docs/specs/2026-10-03-tcp-lab-design.md`).
 
-- **Dónde:** una carpeta por playground en `web/src/playgrounds/<nombre>/`.
-- **Lógica e interfaz separadas:**
-  - la lógica es TypeScript puro, sin React ni textos (en `tcp-handshake`, `machine.ts` con `reduce(estado, evento)`), y tiene tests de cada escenario;
-  - la interfaz solo la pinta.
-- **Textos:** en `strings.ts`, con una entrada `es` y otra `en` del mismo tipo, así que TypeScript exige las mismas claves en los dos idiomas. La lógica devuelve claves y datos (`{ key: 'server-buffers', ack: 107 }`), no frases.
-- **Imports:** relativos dentro de la carpeta, porque Vitest no conoce el alias `~/`.
-- **Estilos:** un CSS propio con prefijo (`tcp-lab__…`) y solo tokens `--ide-*`. La raíz lleva `not-content`, para que no le afecten los estilos de la prosa de Starlight, y `data-pagefind-ignore`, para que el buscador no indexe los botones.
-- **Accesibilidad:**
-  - todo funciona con el teclado;
-  - lo que cambia se anuncia en una región `aria-live="polite"`;
-  - un botón que desaparece al pulsarlo deja el foco en otro control;
-  - con `prefers-reduced-motion`, nada se anima.
-- **En la lección:** `import X from '~/playgrounds/<nombre>/X';` y `<X client:visible lang="es" />`. `client:visible` hace que el JavaScript de React solo se descargue cuando el playground entra en pantalla.
-- **Tests:** además de los de la lógica, uno que pinta el componente con `react-dom/server` en los dos idiomas.
+- **Where:** one folder per playground in `web/src/playgrounds/<name>/`.
+- **Logic and interface separate:**
+  - the logic is pure TypeScript, with no React and no texts (in `tcp-handshake`, `machine.ts` with `reduce(state, event)`), and has tests for each scenario;
+  - the interface only draws it.
+- **Texts:** in `strings.ts`, with an `es` entry and an `en` entry of the same type, so TypeScript requires the same keys in both languages. The logic returns keys and data (`{ key: 'server-buffers', ack: 107 }`), not sentences.
+- **Imports:** relative within the folder, because Vitest does not know the `~/` alias.
+- **Styles:** its own CSS with a prefix (`tcp-lab__…`) and only `--ide-*` tokens. The root carries `not-content`, so Starlight's prose styles do not affect it, and `data-pagefind-ignore`, so the search does not index the buttons.
+- **Accessibility:**
+  - everything works with the keyboard;
+  - what changes is announced in an `aria-live="polite"` region;
+  - a button that disappears when pressed leaves the focus on another control;
+  - with `prefers-reduced-motion`, nothing is animated.
+- **In the lesson:** `import X from '~/playgrounds/<name>/X';` and `<X client:visible lang="es" />`. `client:visible` makes React's JavaScript download only when the playground enters the screen.
+- **Tests:** besides the logic ones, one that renders the component with `react-dom/server` in both languages.
 
-## Rutas, traducciones y SEO
+## Routes, translations and SEO
 
-- **Rutas:** el español va en la raíz y el inglés en `/en/`. Cada fase tiene su carpeta en cada idioma (`fase-N` y `phase-N`), y cada lección su nombre de fichero en su idioma, que es su URL (`fase-0/que-es-dns.mdx`, `en/phase-0/what-is-dns.mdx`). Las rutas no se cambian una vez publicadas.
-- **`translationKey`:** las dos versiones de una lección llevan la misma en el frontmatter (el nombre en inglés corto: `dns`). Es lo que las une para el selector de idioma, los `hreflang` y Google. `prerequisites` usa estas claves: `[tcp-vs-udp]`.
-- **Traducir una fase:** primero su introducción (`en/phase-N/index.mdx`) y después las lecciones. El build falla si una lección no tiene la introducción de su fase en su idioma.
-- **Nombres de fichero:** en minúsculas y sin tildes (`que-es-dns.mdx`), porque son la URL.
-- **Enlaces internos:** con la ruta del idioma de la página (`/fase-0/que-es-dns/` o `/en/phase-0/what-is-dns/`).
-- **Títulos para buscadores:** el `title` es la pregunta o la búsqueda que hace la gente («Qué es el DNS y cómo funciona»), y `sidebar.label` el nombre corto («DNS»). El `<title>` completo, con el nombre de la web, no pasa de 70 caracteres, y la descripción tiene entre 70 y 155. Lo comprueba la auditoría.
-- **Auditoría SEO:** el build falla si una página rompe alguna regla de `web/src/lib/seo/audit.ts`. Por ejemplo:
-  - un `<h1>`, título y descripción;
-  - canónica, sitemap y `hreflang` recíprocos;
-  - nada de copias de respaldo;
-  - migas e imagen para redes;
-  - como mucho 400 KB de JavaScript por página.
+- **Routes:** Spanish goes at the root and English under `/en/`. Each phase has its folder in each language (`fase-N` and `phase-N`), and each lesson its file name in its language, which is its URL (`fase-0/que-es-dns.mdx`, `en/phase-0/what-is-dns.mdx`). Routes are not changed once published.
+- **`translationKey`:** both versions of a lesson carry the same one in the frontmatter (the short English name: `dns`). It is what joins them for the language selector, the `hreflang` and Google. `prerequisites` uses these keys: `[tcp-vs-udp]`.
+- **Translating a phase:** first its introduction (`en/phase-N/index.mdx`) and then the lessons. The build fails if a lesson does not have its phase's introduction in its language.
+- **File names:** lowercase and without accents (`que-es-dns.mdx`), because they are the URL.
+- **Internal links:** with the route of the page's language (`/fase-0/que-es-dns/` or `/en/phase-0/what-is-dns/`).
+- **Titles for search engines:** the `title` is the question or the search people make («Qué es el DNS y cómo funciona»), and `sidebar.label` the short name («DNS»). The full `<title>`, with the site name, does not go over 70 characters, and the description is between 70 and 155. The audit checks it.
+- **SEO audit:** the build fails if a page breaks any rule in `web/src/lib/seo/audit.ts`. For example:
+  - one `<h1>`, title and description;
+  - canonical, sitemap and reciprocal `hreflang`;
+  - no fallback pages;
+  - breadcrumbs and social image;
+  - at most 400 KB of JavaScript per page.
 
-  Si falla, el log dice la página y la regla.
+  If it fails, the log says the page and the rule.

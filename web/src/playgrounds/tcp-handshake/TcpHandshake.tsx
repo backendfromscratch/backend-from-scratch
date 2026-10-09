@@ -13,7 +13,7 @@ interface Props {
 
 const modes: Mode[] = ['tcp', 'udp'];
 
-/** Laboratorio: el handshake de TCP, sus ACK y reenvíos, y el contraste con UDP. Spec: docs/specs/2026-10-03-laboratorio-tcp-design.md */
+/** Laboratorio: el handshake de TCP, sus ACK y reenvíos, y el contraste con UDP. Spec: docs/specs/2026-10-03-tcp-lab-design.md */
 export default function TcpHandshake({ lang }: Props) {
   const t = strings[lang];
   const config: LabConfig = {

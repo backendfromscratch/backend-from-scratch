@@ -4,7 +4,7 @@
  * Simula el handshake de TCP, el envío de tres segmentos de datos con sus ACK y el modo UDP.
  * El lector avanza paso a paso y puede perder cualquier segmento en tránsito.
  * No sabe nada de React ni de idiomas: la interfaz lo pinta y strings.ts pone las frases.
- * Spec: docs/specs/2026-10-03-laboratorio-tcp-design.md
+ * Spec: docs/specs/2026-10-03-tcp-lab-design.md
  */
 
 export type Mode = 'tcp' | 'udp';
