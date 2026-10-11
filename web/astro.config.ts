@@ -56,6 +56,7 @@ export default defineConfig({
         Footer: './src/components/overrides/Footer.astro',
         Pagination: './src/components/overrides/Pagination.astro',
         LanguageSelect: './src/components/overrides/LanguageSelect.astro',
+        ThemeSelect: './src/components/overrides/ThemeSelect.astro',
       },
       routeMiddleware: './src/routeData.ts',
       sidebar: [...buildPhaseSidebar(phases)],

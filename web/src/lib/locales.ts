@@ -2,7 +2,7 @@ export const locales = ['es', 'en'] as const;
 export type Locale = (typeof locales)[number];
 export const defaultLocale: Locale = 'es';
 
-/** Name of each language in the language selector. */
+/** Name of each language, for screen readers, next to its code (ES, EN) in the language links. */
 export const localeLabels: Record<Locale, string> = { es: 'Español', en: 'English' };
 
 export function isLocale(value: unknown): value is Locale {

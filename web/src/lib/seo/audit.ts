@@ -131,14 +131,12 @@ export const noFallbackCopies = perPage('fallback', ({ facts }) =>
     : undefined,
 );
 
-export const languageSelectorMatchesHreflang = perPage('language-select', ({ facts }) => {
+export const languageLinksMatchHreflang = perPage('language-links', ({ facts }) => {
   const missing = facts.alternates
     .filter((a) => a.hreflang !== 'x-default')
     .map((a) => new URL(a.href).pathname)
-    .filter((pathname) => !facts.languageOptions.includes(pathname));
-  return missing.length > 0
-    ? `the language selector does not lead to ${missing.join(', ')}`
-    : undefined;
+    .filter((pathname) => !facts.languageLinks.includes(pathname));
+  return missing.length > 0 ? `the language links do not lead to ${missing.join(', ')}` : undefined;
 });
 
 export const noLegacySpanishPrefix = perPage('es-prefix', ({ url }) =>
@@ -268,7 +266,7 @@ export const defaultRules: Rule[] = [
   robotsTxtPointsToSitemap,
   hreflangReciprocal,
   noFallbackCopies,
-  languageSelectorMatchesHreflang,
+  languageLinksMatchHreflang,
   noLegacySpanishPrefix,
   noMermaid,
   jsBudget,

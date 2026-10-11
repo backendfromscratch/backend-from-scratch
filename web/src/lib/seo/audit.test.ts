@@ -12,7 +12,7 @@ import {
   JS_BUDGET_BYTES,
   jsBudget,
   langMatchesUrl,
-  languageSelectorMatchesHreflang,
+  languageLinksMatchHreflang,
   noFallbackCopies,
   noLegacySpanishPrefix,
   noMermaid,
@@ -41,7 +41,7 @@ const facts = (overrides: Partial<PageFacts> = {}): PageFacts => ({
   robots: undefined,
   ogImage: undefined,
   jsonLd: [],
-  languageOptions: [],
+  languageLinks: [],
   h1Count: 1,
   mermaidBlocks: 0,
   links: [],
@@ -113,7 +113,7 @@ describe('auditSite', () => {
       robotsTxtPointsToSitemap,
       hreflangReciprocal,
       noFallbackCopies,
-      languageSelectorMatchesHreflang,
+      languageLinksMatchHreflang,
       noLegacySpanishPrefix,
       noMermaid,
       jsBudget,
@@ -232,28 +232,28 @@ describe('noFallbackCopies', () => {
   });
 });
 
-describe('languageSelectorMatchesHreflang', () => {
+describe('languageLinksMatchHreflang', () => {
   const alternates = [
     { hreflang: 'es', href: `${SITE}/fase-0/que-es-dns/` },
     { hreflang: 'en', href: `${SITE}/en/phase-0/what-is-dns/` },
     { hreflang: 'x-default', href: `${SITE}/fase-0/que-es-dns/` },
   ];
 
-  it('the selector leads to the same pages as the hreflang', () => {
+  it('the language links lead to the same pages as the hreflang', () => {
     const ok = page('/fase-0/que-es-dns/', {
       alternates,
-      languageOptions: ['/fase-0/que-es-dns/', '/en/phase-0/what-is-dns/'],
+      languageLinks: ['/fase-0/que-es-dns/', '/en/phase-0/what-is-dns/'],
     });
-    expect(languageSelectorMatchesHreflang(input([ok]))).toEqual([]);
+    expect(languageLinksMatchHreflang(input([ok]))).toEqual([]);
   });
 
-  it('reports if the selector leads to the same path with another prefix', () => {
+  it('reports if a language link leads to the same path with another prefix', () => {
     const wrong = page('/fase-0/que-es-dns/', {
       alternates,
-      languageOptions: ['/fase-0/que-es-dns/', '/en/fase-0/que-es-dns/'],
+      languageLinks: ['/fase-0/que-es-dns/', '/en/fase-0/que-es-dns/'],
     });
-    expect(languageSelectorMatchesHreflang(input([wrong]))[0]?.message).toBe(
-      'the language selector does not lead to /en/phase-0/what-is-dns/',
+    expect(languageLinksMatchHreflang(input([wrong]))[0]?.message).toBe(
+      'the language links do not lead to /en/phase-0/what-is-dns/',
     );
   });
 });
