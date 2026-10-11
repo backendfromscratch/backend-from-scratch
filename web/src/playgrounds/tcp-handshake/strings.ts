@@ -165,7 +165,7 @@ const en: Strings = {
     'client-sends-syn':
       'The client sends a SYN (“I want to connect”) with its initial sequence number, seq={seq}, and moves to SYN_SENT. In reality this number is random.',
     'server-receives-syn':
-      'The server receives the SYN, moves to SYN_RECEIVED and replies with a SYN-ACK: its own initial number, seq={seq}, and ack={ack}, “the next byte I expect from you”. The SYN uses up one sequence number, as if it were a byte.',
+      'The server receives the SYN, moves to SYN_RECEIVED and replies with a SYN-ACK: its own initial number, seq={seq}, and ack={ack}, “the next byte I expect from you.” The SYN uses up one sequence number, as if it were a byte.',
     'server-repeats-synack':
       'The SYN reaches the server again: its SYN-ACK never arrived. It sends it again (seq={seq}, ack={ack}).',
     'client-receives-synack':
