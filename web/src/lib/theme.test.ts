@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nextTheme, storedTheme } from './theme';
+import { nextTheme, storedTheme, themeFor } from './theme';
 
 describe('nextTheme', () => {
   it('switches between dark and light', () => {
@@ -19,5 +19,18 @@ describe('storedTheme', () => {
     expect(storedTheme('')).toBeUndefined();
     expect(storedTheme(null)).toBeUndefined();
     expect(storedTheme('auto')).toBeUndefined();
+  });
+});
+
+describe('themeFor', () => {
+  it('the reader’s choice wins over the system', () => {
+    expect(themeFor('light', false)).toBe('light');
+    expect(themeFor('dark', true)).toBe('dark');
+  });
+
+  it('without a valid choice (empty, missing or anything else), the system’s', () => {
+    expect(themeFor('', true)).toBe('light');
+    expect(themeFor(null, false)).toBe('dark');
+    expect(themeFor('auto', true)).toBe('light');
   });
 });

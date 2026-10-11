@@ -18,3 +18,8 @@ export function storedTheme(value: string | null): Theme | undefined {
 export function nextTheme(current: string | undefined): Theme {
   return current === 'light' ? 'dark' : 'light';
 }
+
+/** The theme to show: the reader's choice or, without a valid one, the system's. */
+export function themeFor(value: string | null, systemLight: boolean): Theme {
+  return storedTheme(value) ?? (systemLight ? 'light' : 'dark');
+}
