@@ -45,7 +45,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 
 ### 4. Continue with Phase 1, lesson by lesson
 
-- [ ] **Claude:** before lesson 2, the script that generates the practice `access.log` (`web/public/practicas/access.log`).
+- [x] **Claude:** before lesson 2, the script that generates the practice `access.log` (`web/public/practicas/access.log`). Done on 2026-10-11: what it contains is in the Phase 1 spec, §5.
 - [ ] **Claude, and you review each one:** lessons 2 to 10, each with a short plan, commands run for real and an independent review. In lesson 4, Multipass is checked on your Mac; before lesson 10, the Git repository script for `bisect`.
 - [ ] **Claude:** translate Phase 1 into English once you approve the Spanish.
 
@@ -111,7 +111,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 
 - [x] **Visual design:** proposal D (code editor) chosen, in dark and light. Applied on the site (spec: `docs/specs/2026-10-02-ide-theme-design.md`).
 - [x] **Editor layout (design C):** chosen on 2026-10-03 from the sketches and implemented (spec: `docs/specs/2026-10-03-editor-layout-design.md`).
-- [ ] **Review the editor layout in your browser:** in dark and light, on the laptop and on the phone. Try the pinned tabs (playgrounds and glossary), the outline, the minimap and the scroll bars.
+- [ ] **Review the editor layout in your browser:** in dark and light, on the laptop and on the phone. Try the explorer (with playgrounds and glossary), the theme button, the «ES · EN» links, the outline, the minimap and the scroll bars.
 - [ ] **Text width:** `75ch` in our font is about 100 characters per line (before, it was about 90). If you prefer it narrower, `--ide-measure: 40rem` leaves about 75 real characters. It is a single variable in `web/src/styles/theme.css`.
 - [x] **Changes decided after seeing the editor layout (2026-10-03),** implemented the same day:
   - the OUTLINE starts collapsed and, if the reader opens it, stays open on the following pages;
@@ -123,11 +123,15 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 - [x] **No activity bar (2026-10-03, after seeing it):** playgrounds and the glossary become pinned tabs, which are also visible on mobile; the theme and the language go back to the top right; the button to hide the explorer is removed. Spec updated (§2, §4.1, §4.2).
 - [x] **The open page's tab is first and always visible; the explorer has no root folder and does not collapse** (2026-10-03). Spec updated (§4.2, §4.3).
 - [x] **The first tab cannot be closed in playgrounds and glossary:** it links to the last page opened (2026-10-03).
+- [x] **A simpler editor (2026-10-11, after using it):** no tabs or breadcrumbs (playgrounds and the glossary go back to the explorer, under `inicio.md`; only the reading time stays, above the title), a theme button and the «ES · EN» links instead of the two cut-off selectors, and smaller headings (title 28 px, `##` 22 px, `###` 18 px; 24/20/18 on mobile). Spec updated (§2, §4).
 - [x] **Minor items deferred from the editor layout review, resolved** (2026-10-03): outline with a single entry, empty `aside`, clipped focus, glossary in the minimap and in the highlighting, outline that shows the marked section, comment on the search import and the contrast of `line` in the guide. The rest no longer applied after removing the activity bar.
 - [x] **Accessible names of the links that show a file name (Lighthouse, 2026-10-10): option (a), done the same day.** The explorer, the pinned tabs, the pagination, the prerequisites and the home page's CodeLens showed a file name but announced another name, which breaks WCAG 2.5.3, "Label in Name" (level A). Now the accessible name is the real name followed by the file name: «Página anterior: IP, puertos y sockets, 05-ip-puertos-y-sockets.md». Rule in the style guide ("File names").
 - [ ] **Starlight's search button (Lighthouse, desktop):** it shows «⌘K», and its accessible name («Buscar lección, término o comando») does not include it. It is Starlight's component, not ours: fixing it means overriding the whole search. Low priority; check whether a Starlight update fixes it.
+- [ ] **Two accessibility warnings that Lighthouse shows without lowering the score (found on 2026-10-11, already on the live site):**
+  - the glossary's «Se explica en…» ("Explained in…") links announce the lesson's title and show another text (WCAG 2.5.3, "Label in Name"), like the file links before 2026-10-10;
+  - a table in «Qué es el backend» has cells without a header (`td-has-header`).
 - [ ] **Render-blocking CSS (Lighthouse, 2026-10-10):** the two stylesheets (Starlight's and Expressive Code's) delay the first paint by a few hundred milliseconds on a simulated phone. Normal for Starlight; not worth touching while performance stays above 90.
-- [ ] **Idea for later:** a progress panel (finished lessons, saved in the browser), when there are more lessons. Without an activity bar, it could be another pinned tab.
+- [ ] **Idea for later:** a progress panel (finished lessons, saved in the browser), when there are more lessons. It could be another file in the explorer, like the playgrounds and the glossary.
 
 - [x] **Name and domain:** «Backend desde cero / Backend from Scratch», at `backenddesdecero.com` (decided on 2026-10-03). The repository name was changed by the following decision.
 - [x] **Technical names in English (2026-10-08):**

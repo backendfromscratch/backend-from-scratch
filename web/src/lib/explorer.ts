@@ -1,4 +1,5 @@
 import type { Phase } from '../data/phases';
+import { localizedHref } from './links';
 import { isLocale, type Locale } from './locales';
 
 /** Structural subset of the Starlight sidebar entries that the explorer uses. */
@@ -141,6 +142,25 @@ const HOME_FILE: Record<Locale, string> = { es: 'inicio.md', en: 'home.md' };
 
 export function homeFileName(locale: Locale): string {
   return HOME_FILE[locale];
+}
+
+export type ExplorerPageId = 'playgrounds' | 'glossary';
+
+export interface ExplorerPage {
+  id: ExplorerPageId;
+  href: string;
+  current: boolean;
+}
+
+const EXPLORER_PAGES: readonly ExplorerPageId[] = ['playgrounds', 'glossary'];
+
+/** The files under the home page, before the phases: the playgrounds and the glossary. */
+export function explorerPages(locale: Locale, pathname: string): ExplorerPage[] {
+  const path = pathname.endsWith('/') ? pathname : `${pathname}/`;
+  return EXPLORER_PAGES.map((id) => {
+    const href = localizedHref(locale, id);
+    return { id, href, current: path === href };
+  });
 }
 
 /**

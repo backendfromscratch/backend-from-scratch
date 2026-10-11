@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  explorerPages,
   fileLinkName,
   type ExplorerEntry,
   currentLesson,
@@ -301,5 +302,34 @@ describe('fileLinkName', () => {
     expect(fileLinkName('IP, puertos y sockets', '05-ip-puertos-y-sockets.md')).toBe(
       'IP, puertos y sockets, 05-ip-puertos-y-sockets.md',
     );
+  });
+});
+
+describe('explorerPages', () => {
+  it('playgrounds and glossary, in that order and in the language of the page', () => {
+    expect(explorerPages('es', '/fase-0/que-es-dns/').map(({ id, href }) => [id, href])).toEqual([
+      ['playgrounds', '/playgrounds/'],
+      ['glossary', '/glossary/'],
+    ]);
+    expect(explorerPages('en', '/en/phase-0/what-is-dns/').map(({ href }) => href)).toEqual([
+      '/en/playgrounds/',
+      '/en/glossary/',
+    ]);
+  });
+
+  it('in a lesson, none is the current one', () => {
+    expect(explorerPages('es', '/fase-0/que-es-dns/').some((page) => page.current)).toBe(false);
+  });
+
+  it('in the glossary or the playgrounds, that one is the current one', () => {
+    expect(explorerPages('es', '/glossary/').map((page) => page.current)).toEqual([false, true]);
+    expect(explorerPages('en', '/en/playgrounds/').map((page) => page.current)).toEqual([
+      true,
+      false,
+    ]);
+  });
+
+  it('with or without the trailing slash', () => {
+    expect(explorerPages('es', '/glossary').map((page) => page.current)).toEqual([false, true]);
   });
 });
