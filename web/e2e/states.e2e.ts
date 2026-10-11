@@ -89,6 +89,8 @@ for (const theme of themes) {
       await lab.getByRole('button', { name: t.generate }).last().click();
       await lab.getByRole('button', { name: t.sign }).click();
       await lab.getByRole('button', { name: t.verify }).click();
+      // The decrypted message above also uses .crypto-lab__good: look for the verdict's text.
+      await expect(lab.locator('.crypto-lab__good', { hasText: t.valid })).toBeVisible();
       await expectAccessible(page, '.crypto-lab');
     });
 

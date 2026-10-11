@@ -16,8 +16,12 @@ export default defineConfig({
     baseURL: `http://localhost:${port}`,
   },
   webServer: {
-    command: `pnpm exec astro preview --port ${port}`,
+    // --ignore-lock keeps the server in the foreground: when Astro detects an AI agent (Claude Code),
+    // it starts `astro preview` in the background and the process Playwright watches ends at once.
+    command: `pnpm exec astro preview --port ${port} --ignore-lock`,
     url: `http://localhost:${port}/`,
-    reuseExistingServer: !process.env.CI,
+    // Never another server that happens to be on the port (a dev server, an old build): the tests
+    // are about the built site, so a busy port fails instead.
+    reuseExistingServer: false,
   },
 });
