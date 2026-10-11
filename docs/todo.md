@@ -39,6 +39,9 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 - [x] **You:** Bing Webmaster Tools, importing the site from Search Console (2026-10-10).
 - [x] **You, optional:** Crawler Hints in Cloudflare (`backenddesdecero.com` → Caching → Configuration), which tells Bing about every deploy through IndexNow. Turned on on 2026-10-11. After the next deploy, check in Bing Webmaster Tools → IndexNow that URLs arrive: it is not clear that it detects changes in a Worker with static assets.
 - [x] **Claude:** `WebSite` JSON-LD on the home page, the way Google picks the site name it shows (2026-10-10). The SEO audit checks it.
+- [x] **Claude:** security and supply chain up to the 2026 standard (2026-10-11): secret scanning, Dependabot, CodeQL, private vulnerability reporting, pnpm's 7-day wait and trust policy, Actions pinned by SHA and zizmor. Design in `docs/specs/2026-10-02-site-and-phase-0-design.md`, §7.
+- [ ] **Together, after a few PRs:** make CodeQL a required check if it does not add noise.
+- [ ] **Claude, next:** Knip (dead code and unused dependencies) and axe-core with Playwright (accessibility of the labs' states, in dark and light), each in its own PR. ESLint with types waits for Phase 3, when there is server code; a migrations check, for Phase 5.
 - [ ] **Together, a few weeks after publishing:** turn on HSTS once the domain has worked without problems (start with a short `max-age`).
 - [x] **You:** decide the license (2026-10-09): CC BY 4.0 for the course content (`web/src/content/docs/`, `glossary/` and `i18n/`) and MIT for everything else, code and tests included. `LICENSE`, `LICENSE-CONTENT` and the README say so.
 - [x] **Claude:** say on the site that the content is CC BY 4.0 (2026-10-09): a line in the footer of every page, in both languages, linking to the license deed in the reader's language with `rel="license"`.

@@ -156,7 +156,7 @@ describe('lookup with fallback: if Cloudflare does not answer, Google', () => {
     const asked: string[] = [];
     const google = recordedFetch(asked);
     const blockedCloudflare = (async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input).startsWith('https://cloudflare-dns.com')) {
+      if (new URL(String(input)).hostname === 'cloudflare-dns.com') {
         throw new TypeError('Failed to fetch');
       }
       return google(input, init);

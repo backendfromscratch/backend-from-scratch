@@ -269,7 +269,12 @@ Levels: **1** = terminal exercise, **2** = playground with a real tool, **3** = 
   - `backendfromscratch.com` and its `www`: the same kind of proxied records and a Redirect Rule for all requests → `concat("https://backenddesdecero.com/en", http.request.uri.path)`.
   - "Always Use HTTPS" is on in both domains: `http://` redirects to `https://`. HSTS is not on yet: it is hard to undo, because browsers remember it for months.
 - Caching: HTML is revalidated on every visit (Cloudflare's default), so a deploy is visible at once. Files under `/_astro/` have a content hash in their name and are cached for a year (`web/public/_headers`).
-- A GitHub Actions workflow (`.github/workflows/ci.yml`, since 2026-10-07) checks formatting, types, tests and build on every PR and every push to `main`. It does not deploy.
+- A GitHub Actions workflow (`.github/workflows/ci.yml`, since 2026-10-07) checks formatting, types, tests and build on every PR and every push to `main`. Since 2026-10-11 it also checks the workflows and `dependabot.yml` with zizmor. It does not deploy.
+- **Security and supply chain (2026-10-11),** after the npm attacks of 2025:
+  - GitHub settings: secret scanning with push protection, Dependabot alerts and security updates, CodeQL (default setup, not a required check for now) and private vulnerability reporting;
+  - pnpm (`pnpm-workspace.yaml`): only the listed packages run install scripts, a version must be 7 days old to be installed (`minimumReleaseAge`) and a version published with weaker guarantees than the previous ones is refused (`trustPolicy: no-downgrade`);
+  - Dependabot (`.github/dependabot.yml`): npm and GitHub Actions every Monday, grouped, with the same 7-day wait (`cooldown`);
+  - Actions pinned by commit SHA, and `actions/checkout` without persisted credentials.
 - Deployment is set up early, so the author can see progress live.
 - **Creating the remote repository, pushing or connecting Cloudflare requires the author's explicit request.**
 
