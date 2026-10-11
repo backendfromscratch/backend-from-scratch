@@ -22,9 +22,9 @@ The code has been on GitHub since 2026-10-09: `backendfromscratch/backend-from-s
 ### 2. Unblock Phase 1
 
 - [ ] **You:** review the pilot: read and do, as a reader, the introduction and lesson 1 of Phase 1. The other nine lessons wait for your verdict on the template and the tone. While reading, note what was hard or surprising for you when you learned it: those become the «Nota del autor» (principle 8 in the style guide).
-- [ ] **You:** two quick decisions before writing more:
-  - English punctuation: the period outside the quotation marks (British style, the current one) or inside (American);
-  - the JavaScript limit per page: 400 KB, or study Preact to slim down the playgrounds.
+- [x] **You:** two quick decisions before writing more (2026-10-11):
+  - English punctuation: American, the period inside the quotation marks. Phase 0 is changed and the rule is in the style guide ("Translation");
+  - the JavaScript limit per page: 400 KB, the one the SEO audit already checks. Preact is left for when a page gets close to it.
 
 ### 3. Publish the site
 
@@ -72,7 +72,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
   - in lesson 9, the `curl` commands were run again with English labels, so the times in the text and in the table differ from the Spanish ones (for example, an RTT of about 15 ms);
   - words that go in italics in Spanish because they are foreign (*handshake*, *round trip time*) go without italics in English;
   - in lesson 3, the 404 route is `/does-not-exist`.
-  - **a style decision:** the English lessons put the period outside the quotation marks (`“…hand it to me”.`), as in lesson 2, which you already reviewed. That is British style; American puts it inside (`“…hand it to me.”`). The rest of the English is American. It was kept for consistency, but it should be decided before writing more.
+  - ~~**a style decision:** the period outside the quotation marks (British) or inside (American).~~ Decided on 2026-10-11: American, like the rest of the English. Phase 0 is already changed.
 - [ ] Read and do, as a reader, **lesson 3, «Qué es un protocolo»** ("What is a protocol") (`fase-0/que-es-un-protocolo.mdx`).
 - [ ] Read and do, as a reader, **lesson 4, «El modelo TCP/IP»** ("The TCP/IP model") (`fase-0/modelo-tcp-ip.mdx`).
 - [ ] Read and do, as a reader, **lesson 5, «IP, puertos y sockets»** ("IP, ports and sockets") (`fase-0/ip-puertos-y-sockets.mdx`). Watch out: exercise 3 asks for three terminals open at the same time; is that too much for someone who has just met the terminal?
@@ -163,7 +163,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 - [x] **CI on GitHub (2026-10-07; active since 2026-10-09):** the `.github/workflows/ci.yml` workflow is already written, but it only runs once the repository is on GitHub. When creating it, protect `main` and mark the job "format, types, tests and build" as a required check: that way a PR with a red CI cannot be merged. Watch out: Cloudflare deploys every push to `main` on its own, without waiting for the CI; its build does fail with a broken link or an SEO problem, but not with a broken test.
 - [x] **Before publishing:** run Lighthouse with a simulated phone, sign up for Google Search Console and Bing Webmaster Tools, and check the breadcrumbs with Google's rich results test (2026-10-10).
 - [x] **On Cloudflare,** the build command is `pnpm build` from the root (or `pnpm --filter web build`). The fonts for the social images are already found through the module system, but Astro needs to run with `web/` as the root.
-- [ ] **JavaScript limit per page: 400 KB** (uncompressed, counting everything the page can import). The plan said 300, but a lesson with a lab already weighs about 340 KB (React 208 KB and Starlight's search 92 KB). Is that fine with you, or do you prefer studying how to slim down the labs (for example, Preact instead of React)?
+- [x] **JavaScript limit per page: 400 KB** (uncompressed, counting everything the page can import). Decided on 2026-10-11. A lesson with a lab weighs about 340 KB (React 208 KB and Starlight's search 92 KB). Preact instead of React is left for when a page gets close to the limit.
 - [ ] **Decisions on the technical minor items (2026-10-03), taken without consulting you.** Do they work for you?
   - **Google fallback in the DNS lab:** if Cloudflare does not respond (corporate networks that block it), Google (8.8.8.8) is asked. That query also leaves the reader's browser towards Google; the lab's privacy text already says so.
   - **TXT records are shown joined and in quotes,** whether Cloudflare or Google answers. It matches `dig` when the TXT has a single chunk (the usual case); with several chunks (DKIM), `dig` shows them separated and the lab, joined.
