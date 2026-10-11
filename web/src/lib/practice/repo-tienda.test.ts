@@ -90,9 +90,12 @@ describe('repo-tienda.sh', { timeout: 30_000 }, () => {
 
   it('git bisect run finds the commit that broke it', () => {
     git(repo, 'bisect', 'start', 'main', 'v1.0');
-    const output = git(repo, 'bisect', 'run', './comprobar.sh');
+    git(repo, 'bisect', 'run', './comprobar.sh');
+    // Where Git prints «… is the first bad commit» (stdout or stderr) depends on its version:
+    // the ref it leaves is the same in all of them.
+    const found = git(repo, 'rev-parse', 'refs/bisect/bad');
     git(repo, 'bisect', 'reset');
-    expect(output).toContain(`${FIRST_BAD} is the first bad commit`);
+    expect(found).toBe(FIRST_BAD);
     expect(git(repo, 'log', '-1', '--format=%s', FIRST_BAD)).toBe(
       'Ordena el código y añade comentarios',
     );
