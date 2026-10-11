@@ -1,6 +1,6 @@
 # Editor layout (design C) — design
 
-**Status:** approved by the author on 2026-10-03 and implemented. Simplified on 2026-10-11 (§2): no tabs or breadcrumbs, the playgrounds and the glossary in the explorer, the theme and the language as a button and two links, and smaller headings.
+**Status:** approved by the author on 2026-10-03 and implemented. Simplified on 2026-10-11 (§2): no tabs or breadcrumbs, the playgrounds and the glossary in the explorer, the theme and the language as a button and two links, smaller headings, and a page column with a maximum width, centered on very wide monitors.
 **Sketches:** https://claude.ai/artifact/1J4ae5sUqPwN4QZoQ6k7GK (canvas "VS Code-style layout", layout "C · Outline in the explorer").
 **Extends:** `docs/specs/2026-10-02-ide-theme-design.md`. What changes here replaces what that document says; the rest stays as it is (colors, typography, lesson components).
 
@@ -22,6 +22,7 @@
 - **No breadcrumbs:** the phase was already in the explorer and in the status bar. Only the reading time stays, above the title of a lesson (§4.4).
 - **Theme and language** (§4.1): a single button for the theme and the languages as two links, «ES · EN», instead of Starlight's two `<select>`, whose names were cut short («Auto…», «Españ…»).
 - **Smaller headings** (§4.4): Starlight's were 42 px for the title on a computer, and look bigger still in monospace.
+- **A maximum width, and centered on very wide monitors** (§4.4): at 2,560 px everything sat on the left with an empty half on the right, and the wide pieces stretched to about 2,000 px (the weather diagram had two 740 px cards and a one-line caption 1,500 px long).
 
 ## 3. The layout by screen width
 
@@ -31,7 +32,7 @@
 | 50–82rem | on the left | no | in the explorer | yes |
 | < 50rem (mobile) | in the ☰ menu (no outline) | no | the «En esta página» dropdown ("On this page"), as today | no |
 
-The side panel is the same size as before the layout, 19.25rem, all of it for the explorer. The content does not get narrower at any width compared with today.
+The side panel is the same size as before the layout, 19.25rem, all of it for the explorer. From 2026-10-11 the page column has a maximum width, 72rem (1,152 px), and from 120rem (1,920 px) it is centered in the editor (§4.4).
 
 The minimap threshold comes from adding up the side panel (≈ 308 px), line numbers (80 px), prose at 75ch (≈ 780 px), right margin (40 px) and minimap (96 px).
 
@@ -65,7 +66,7 @@ Height split: about 58 % for the explorer and 42 % for the outline. If one secti
 - **Reading time:** above the title of a lesson, small and in `--ide-muted` («13 min de lectura»), in `overrides/PageTitle.astro`. (Until 2026-10-11 it was in the breadcrumbs, after the phase, below the tabs.)
 - **Headings** (2026-10-11): title 28 px, `##` 22 px and `###` 18 px on a computer; 24, 20 and 18 px on mobile, where the title used to take four lines. Prose stays at 18 px: the headings stand out by the monospace, the weight and the `#` marks. They are Starlight's `--sl-text-h1` to `--sl-text-h5`, set in `theme.css`.
 - **Line numbers:** flush with the editor's left edge. The text starts right after them, left-aligned and not centered. The title is line 1 and the lesson's introduction (sentence, goals and prerequisites) is line 2. Tables, diagrams and labs still have no number, for the same reason as today (they would clip the number when scrolling).
-- **Width:** prose (paragraphs and lists) goes up to 75ch at most. The lesson's introduction, up to about 820 px at most. Tables, diagrams, code blocks, `TryIt` and labs use the editor's full width. Note: in Atkinson Hyperlegible Next the "0" is wide, so 75ch (≈ 875 px at 18 px) is about 100 real characters per line, not 75; today, with 70ch, it was about 90. For about 75 real characters we would need `--ide-measure: 40rem`. Pending the author's decision.
+- **Width:** prose (paragraphs and lists) goes up to 75ch at most. The lesson's introduction, up to about 820 px at most. Tables, diagrams, code blocks, `TryIt` and labs use the page column's full width, at most `--ide-page-width` (72rem, 1,152 px; since 2026-10-11, before it had no limit). From 120rem (1,920 px) of window, the column is centered between the explorer and the minimap, like VS Code's "Centered Layout"; below, it stays left-aligned after the line numbers, as it was. The explorer, the minimap and the status bar stay at the edges. Note: in Atkinson Hyperlegible Next the "0" is wide, so 75ch (≈ 875 px at 18 px) is about 100 real characters per line, not 75; today, with 70ch, it was about 90. For about 75 real characters we would need `--ide-measure: 40rem`. Pending the author's decision.
 - **Highlighted line:** when the mouse hovers over a block, its background lightens from edge to edge of the editor and its number changes to `--ide-text`, like VS Code's current line.
 - **No rule** separating the title from the content, as there is today.
 
