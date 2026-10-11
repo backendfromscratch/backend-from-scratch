@@ -2,7 +2,7 @@
 
 A free backend course for everyone, in Spanish and English: from how the internet works to building, securing and deploying your own backend. No programming knowledge assumed.
 
-In Spanish it is **Backend desde cero**, the site's main language. It will live at [backenddesdecero.com](https://backenddesdecero.com), with the English version under `/en/`.
+In Spanish it is **Backend desde cero**, the site's main language. It lives at [backenddesdecero.com](https://backenddesdecero.com), with the English version under [`/en/`](https://backenddesdecero.com/en/).
 
 ## What's in the course
 
@@ -39,7 +39,7 @@ pnpm build     # static site in web/dist/
 
 ## How it's built
 
-A static site made with [Astro](https://astro.build) and [Starlight](https://starlight.astro.build), with content in MDX, interactive labs in React and TypeScript throughout. Diagrams, social images and an SEO audit are generated at build time, so readers get plain HTML; JavaScript only runs for the editor layout, the search and the labs.
+A static site made with [Astro](https://astro.build) and [Starlight](https://starlight.astro.build), with content in MDX, interactive labs in React and TypeScript throughout. Diagrams, social images and an SEO audit are generated at build time, so readers get plain HTML; JavaScript only runs for the editor layout, the search and the labs. It is hosted on [Cloudflare Workers](https://developers.cloudflare.com/workers/static-assets/) as static files, deployed on every push to `main`.
 
 ```
 web/            the site
