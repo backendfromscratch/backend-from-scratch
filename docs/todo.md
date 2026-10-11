@@ -50,7 +50,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 ### 4. Continue with Phase 1, lesson by lesson
 
 - [x] **Claude:** before lesson 2, the script that generates the practice `access.log` (`web/public/practicas/access.log`). Done on 2026-10-11: what it contains is in the Phase 1 spec, §5.
-- [ ] **Claude, and you review each one:** lessons 2 to 10, each with a short plan, commands run for real and an independent review. In lesson 4, Multipass is checked on your Mac; before lesson 10, the Git repository script for `bisect`.
+- [ ] **Claude, and you review each one:** lessons 2 to 10, each with a short plan, commands run for real and an independent review. In lesson 4, Multipass is checked on your Mac. The Git repository script for `bisect` is done (2026-10-12, Phase 1 spec, §5); the English version needs its own script.
 - [ ] **Claude:** translate Phase 1 into English once you approve the Spanish.
 
 ### 5. No rush: nothing depends on it
