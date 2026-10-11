@@ -6,11 +6,40 @@
 - **Write for a general audience:** do not assume any programming knowledge. If a lesson uses `fetch`, a variable or a function, explain in one sentence what it is, or link to where it is explained. References to the work of a frontend dev are an extra for those who are one, never a requirement to understand the lesson.
 - **DevTools is for everyone** from lesson 4 of Phase 0, which explains how to open it in Chrome. The following lessons use it without hiding it behind «Y si programas:» ("If you code:") and refer back to that lesson.
 - Short sentences. One idea per paragraph.
-- Forbidden: «simplemente», «obviamente», «es fácil», «como todo el mundo sabe» (in English: "simply", "obviously", "it's easy", "as everyone knows"). They make people who don't get it feel clumsy.
+- Forbidden: «simplemente», «obviamente», «es fácil», «como todo el mundo sabe» (in English: "simply", "obviously", "it's easy", "as everyone knows"). They make people who don't get it feel clumsy. A test fails if they appear in a lesson or the glossary (`web/src/content/voice.test.ts`).
 - Show before telling: an example, a command or a diagram before the formal definition.
 - Every technical term is defined the first time it appears in the lesson, or marked with `<Term>`.
 - English terms in the Spanish version: use the Spanish term if it exists and is common (*petición*, *respuesta*), with the English one in parentheses the first time («petición (*request*)»). If in practice it is used in English (*socket*, *handshake*), leave it in English in italics.
 - Between 10 and 15 minutes of reading per lesson. If it goes over, split it.
+
+## What readers value: the eight principles
+
+What research on reading and learning says works best in courses and technical articles (adopted on 2026-10-11). Each principle says how it is applied here; several only point to rules that already exist. They are used twice: when writing (Claude drafts with them) and when reviewing (the checklist at the end of this guide goes through them one by one).
+
+1. **Scannable text.** Most people scan a web page before (or instead of) reading it word by word (Nielsen Norman Group, "How users read on the web" and the F-shaped pattern).
+   - The most important thing goes first: in the lesson, the `oneLiner` answers the title; in each section, its first paragraph; in each paragraph, its first sentence. Reading only the first sentences should tell the story.
+   - `###` headings inside "Cómo funciona de verdad" say what is below («El servidor contesta con un código»), never a generic label («Detalles», «Más información»).
+   - Paragraphs of 2 to 4 sentences and no more than about 80 words: above that, split them. Three or more parallel items go in a list; a comparison of several things on several features goes in a table.
+   - Bold only for what someone scanning must not miss: the key term where it is defined, or the takeaway of a paragraph. One or two per section, not one per paragraph.
+   - "El problema" gets to the point in two or three short paragraphs: no long introductions.
+2. **Conversational tone** (Mayer's personalization principle: people learn more from a conversational style than from a formal, impersonal one). The rules are in "Voice": *tú*, a colleague explaining something, short sentences and none of the forbidden words. Also: active voice («el servidor envía», not «es enviado por el servidor») and the reader as the subject of what they do («escribes», «verás»).
+3. **The example first, then the definition** (the worked-example effect: beginners learn more from a solved example than from the rule alone).
+   - "Show before telling", in "Voice": a command, an output or a diagram before the formal definition.
+   - A new procedure is first shown solved, step by step, with each step explained; then the reader does it, or a variant, in "Pruébalo".
+   - Concrete before abstract: real names, real numbers and real outputs (`example.com`, `200`, `ana@portatil`), not «un servidor X» or «cierto código».
+4. **Analogies with their limits.** Always with `<Analogy>` and its `limits` slot (the build fails without it). The analogy comes from everyday life, not from another technology the reader may not know, and the limits say where it stops being true before it causes a wrong idea.
+5. **The expected output of every command.** Every `<TryIt>` has its real `output` (see "Terminal exercises"), and the explanation says what to look at in it («fíjate en el `200` de la primera línea») and what to do if it is different: the most likely error and how to fix it.
+6. **Questions to check what was learned** (retrieval practice: trying to remember fixes things better than reading again; Roediger and Karpicke, 2006). The `<SelfCheck>` of "¿Lo has entendido?":
+   - make the reader apply the idea to a new case (a scenario, an output to interpret, a decision), never repeat a sentence from the lesson word for word;
+   - at least one of them is a situation («Tu web devuelve 502 a las tres de la mañana: ¿qué miras primero?»);
+   - the answer explains why, not only what.
+7. **Stories and real cases.** A situation is remembered better than a list of commands.
+   - "El problema" starts from a concrete situation the reader can imagine (a web that goes down, a password that leaks, a page that takes ten seconds), not from a definition.
+   - "Pruébalo" has a goal, not only steps: something to find out or to fix («encuentra la IP que está escaneando tu servidor»). The practice log (`/practicas/access.log`) hides four stories for this.
+   - Invented stories are told as examples («imagina que…»). A real incident from a real company is only told with a link to its public source (a postmortem, an article).
+8. **The voice of someone who lived it.** Notes in the first person about what was hard or surprising build trust, and Google values first-hand experience (the first E in E-E-A-T). That a frontend dev learns backend while writing the course is this site's advantage.
+   - They go in an `<Aside type="note" title="Nota del autor">` («Author's note» in English), at most two per lesson, next to the idea they talk about.
+   - **Only the author's real experiences.** Claude never invents them. While drafting, Claude can mark a spot with an MDX comment, `{/* NOTA DEL AUTOR: ¿qué te costó entender de X? */}`, and the author writes the note, or dictates it, during the review. If the author has nothing to say there, the comment is deleted: a lesson without author notes is fine. The same test fails while a `NOTA DEL AUTOR` comment is left or a lesson has more than two notes.
 
 ## Lesson structure
 
@@ -174,3 +203,33 @@ A playground is a React component inside a lesson (Phase 0 spec, §6.4). The fir
   - at most 400 KB of JavaScript per page.
 
   If it fails, the log says the page and the rule.
+
+## Writing and review checklist
+
+Used when a lesson is drafted and again when it is reviewed (the independent review and the author's). The reviewer answers each point with yes or no, and every "no" becomes a change or a reasoned exception. What the build and the tests already check (that every `<Term>` has its glossary entry, `limits`, links, SEO, forbidden words, author notes left pending or more than two) is not on the list. Whether a term needs explaining is a judgment, so it is on the list.
+
+**Scannable (1)**
+- [ ] Reading only the `oneLiner` and the first sentence of each paragraph, the lesson can be followed.
+- [ ] No paragraph goes over about 80 words or mixes two ideas.
+- [ ] Every `###` heading says what is below.
+- [ ] Parallel items are in lists, comparisons in tables, and bold is used sparingly.
+- [ ] "El problema" gets to the point in two or three paragraphs.
+
+**Tone (2)**
+- [ ] It reads like a colleague explaining, with *tú* and in the active voice.
+- [ ] Someone with no programming knowledge can follow it: every term is explained or has its `<Term>`.
+
+**Examples (3, 4)**
+- [ ] Every new idea has a concrete example, command or diagram before its definition.
+- [ ] Every new procedure is shown solved before the reader does it.
+- [ ] The analogy comes from everyday life and its limits say where it breaks.
+
+**Practice (5, 6)**
+- [ ] Every command has its real output, says what to look at and what to do if it is different.
+- [ ] "Pruébalo" has a goal: something to find out or to fix.
+- [ ] Each `<SelfCheck>` makes the reader apply the idea; at least one asks about a situation, and the answers explain why.
+
+**Stories and voice (7, 8)**
+- [ ] "El problema" starts from a concrete situation.
+- [ ] Invented stories are told as examples; real incidents have their source.
+- [ ] Author notes are the author's own experience, next to the idea they talk about.
