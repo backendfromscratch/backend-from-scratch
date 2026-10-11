@@ -21,7 +21,7 @@ The code has been on GitHub since 2026-10-09: `backendfromscratch/backend-from-s
 
 ### 2. Unblock Phase 1
 
-- [ ] **You:** review the pilot: read and do, as a reader, the introduction and lesson 1 of Phase 1. The other nine lessons wait for your verdict on the template and the tone.
+- [ ] **You:** review the pilot: read and do, as a reader, the introduction and lesson 1 of Phase 1. The other nine lessons wait for your verdict on the template and the tone. While reading, note what was hard or surprising for you when you learned it: those become the «Nota del autor» (principle 8 in the style guide).
 - [ ] **You:** two quick decisions before writing more:
   - English punctuation: the period outside the quotation marks (British style, the current one) or inside (American);
   - the JavaScript limit per page: 400 KB, or study Preact to slim down the playgrounds.

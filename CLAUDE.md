@@ -50,7 +50,7 @@ Only what is needed to keep working gets committed. Git history keeps the rest.
 - Hosting: Cloudflare Workers with static assets only, no server code (decided on 2026-10-09; Cloudflare calls Pages "legacy"). Configuration in `wrangler.jsonc`; Workers Builds runs `pnpm build` and `pnpm exec wrangler deploy` on every push to `main`.
 - Repository language: English (decided on 2026-10-09). The site stays bilingual.
 - License: CC BY 4.0 for the course content (`web/src/content/docs/`, `glossary/` and `i18n/`) and MIT for everything else, code and tests included (decided on 2026-10-09; `LICENSE` and `LICENSE-CONTENT`).
-- Style guide for writing lessons: `docs/style-guide.md`.
+- Style guide for writing lessons: `docs/style-guide.md`. Its eight principles of what readers value ("What readers value", adopted on 2026-10-11) and its "Writing and review checklist" are applied to every lesson twice: when drafting it and when reviewing it.
 - The next steps, in order, and what the author still has to review or decide: `docs/todo.md`. Keep it up to date.
 
 ## How I want you to work with me
@@ -111,7 +111,7 @@ src/content.config.ts           schemas: docs (`lesson` header, `translationKey`
 src/content/docs/               MDX pages: Spanish at the root (fase-0/…) and English in en/ (en/phase-0/…)
 src/content/glossary/           one YAML per term and language (es/port.yaml, en/port.yaml)
 src/content/i18n/               our own UI strings (es.json, en.json)
-src/content/*.test.ts           content tests: lesson order and UI keys defined and used
+src/content/*.test.ts           content tests: lesson order, UI keys defined and used, and the voice (forbidden words, author notes)
 src/data/phases.ts              the 12 phases: title, summary, status and planned lessons
 src/data/playgrounds.ts         labs and playgrounds, for the /playgrounds/ page
 src/data/site.ts                public URL, site name in each language and the content license
