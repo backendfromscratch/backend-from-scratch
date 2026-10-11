@@ -46,7 +46,7 @@ Only what is needed to keep working gets committed. Git history keeps the rest.
 - Technical names in English: GitHub organisation `backendfromscratch`, repository and package `backend-from-scratch` (decided on 2026-10-08). The site's public name follows each reader's language.
 - Audience: everyone. No lesson assumes any programming knowledge (decided on 2026-10-03; consequences in `docs/specs/2026-10-03-seo-design.md`, §2.3).
 - Routes and technical SEO: Spanish at the root, translated routes linked by `translationKey`, and an SEO audit that fails the build (design in `docs/specs/2026-10-03-seo-design.md`; rules in `docs/style-guide.md`, "Routes, translations and SEO").
-- CI: GitHub Actions checks format, types, tests and build on every PR and every push to `main` (decided on 2026-10-07). Deployment stays with Cloudflare's Git integration; deploying from GitHub Actions is left for Phase 8.
+- CI: GitHub Actions checks format, types, tests and build on every PR and every push to `main` (decided on 2026-10-07). Security and supply chain since 2026-10-11: secret scanning, Dependabot, CodeQL, pnpm's 7-day wait, Actions pinned by SHA and zizmor. Deployment stays with Cloudflare's Git integration; deploying from GitHub Actions is left for Phase 8.
 - Hosting: Cloudflare Workers with static assets only, no server code (decided on 2026-10-09; Cloudflare calls Pages "legacy"). Configuration in `wrangler.jsonc`; Workers Builds runs `pnpm build` and `pnpm exec wrangler deploy` on every push to `main`.
 - Repository language: English (decided on 2026-10-09). The site stays bilingual.
 - License: CC BY 4.0 for the course content (`web/src/content/docs/`, `glossary/` and `i18n/`) and MIT for everything else, code and tests included (decided on 2026-10-09; `LICENSE` and `LICENSE-CONTENT`).
@@ -81,7 +81,8 @@ pnpm format:check            # checks the format without changing anything
 - **The build fails on purpose** if an internal link is broken or crosses languages (`starlight-links-validator`), if a mermaid block can't be drawn, if a `<Term>` has no glossary entry, if an `<Analogy>` has no `limits`, if a UI string is missing in one language or if an SEO audit rule breaks. Fix the cause; don't disable the check.
 - Tests live next to the code (`x.ts` → `x.test.ts`). The ones that render a playground in a simulated document are named `*.dom.test.tsx`, start with `// @vitest-environment happy-dom` and use `web/src/playgrounds/dom-test.ts`.
 - prettier doesn't touch `.md` or `.mdx` files (`.prettierignore`): content formatting is set by `docs/style-guide.md`.
-- **CI** (`.github/workflows/ci.yml`): on every PR and every push to `main` it runs `format:check`, `check`, `test` and `build`. It doesn't deploy.
+- **CI** (`.github/workflows/ci.yml`): on every PR and every push to `main` it runs `format:check`, zizmor (the workflows), `check`, `test` and `build`. It doesn't deploy. Actions are pinned by commit SHA (with the version in a comment); Dependabot updates them.
+- **Supply chain** (`pnpm-workspace.yaml`): pnpm installs no version younger than 7 days and refuses versions published with weaker guarantees. If an urgent security fix is newer, add its exact version to `minimumReleaseAgeExclude`. Design in `docs/specs/2026-10-02-site-and-phase-0-design.md`, §7.
 - **PR title** (`.github/workflows/pr-title.yml`): on every PR it checks that the title follows Conventional Commits. Both jobs, "format, types, tests and build" and "conventional commit title", are required to merge into `main`.
 
 ## Git and GitHub
