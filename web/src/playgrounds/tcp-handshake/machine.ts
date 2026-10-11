@@ -9,7 +9,7 @@
 
 export type Mode = 'tcp' | 'udp';
 export type Side = 'client' | 'server';
-export type TcpState = 'CLOSED' | 'LISTEN' | 'SYN_SENT' | 'SYN_RECEIVED' | 'ESTABLISHED';
+type TcpState = 'CLOSED' | 'LISTEN' | 'SYN_SENT' | 'SYN_RECEIVED' | 'ESTABLISHED';
 export type Fate = 'in-transit' | 'delivered' | 'lost';
 
 export interface Segment {
@@ -25,7 +25,7 @@ export interface Segment {
   retransmission: boolean;
 }
 
-export interface StateChange {
+interface StateChange {
   side: Side;
   to: TcpState;
 }
@@ -34,7 +34,7 @@ export type Row =
   | { kind: 'segment'; id: number; segment: Segment; fate: Fate; changes: StateChange[] }
   | { kind: 'timeout'; id: number; side: Side };
 
-export type SegmentRow = Extract<Row, { kind: 'segment' }>;
+type SegmentRow = Extract<Row, { kind: 'segment' }>;
 
 /** What happened in the last step. strings.ts turns it into a sentence. */
 export type Narration =

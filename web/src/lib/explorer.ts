@@ -9,7 +9,7 @@ export interface ExplorerLink {
   href: string;
   isCurrent: boolean;
 }
-export interface ExplorerGroup {
+interface ExplorerGroup {
   type: 'group';
   label: string;
   entries: readonly ExplorerEntry[];
@@ -144,7 +144,7 @@ export function homeFileName(locale: Locale): string {
   return HOME_FILE[locale];
 }
 
-export type ExplorerPageId = 'playgrounds' | 'glossary';
+type ExplorerPageId = 'playgrounds' | 'glossary';
 
 export interface ExplorerPage {
   id: ExplorerPageId;

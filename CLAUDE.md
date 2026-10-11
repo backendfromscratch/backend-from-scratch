@@ -76,12 +76,13 @@ pnpm exec wrangler dev       # serves web/dist/ the way Cloudflare does (after p
 pnpm --filter web practice:log  # regenerates web/public/practicas/access.log (Phase 1 practice log)
 pnpm format                  # formats with prettier
 pnpm format:check            # checks the format without changing anything
+pnpm knip                    # unused files, exports and dependencies (knip.jsonc lists what it cannot see)
 ```
 
 - **The build fails on purpose** if an internal link is broken or crosses languages (`starlight-links-validator`), if a mermaid block can't be drawn, if a `<Term>` has no glossary entry, if an `<Analogy>` has no `limits`, if a UI string is missing in one language or if an SEO audit rule breaks. Fix the cause; don't disable the check.
 - Tests live next to the code (`x.ts` → `x.test.ts`). The ones that render a playground in a simulated document are named `*.dom.test.tsx`, start with `// @vitest-environment happy-dom` and use `web/src/playgrounds/dom-test.ts`.
 - prettier doesn't touch `.md` or `.mdx` files (`.prettierignore`): content formatting is set by `docs/style-guide.md`.
-- **CI** (`.github/workflows/ci.yml`): on every PR and every push to `main` it runs `format:check`, zizmor (the workflows), `check`, `test` and `build`. It doesn't deploy. Actions are pinned by commit SHA (with the version in a comment); Dependabot updates them.
+- **CI** (`.github/workflows/ci.yml`): on every PR and every push to `main` it runs `format:check`, zizmor (the workflows), `check`, `knip`, `test` and `build`. It doesn't deploy. Actions are pinned by commit SHA (with the version in a comment); Dependabot updates them.
 - **Supply chain** (`pnpm-workspace.yaml`): pnpm installs no version younger than 7 days and refuses versions published with weaker guarantees. If an urgent security fix is newer, add its exact version to `minimumReleaseAgeExclude`. Design in `docs/specs/2026-10-02-site-and-phase-0-design.md`, §7.
 - **PR title** (`.github/workflows/pr-title.yml`): on every PR it checks that the title follows Conventional Commits. Both jobs, "format, types, tests and build" and "conventional commit title", are required to merge into `main`.
 
@@ -95,7 +96,7 @@ pnpm format:check            # checks the format without changing anything
 
 ## Before calling a task done
 
-- Run `pnpm format:check && pnpm check && pnpm test && pnpm build` (the same as CI) and fix whatever fails. `astro check` must finish with no errors or warnings. If something can't pass, say so instead of calling the task done.
+- Run `pnpm format:check && pnpm check && pnpm knip && pnpm test && pnpm build` (the same as CI) and fix whatever fails. `astro check` must finish with no errors or warnings. If something can't pass, say so instead of calling the task done.
 - If you change something visible, look at it in the browser (`pnpm dev`) in dark and light mode, and at mobile width.
 - If you add, move or delete a module in `web/src/`, update the "Site architecture" map.
 - If you change a design decision, update its spec in `docs/specs/` and, if something is left for the author to review or decide, `docs/todo.md`.

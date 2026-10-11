@@ -6,11 +6,11 @@
 import { DiagramError } from './errors';
 import { el, lines, text, type HastElement } from './hast';
 
-export interface Participant {
+interface Participant {
   id: string;
   label: string;
 }
-export type SequenceStep =
+type SequenceStep =
   | { kind: 'message'; from: string; to: string; reply: boolean; text: string[] }
   | { kind: 'note'; over: string[]; text: string[] };
 export interface Sequence {

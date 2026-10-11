@@ -4,7 +4,7 @@ import type { Locale } from '../lib/locales';
  * Lab: a step-by-step simulation of what is hardest to see. Playground: a real tool
  * that works in the browser. (Terminal exercises, the third level, do not go here.)
  */
-export type PlaygroundLevel = 'lab' | 'playground';
+type PlaygroundLevel = 'lab' | 'playground';
 
 /**
  * The course's playgrounds and labs, for the /playgrounds/ page (PlaygroundList.astro).

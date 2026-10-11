@@ -31,7 +31,7 @@ export interface DnsRecord {
 }
 
 /** The response code, by name: NOERROR, NXDOMAIN, SERVFAIL, REFUSED… (“RCODE9” if unusual). */
-export type DnsStatus = string;
+type DnsStatus = string;
 
 export interface DnsResponse {
   status: DnsStatus;
@@ -57,7 +57,7 @@ export interface LookupResult {
 }
 
 /** An alias (CNAME): the first name of the chain, the last target and those in between. */
-export interface Alias {
+interface Alias {
   name: string;
   target: string;
   via: string[];

@@ -10,7 +10,7 @@ import { DiagramError } from './errors';
 import { toHtml, type HastElement } from './hast';
 import { parseSequence, renderSequence } from './sequence';
 
-export function diagramFromMermaid(source: string): HastElement {
+function diagramFromMermaid(source: string): HastElement {
   const kind = source.trim().split('\n')[0]?.trim();
   if (kind === 'sequenceDiagram') return renderSequence(parseSequence(source));
   if (kind === 'flowchart TB') return renderChain(parseChain(source));
