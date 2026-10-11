@@ -37,7 +37,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 - [ ] **You:** check that auto-renewal is on for both domains.
 - [x] **Together (2026-10-10):** Lighthouse with a simulated phone on the home page and three lessons (performance 94 to 100; accessibility, best practices and SEO 100; LCP 1.5 to 2.5 s), Google Search Console (domain property, `sitemap-index.xml` sent) and the rich results test (breadcrumbs valid on `/fase-0/que-es-dns/`).
 - [x] **You:** Bing Webmaster Tools, importing the site from Search Console (2026-10-10).
-- [ ] **You, optional:** Crawler Hints in Cloudflare (`backenddesdecero.com` → Caching → Configuration), which tells Bing about every deploy through IndexNow.
+- [x] **You, optional:** Crawler Hints in Cloudflare (`backenddesdecero.com` → Caching → Configuration), which tells Bing about every deploy through IndexNow. Turned on on 2026-10-11. After the next deploy, check in Bing Webmaster Tools → IndexNow that URLs arrive: it is not clear that it detects changes in a Worker with static assets.
 - [x] **Claude:** `WebSite` JSON-LD on the home page, the way Google picks the site name it shows (2026-10-10). The SEO audit checks it.
 - [ ] **Together, a few weeks after publishing:** turn on HSTS once the domain has worked without problems (start with a short `max-age`).
 - [x] **You:** decide the license (2026-10-09): CC BY 4.0 for the course content (`web/src/content/docs/`, `glossary/` and `i18n/`) and MIT for everything else, code and tests included. `LICENSE`, `LICENSE-CONTENT` and the README say so.
@@ -127,9 +127,9 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 - [x] **Minor items deferred from the editor layout review, resolved** (2026-10-03): outline with a single entry, empty `aside`, clipped focus, glossary in the minimap and in the highlighting, outline that shows the marked section, comment on the search import and the contrast of `line` in the guide. The rest no longer applied after removing the activity bar.
 - [x] **Accessible names of the links that show a file name (Lighthouse, 2026-10-10): option (a), done the same day.** The explorer, the pinned tabs, the pagination, the prerequisites and the home page's CodeLens showed a file name but announced another name, which breaks WCAG 2.5.3, "Label in Name" (level A). Now the accessible name is the real name followed by the file name: «Página anterior: IP, puertos y sockets, 05-ip-puertos-y-sockets.md». Rule in the style guide ("File names").
 - [ ] **Starlight's search button (Lighthouse, desktop):** it shows «⌘K», and its accessible name («Buscar lección, término o comando») does not include it. It is Starlight's component, not ours: fixing it means overriding the whole search. Low priority; check whether a Starlight update fixes it.
-- [ ] **Two accessibility warnings that Lighthouse shows without lowering the score (found on 2026-10-11, already on the live site):**
-  - the glossary's «Se explica en…» ("Explained in…") links announce the lesson's title and show another text (WCAG 2.5.3, "Label in Name"), like the file links before 2026-10-10;
-  - a table in «Qué es el backend» has cells without a header (`td-has-header`).
+- [x] **Two accessibility warnings that Lighthouse shows without lowering the score (found on 2026-10-11, already on the live site), resolved the same day:**
+  - the glossary's «Se explica en…» ("Explained in…") links announced the lesson's title and showed the file name (WCAG 2.5.3, "Label in Name"): now they use `fileLinkName`, like the other file links;
+  - the comparison table in «Qué es el backend» had an empty corner cell, so the first column had no header (`td-has-header`): it is now «Diferencia» / "Difference".
 - [ ] **Render-blocking CSS (Lighthouse, 2026-10-10):** the two stylesheets (Starlight's and Expressive Code's) delay the first paint by a few hundred milliseconds on a simulated phone. Normal for Starlight; not worth touching while performance stays above 90.
 - [ ] **Idea for later:** a progress panel (finished lessons, saved in the browser), when there are more lessons. It could be another file in the explorer, like the playgrounds and the glossary.
 
@@ -187,7 +187,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 - The shopping diagram says «Backend de la tienda» ("The shop's backend"), and the story starts at «la app de una sala de conciertos» ("a concert hall's app").
 - ~~In the light theme, the sun in the figure looked brown.~~ Resolved on 2026-10-04: it uses its own token, `--ide-sun` (amber in light; in dark, the orange it had before).
 - ~~The `phase-intro.test.ts` test only watches Phase 0.~~ Resolved on 2026-10-07: it goes through all the phases that have an introduction.
-- The Phase 0 summary in `web/src/data/phases.ts` does not mention the new lesson.
+- ~~The Phase 0 summary in `web/src/data/phases.ts` does not mention the new lesson.~~ Resolved on 2026-10-11.
 
 ## Deferred minor items (from the technical SEO review)
 

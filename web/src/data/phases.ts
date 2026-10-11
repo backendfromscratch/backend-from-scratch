@@ -19,8 +19,8 @@ export const phases: Phase[] = [
     lessonCount: 9,
     title: { es: 'Cómo funciona internet', en: 'How the internet works' },
     summary: {
-      es: 'Cliente-servidor, protocolos, capas de red, IP, TCP, DNS y TLS: por dónde viajan los datos antes de que escribas una línea de backend.',
-      en: 'Client-server, protocols, network layers, IP, TCP, DNS and TLS: how data travels before you write a single line of backend code.',
+      es: 'Qué es el backend, cliente-servidor, protocolos, capas de red, IP, TCP, DNS y TLS: por dónde viajan los datos antes de que escribas una línea de backend.',
+      en: 'What the backend is, client-server, protocols, network layers, IP, TCP, DNS and TLS: how data travels before you write a single line of backend code.',
     },
   },
   {
