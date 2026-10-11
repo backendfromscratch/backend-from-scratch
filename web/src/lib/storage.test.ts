@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lastPageKey, safeStorage } from './storage';
+import { safeStorage } from './storage';
 
 describe('safeStorage', () => {
   it('saves and reads when storage is available', () => {
@@ -28,11 +28,5 @@ describe('safeStorage', () => {
       },
     }));
     expect(() => storage.set('ide-outline', 'open')).not.toThrow();
-  });
-});
-
-describe('lastPageKey', () => {
-  it('one last page per language: in the English glossary, the last English lesson', () => {
-    expect(lastPageKey('es')).not.toBe(lastPageKey('en'));
   });
 });

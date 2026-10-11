@@ -10,7 +10,7 @@ const PAGE = `<!doctype html><html lang="es" dir="ltr" data-theme="dark"><head>
 <link rel="alternate" hreflang="en" href="https://backenddesdecero.com/en/phase-0/what-is-dns/"/>
 <script type="application/ld+json">{"@type":"BreadcrumbList","itemListElement":[]}</script>
 </head><body>
-<starlight-lang-select><label><select><option value="/fase-0/que-es-dns/" selected>Español</option><option value="/en/phase-0/what-is-dns/">English</option></select></label></starlight-lang-select>
+<nav class="ide-languages" data-language-links aria-label="Idioma"><a href="/fase-0/que-es-dns/" aria-current="page" lang="es" hreflang="es">ES</a> · <a href="/en/phase-0/what-is-dns/" lang="en" hreflang="en">EN</a></nav>
 <h1 id="_top">DNS</h1>
 <button data-code="<html><body><h1>400 Bad Request</h1></body></html>">Copiar</button>
 <pre class="mermaid">sequenceDiagram</pre>
@@ -36,7 +36,7 @@ describe('parsePage', () => {
   });
 
   it('reads where the language selector leads', () => {
-    expect(facts.languageOptions).toEqual(['/fase-0/que-es-dns/', '/en/phase-0/what-is-dns/']);
+    expect(facts.languageLinks).toEqual(['/fase-0/que-es-dns/', '/en/phase-0/what-is-dns/']);
   });
 
   it('does not count HTML inside an attribute as a tag (the copy button)', () => {
@@ -55,7 +55,7 @@ describe('parsePage', () => {
     expect(empty.robots).toBeUndefined();
     expect(empty.alternates).toEqual([]);
     expect(empty.jsonLd).toEqual([]);
-    expect(empty.languageOptions).toEqual([]);
+    expect(empty.languageLinks).toEqual([]);
     expect(empty.h1Count).toBe(0);
   });
 

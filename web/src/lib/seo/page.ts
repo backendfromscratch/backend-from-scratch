@@ -17,8 +17,8 @@ export interface PageFacts {
   ogImage: string | undefined;
   /** The JSON-LD blocks in the head; one that is not valid JSON comes as { invalidJson }. */
   jsonLd: unknown[];
-  /** The URLs the language selector leads to. */
-  languageOptions: string[];
+  /** The URLs the language links in the header lead to. */
+  languageLinks: string[];
   h1Count: number;
   mermaidBlocks: number;
   /** The hrefs of the page's links (<a>). */
@@ -63,8 +63,9 @@ export function parsePage(html: string): PageFacts {
   const meta = (key: 'name' | 'property', value: string) =>
     metas.find((m) => m[key] === value)?.content;
   const title = /<title>([\s\S]*?)<\/title>/i.exec(head)?.[1];
-  const languageSelect =
-    /<starlight-lang-select>([\s\S]*?)<\/starlight-lang-select>/i.exec(html)?.[1] ?? '';
+  // The language links (LanguageSelect.astro): the header ones; the mobile menu repeats them.
+  const languageNav =
+    /<nav\b[^>]*\bdata-language-links\b[^>]*>([\s\S]*?)<\/nav>/i.exec(html)?.[1] ?? '';
   // Without the attribute contents: the copy button stores the code in data-code, and an
   // «<h1>» inside it is not a tag.
   const markup = html.replace(/="[^"]*"/g, '=""');
@@ -83,8 +84,8 @@ export function parsePage(html: string): PageFacts {
     jsonLd: [...head.matchAll(/<script type="application\/ld\+json">([\s\S]*?)<\/script>/gi)].map(
       ([, raw]) => readJson(raw!),
     ),
-    languageOptions: tags(languageSelect, 'option')
-      .map((o) => o.value ?? '')
+    languageLinks: tags(languageNav, 'a')
+      .map((a) => a.href ?? '')
       .filter(Boolean),
     h1Count: (markup.match(/<h1\b/gi) ?? []).length,
     mermaidBlocks: (html.match(/class="mermaid"/g) ?? []).length,
