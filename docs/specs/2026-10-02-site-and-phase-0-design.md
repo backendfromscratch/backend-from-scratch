@@ -287,8 +287,9 @@ Levels: **1** = terminal exercise, **2** = playground with a real tool, **3** = 
 | Playground logic       | Vitest tests of the TCP state machine, the DNS parsing and the cryptography utilities                                         |
 | Terminal exercises     | Each command is really run on macOS before publishing the lesson, and the "expected output" comes from that run                |
 | Interface              | Browser review of every page and playground, in both languages and in light and dark mode, including keyboard use              |
+| Accessibility          | Since 2026-10-12, axe-core with Playwright on the built site (`web/e2e/`, `pnpm test:e2e`, in CI): every page in the sitemap and the labs' states, in light and dark |
 
-There is no end-to-end test suite in this cycle; it will arrive with Phase 10.
+The browser tests check accessibility only. Functional end-to-end tests and visual comparison arrive with Phase 10.
 
 ## 9. Order of work
 
