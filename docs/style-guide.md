@@ -206,7 +206,7 @@ A playground is a React component inside a lesson (Phase 0 spec, §6.4). The fir
 
 ## Writing and review checklist
 
-Used when a lesson is drafted and again when it is reviewed (the independent review and the author's). The reviewer answers each point with yes or no, and every "no" becomes a change or a reasoned exception. What the build and the tests already check (glossary terms, `limits`, links, SEO, forbidden words, author notes left pending or more than two) is not on the list.
+Used when a lesson is drafted and again when it is reviewed (the independent review and the author's). The reviewer answers each point with yes or no, and every "no" becomes a change or a reasoned exception. What the build and the tests already check (that every `<Term>` has its glossary entry, `limits`, links, SEO, forbidden words, author notes left pending or more than two) is not on the list. Whether a term needs explaining is a judgment, so it is on the list.
 
 **Scannable (1)**
 - [ ] Reading only the `oneLiner` and the first sentence of each paragraph, the lesson can be followed.
@@ -227,7 +227,7 @@ Used when a lesson is drafted and again when it is reviewed (the independent rev
 **Practice (5, 6)**
 - [ ] Every command has its real output, says what to look at and what to do if it is different.
 - [ ] "Pruébalo" has a goal: something to find out or to fix.
-- [ ] The `<SelfCheck>` make the reader apply the idea, at least one is a situation, and the answers explain why.
+- [ ] Each `<SelfCheck>` makes the reader apply the idea; at least one asks about a situation, and the answers explain why.
 
 **Stories and voice (7, 8)**
 - [ ] "El problema" starts from a concrete situation.
