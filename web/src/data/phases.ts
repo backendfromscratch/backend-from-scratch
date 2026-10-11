@@ -1,6 +1,6 @@
 import type { Locale } from '../lib/locales';
 
-export type PhaseStatus = 'available' | 'coming-soon';
+type PhaseStatus = 'available' | 'coming-soon';
 
 export interface Phase {
   number: number;

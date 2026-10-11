@@ -2,7 +2,7 @@
  * What the SEO audit needs to know about a generated page. It is read with regular expressions:
  * Astro generates the HTML, always with attributes in double quotes.
  */
-export interface Alternate {
+interface Alternate {
   hreflang: string;
   href: string;
 }
