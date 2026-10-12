@@ -10,6 +10,9 @@ export const OUTLINE_KEY = 'ide-outline';
 /** The phase folders the reader has opened or collapsed: { «fase-1»: true, … }. */
 export const FOLDERS_KEY = 'ide-folders';
 
+/** 'collapsed' if the reader has hidden the side panel (explorer and outline) on a computer. */
+export const EXPLORER_KEY = 'ide-explorer';
+
 export interface SafeStorage {
   get(key: string): string | null;
   set(key: string, value: string): void;

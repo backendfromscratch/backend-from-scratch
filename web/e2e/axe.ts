@@ -17,7 +17,10 @@ export async function open(page: Page, path: string, theme: Theme): Promise<void
  * before that, axe would report them as scroll regions the keyboard cannot reach.
  */
 export async function settled(page: Page): Promise<void> {
-  await page.waitForLoadState('networkidle');
+  // `load` and not `networkidle`: the site has no requests after loading (the labs' islands are
+  // waited for with `hydrate`), and networkidle adds half a second of silence to every test.
+  // The fonts are part of `load`, so the code blocks already have their final width.
+  await page.waitForLoadState('load');
   await page.waitForFunction(() =>
     [...document.querySelectorAll<HTMLElement>('.expressive-code pre')].every(
       (pre) => pre.scrollWidth <= pre.clientWidth || pre.hasAttribute('tabindex'),

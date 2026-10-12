@@ -110,6 +110,18 @@ for (const theme of themes) {
       await expectAccessible(page);
     });
 
+    test('the side panel hidden, and still hidden on the next page', async ({ page }) => {
+      await open(page, '/fase-0/que-es-dns/', theme);
+      const toggle = page.locator('.ide-explorer-toggle');
+      await toggle.click();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      await expect(page.locator('.sidebar-pane')).toBeHidden();
+      await expectAccessible(page);
+      await page.goto('/fase-0/tls-y-https/');
+      await expect(page.locator('.sidebar-pane')).toBeHidden();
+      await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    });
+
     test('the menu open on a phone', async ({ page }) => {
       await page.setViewportSize({ width: 390, height: 844 });
       await open(page, '/fase-0/que-es-dns/', theme);

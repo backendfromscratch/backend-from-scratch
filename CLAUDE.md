@@ -39,7 +39,7 @@ Only what is needed to keep working gets committed. Git history keeps the rest.
 - Stack: Astro + Starlight, content in MDX, playgrounds in React, TypeScript, pnpm workspaces, Cloudflare for hosting.
 - Full design of the site and of Phase 0: `docs/specs/2026-10-02-site-and-phase-0-design.md`.
 - Visual design ("code editor" theme, dark and light): `docs/specs/2026-10-02-ide-theme-design.md`.
-- Editor layout (design C: outline in the explorer, minimap, a discreet status bar and VS Code-like scrollbars; since 2026-10-11 without tabs or breadcrumbs, with playgrounds and the glossary in the explorer, a theme button, «ES · EN» links and smaller headings): `docs/specs/2026-10-03-editor-layout-design.md`.
+- Editor layout (design C: outline in the explorer, minimap, a discreet status bar and VS Code-like scrollbars; since 2026-10-11 without tabs or breadcrumbs, a theme button, «ES · EN» links and smaller headings; since 2026-10-12 the side panel can be hidden and the explorer only has folders, the phases and `recursos/`): `docs/specs/2026-10-03-editor-layout-design.md`.
 - `tcp-handshake` lab (the first React playground, the pattern for the next ones): `docs/specs/2026-10-03-tcp-lab-design.md`.
 - Phase 1 design (approved on 2026-10-07; it starts with a pilot lesson): `docs/specs/2026-10-03-phase-1-design.md`.
 - Name and domain: «Backend desde cero» / "Backend from Scratch", on `backenddesdecero.com`, a single domain for both languages (decided on 2026-10-03; analysis in `docs/research/2026-10-03-languages-and-names.md`). Spanish is the main language and domain.
@@ -124,7 +124,7 @@ src/routeData.ts                Starlight middleware: fixes the sidebar, paginat
 src/pages/og/[...route].png.ts  a 1200 × 630 PNG per page (og:image), generated at build time
 src/integrations/               our own Astro integrations: drop-fallbacks (deletes the fallback pages), diagrams and seo-audit
 src/components/                 lessons (Term, TryIt, Analogy, SelfCheck), general pages (PhaseList, PlaygroundList, GlossaryList, CodeLens)
-                                and layout (Outline, Minimap; LessonIntro, the lesson header, from overrides/PageTitle.astro)
+                                and layout (Outline, Minimap, ExplorerToggle; LessonIntro, the lesson header, from overrides/PageTitle.astro)
 src/components/overrides/       replacements for Starlight components, registered in astro.config.ts: Header, Sidebar, PageTitle, LanguageSelect,
                                 TwoColumnContent, PageSidebar, Pagination, Footer, SiteTitle and ThemeSelect
 src/components/diagrams/        diagrams Mermaid doesn't draw well, in HTML and CSS (Encapsulation, NatTranslation, DataToScreen)
@@ -140,6 +140,7 @@ src/lib/                        pure logic, no DOM, with tests:
   glossary.ts                   glossary ids, alphabetical order and the lesson that explains each term
   explorer.ts, outline.ts       file explorer and page outline
   minimap.ts, theme.ts          minimap, and the theme button's choice
+  explorer-panel.ts             whether the side panel starts hidden
   reading.ts                    reading minutes
   storage.ts                    localStorage that doesn't fail (private browsing, full quota)
   structured-data.ts            JSON-LD: breadcrumbs and the site name (WebSite, home page only)

@@ -8,6 +8,8 @@ export default defineConfig({
   testDir: 'e2e',
   testMatch: '*.e2e.ts',
   fullyParallel: true,
+  // On CI, every CPU of the runner (Playwright uses half by default): the tests only read pages.
+  workers: process.env.CI ? '100%' : undefined,
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
   reporter: process.env.CI ? [['github'], ['list']] : 'list',
