@@ -50,7 +50,7 @@ Only what is needed to keep working gets committed. Git history keeps the rest.
 - Hosting: Cloudflare Workers with static assets only, no server code (decided on 2026-10-09; Cloudflare calls Pages "legacy"). Configuration in `wrangler.jsonc`; Workers Builds runs `pnpm build` and `pnpm exec wrangler deploy` on every push to `main`.
 - Repository language: English (decided on 2026-10-09). The site stays bilingual.
 - License: CC BY 4.0 for the course content (`web/src/content/docs/`, `glossary/` and `i18n/`) and MIT for everything else, code and tests included (decided on 2026-10-09; `LICENSE` and `LICENSE-CONTENT`).
-- Style guide for writing lessons: `docs/style-guide.md`. Its eight principles of what readers value ("What readers value", adopted on 2026-10-11) and its "Writing and review checklist" are applied to every lesson twice: when drafting it and when reviewing it.
+- Style guide for writing lessons: `docs/style-guide.md`. Its eight principles of what readers value ("What readers value", adopted on 2026-10-11) and its "Writing and review checklist" are applied to every lesson twice: when drafting it and when reviewing it. Every lesson ends with a 6-question quiz (`<Quiz>`, adopted on 2026-10-12; rules in "Quiz").
 - The next steps, in order, and what the author still has to review or decide: `docs/todo.md`. Keep it up to date.
 
 ## How I want you to work with me
