@@ -39,6 +39,13 @@ describe('parsePage', () => {
     expect(facts.languageLinks).toEqual(['/fase-0/que-es-dns/', '/en/phase-0/what-is-dns/']);
   });
 
+  it('reads a description with «>» inside', () => {
+    const page = parsePage(
+      '<html><head><meta name="description" content="Redirige con > y 2>&1"/></head></html>',
+    );
+    expect(page.description).toBe('Redirige con > y 2>&1');
+  });
+
   it('does not count HTML inside an attribute as a tag (the copy button)', () => {
     expect(facts.h1Count).toBe(1);
   });

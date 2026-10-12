@@ -26,6 +26,12 @@ describe('readingMinutes', () => {
     expect(readingMinutes(body)).toBe(1);
   });
 
+  it('counts the prose after a shell «<» (it is not a tag)', () => {
+    // 300 words with a redirection in the middle: 2 minutes. Read as a tag up to the next «>», 1.
+    const body = `${words(100)} \`sort < ips.txt\` ${words(100)} <kbd>Ctrl</kbd> ${words(97)}`;
+    expect(readingMinutes(body)).toBe(2);
+  });
+
   it('never returns less than 1', () => {
     expect(readingMinutes('')).toBe(1);
   });

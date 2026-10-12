@@ -1,0 +1,570 @@
+---
+translationKey: users-and-permissions
+title: "Usuarios y permisos en Linux: chmod, chown y sudo"
+description: "Usuarios, grupos y permisos en Linux desde cero: cómo leer rwx en ls -l, usar chmod con letras y con números, chown y sudo, y por qué root es peligroso."
+sidebar:
+  label: "Usuarios y permisos"
+  order: 4
+lesson:
+  oneLiner: "En Linux, cada fichero tiene un dueño, un grupo y tres juegos de permisos, rwx: lo que pueden leer, cambiar o ejecutar su dueño, su grupo y todos los demás. root se salta todos los permisos, y por eso se usa lo menos posible."
+  objectives:
+    - Crear tu servidor de prácticas, una máquina virtual con Ubuntu.
+    - Saber quién eres con whoami e id, y leer los permisos que enseña ls -l.
+    - Cambiar permisos con chmod, con letras y con números, y el dueño de un fichero con chown.
+    - Usar sudo sabiendo lo que hace, y explicar por qué cada servidor corre con su propio usuario y no como root.
+  prerequisites: [pipes-and-redirection]
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Imagina que la tienda online de una amiga tiene un fallo en el formulario donde los clientes suben su foto. Alguien lo descubre y consigue que el servidor ejecute órdenes suyas. ¿Qué puede hacer a partir de ahí? Depende de una sola cosa: con qué usuario corre el programa del servidor.
+
+Si corre como el administrador, el atacante puede hacerlo todo: leer las contraseñas, copiar la base de datos, borrarla e instalar lo que quiera. Si corre con un usuario propio que solo puede tocar su carpeta, el daño se queda en esa carpeta.
+
+En tu día a día lo verás de otra forma: un `Permission denied` («permiso denegado») cuando intentas leer un fichero o arrancar un programa. La tentación es arreglarlo con `sudo` o con `chmod 777`, y así se abren justo los agujeros del primer párrafo. Aquí aprenderás a leer los permisos y a darlos con cuidado, en tu propio servidor de prácticas.
+
+## La analogía
+
+<Analogy>
+
+Imagina un edificio de oficinas. Cada persona tiene una tarjeta con su nombre, y la tarjeta dice también a qué departamentos pertenece. Cada despacho tiene en la puerta un cartel con tres líneas: qué pueden hacer su dueño, su departamento y cualquier otro: leer los papeles, cambiarlos o usar lo que hay dentro. Para llegar a un despacho, pasas por pasillos con puertas, y cada puerta tiene su propio cartel.
+
+El conserje tiene una llave maestra que abre todo. Si necesitas algo que tu tarjeta no abre, se la pides para una sola cosa, y él apunta en un libro quién la pidió y para qué.
+
+La empresa de limpieza tiene su propia tarjeta, que solo abre las salas que limpia. Si alguien se la roba, no entra en la caja fuerte.
+
+En Linux, las tarjetas son los usuarios; los departamentos, los grupos; los carteles, los permisos, y el conserje, root.
+
+<div slot="limits">
+
+- El cartel solo tiene tres líneas: el dueño, un grupo y todos los demás. No puedes escribir «Luis sí, Marta no».
+- Tu tarjeta viaja con lo que haces. Cada programa que arrancas lleva una copia, y puede hacer todo lo que tú puedes. En un edificio, el mensajero al que mandas un recado no lleva tu tarjeta.
+- La llave maestra no solo abre puertas: root puede cambiar los carteles, hacer tarjetas nuevas o tirar el edificio, y nadie le pregunta «¿seguro?».
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+Los ejemplos de esta sección son de un servidor Ubuntu como el que crearás en «Pruébalo». Si quieres probarlos mientras lees, [créalo primero](#primero-tu-servidor-de-prácticas).
+
+### Cada persona y cada programa es un usuario
+
+En Linux, todo lo que pasa lo hace un <Term id="user">usuario</Term>: cada <Term id="process">proceso</Term> corre en nombre de uno, y cada fichero tiene uno como dueño. Dos comandos te dicen quién eres:
+
+```text
+$ whoami
+ubuntu
+$ id
+uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu),4(adm),20(dialout),24(cdrom),25(floppy),27(sudo),29(audio),30(dip),44(video),46(plugdev)
+```
+
+`whoami` («¿quién soy?») da tu nombre. `id` da más detalles:
+
+- **`uid=1000(ubuntu)`:** tu número de usuario. Para el sistema, un usuario es un número; el nombre es para las personas.
+- **`gid=1000(ubuntu)`:** tu grupo principal. En Ubuntu, cada usuario tiene uno con su mismo nombre.
+- **`groups=…`:** todos tus <Term id="group">grupos</Term>. Un grupo reúne usuarios para darles permisos a la vez. El que importa aquí es `sudo`: quien está en él puede actuar como administrador.
+
+La lista de usuarios está en un fichero de texto, `/etc/passwd`. Cada línea es uno, con sus datos separados por `:`:
+
+```text
+$ grep www-data /etc/passwd
+www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin
+```
+
+Son el nombre, una `x` (la contraseña se guarda en otro fichero, `/etc/shadow`), el número de usuario, el de grupo, una descripción, la carpeta personal y la <Term id="shell">shell</Term>. `www-data` no es una persona: es el usuario de los servidores web, y su shell, `nologin`, no deja entrar a nadie con él.
+
+### Las diez letras de `ls -l`
+
+En la [lección 1](/fase-1/comandos-basicos-terminal/) viste letras como `drwxr-xr-x` al principio de `ls -l`. Son los <Term id="permissions">permisos</Term>. Esta es la carpeta personal de `ubuntu`, con un fichero y una carpeta:
+
+```text
+$ ls -l
+total 8
+-rw-rw-r-- 1 ubuntu ubuntu    5 Oct 12 12:47 notas.txt
+drwxrwxr-x 2 ubuntu ubuntu 4096 Oct 12 12:47 proyecto
+```
+
+Las diez letras se leen así, con `notas.txt`:
+
+| `-` | `rw-` | `rw-` | `r--` |
+|---|---|---|---|
+| Tipo: `-` es un fichero; `d`, una carpeta (*directory*) | El dueño (*user*, `u`) | El grupo (`g`) | Los demás (*others*, `o`) |
+
+Detrás vienen el dueño (`ubuntu`) y el grupo (`ubuntu`). Cada grupo de tres letras dice lo mismo, siempre en el mismo orden:
+
+- **`r`** (*read*): leer.
+- **`w`** (*write*): escribir, es decir, cambiar.
+- **`x`** (*execute*): ejecutar, si es un programa.
+
+Un guion significa «no». Así que `notas.txt` lo pueden leer y cambiar su dueño y su grupo, y los demás solo leerlo.
+
+### Qué significan r, w y x en una carpeta
+
+En una carpeta, las mismas letras significan otra cosa:
+
+| Letra | En un fichero | En una carpeta |
+|---|---|---|
+| `r` | Leer su contenido | Ver la lista de lo que hay dentro (`ls`) |
+| `w` | Cambiar su contenido | Crear, renombrar y borrar ficheros dentro |
+| `x` | Ejecutarlo como programa | Entrar (`cd`) y llegar a lo que hay dentro |
+
+La `x` de las carpetas es la puerta del pasillo: **sin ella no llegas a ningún fichero de dentro**, aunque el fichero te deje leerlo. Y la `w` de la carpeta, no la del fichero, es la que decide si puedes borrarlo.
+
+### Cómo decide Linux si puedes
+
+Cuando un programa abre un fichero, el sistema pregunta, en orden:
+
+1. ¿Eres root? Puedes casi todo; los permisos no cuentan.
+2. ¿Eres el dueño? Se usan las tres primeras letras, y nada más.
+3. ¿Estás en el grupo del fichero? Se usan las tres del medio.
+4. Si no, las tres últimas.
+
+Mira `/etc/shadow`, el fichero de las contraseñas:
+
+```text
+$ ls -l /etc/passwd /etc/shadow
+-rw-r--r-- 1 root root   888 Sep 17 02:17 /etc/passwd
+-rw-r----- 1 root shadow 502 Sep 17 02:17 /etc/shadow
+$ cat /etc/shadow
+cat: /etc/shadow: Permission denied
+```
+
+`ubuntu` no es el dueño (`root`) ni está en el grupo `shadow`, así que le tocan las tres últimas letras: `---`. `/etc/passwd`, en cambio, termina en `r--`: lo lee cualquiera.
+
+### Cambiar permisos con `chmod`: letras o números
+
+Imagina que te descargas un script, `saluda.sh`: un fichero con órdenes para la shell (los escribirás en la [lección 8](/fase-1/scripts-de-bash/)). Lo intentas ejecutar:
+
+```text
+$ ./saluda.sh
+-bash: ./saluda.sh: Permission denied
+$ ls -l saluda.sh
+-rw-rw-r-- 1 ubuntu ubuntu 42 Oct 12 12:48 saluda.sh
+$ chmod u+x saluda.sh
+$ ls -l saluda.sh
+-rwxrw-r-- 1 ubuntu ubuntu 42 Oct 12 12:48 saluda.sh
+$ ./saluda.sh
+Hola desde curso
+```
+
+Sin `x`, no se podía ejecutar. `chmod` (*change mode*, «cambiar el modo») cambia los permisos, y `u+x` significa «al dueño, añádele la `x`». Solo el dueño de un fichero, o root, puede cambiarlos.
+
+**Con letras** se dice a quién, qué operación y qué permiso:
+
+- A quién: `u` (el dueño), `g` (el grupo), `o` (los demás) o `a` (todos).
+- La operación: `+` añade, `-` quita y `=` deja exactamente esos.
+- Ejemplos: `chmod o-r notas.txt` quita la lectura a los demás; `chmod go= secreto.txt` se lo quita todo al grupo y a los demás.
+
+**Con números**, cada permiso vale una cantidad: `r` = 4, `w` = 2 y `x` = 1. Se suman los de cada grupo de tres, y salen tres cifras: el dueño, el grupo y los demás. `rw-` es 4 + 2 = 6, y `r-x` es 4 + 1 = 5:
+
+```text
+$ chmod 600 notas.txt
+$ ls -l notas.txt
+-rw------- 1 ubuntu ubuntu 5 Oct 12 12:47 notas.txt
+$ chmod 755 saluda.sh
+$ ls -l saluda.sh
+-rwxr-xr-x 1 ubuntu ubuntu 42 Oct 12 12:48 saluda.sh
+```
+
+Con números fijas los nueve permisos; con letras, solo los que nombras. Estos son los más comunes:
+
+| Número | Letras | Para qué |
+|---|---|---|
+| `644` | `rw-r--r--` | Un fichero normal: tú lo cambias, todos lo leen |
+| `600` | `rw-------` | Un secreto, como una contraseña o una clave: solo tú |
+| `755` | `rwxr-xr-x` | Un programa o una carpeta: todos entran o lo ejecutan, solo tú cambias |
+| `700` | `rwx------` | Una carpeta privada: solo tú entras |
+| `777` | `rwxrwxrwx` | Todos pueden todo. Casi nunca es buena idea |
+
+### Cambiar el dueño con `chown`
+
+`chown` (*change owner*, «cambiar el dueño») le da un fichero a otro usuario. Imagina que la web de la tienda, que corre como `www-data`, tiene que guardar fotos en la carpeta `subidas`:
+
+```text
+$ chown www-data subidas
+chown: changing ownership of 'subidas': Operation not permitted
+$ sudo chown www-data subidas
+$ ls -ld subidas
+drwxrwxr-x 2 www-data ubuntu 4096 Oct 12 12:48 subidas
+```
+
+Regalar ficheros solo lo puede hacer root; si no, cualquiera podría dejar los suyos a nombre de otro. Por eso hace falta `sudo`, que verás ahora. Para cambiar también el grupo: `sudo chown www-data:www-data subidas`. (`-d` hace que `ls` enseñe la carpeta y no lo que hay dentro.)
+
+### root, `sudo` y el mínimo privilegio
+
+<Term id="root">root</Term> es el administrador de Linux: el usuario número 0, el conserje de la analogía. Los permisos no le afectan: puede hacerlo todo, también equivocarse sin freno.
+
+Por eso no se trabaja como root. Se trabaja con un usuario normal, y cuando hace falta algo de administrador, se pide para una sola orden con <Term id="sudo">sudo</Term> (de *superuser do*, «hazlo como superusuario»):
+
+```text
+$ whoami
+ubuntu
+$ sudo whoami
+root
+$ sudo head -1 /etc/shadow
+root:*:20713:0:99999:7:::
+```
+
+`sudo` ejecuta como root la orden que va detrás, y solo esa. En Ubuntu, pueden usarlo los usuarios del grupo `sudo`. Normalmente pide tu contraseña, y apunta cada uso en un registro: el libro del conserje.
+
+Detrás de todo esto hay una regla, el <Term id="least-privilege">mínimo privilegio</Term>: **cada usuario y cada programa tiene solo los permisos que necesita, y ninguno más**. Si un día algo falla o alguien entra donde no debe, el daño se queda en lo poco que ese usuario podía tocar.
+
+### Por qué cada servidor tiene su propio usuario
+
+Por esa regla, cada programa de un servidor tiene su usuario: `www-data` para el servidor web, `postgres` para la base de datos (Fase 5). Así, si alguien engaña al servidor web, como en «El problema», no puede leer los ficheros de la base de datos.
+
+Pero hay un detalle. En la [Fase 0](/fase-0/ip-puertos-y-sockets/) viste que la web usa el <Term id="port">puerto</Term> 80. En Linux, **los puertos del 0 al 1023 solo los puede abrir root**:
+
+```text
+$ nc -l 80
+nc: Permission denied
+```
+
+Con el 8080 no habría problema. Los servidores web lo resuelven en dos pasos: arrancan como root, abren el puerto 80 y pasan el trabajo a procesos que corren con su propio usuario. Así se ve nginx, el servidor web que instalarás en la [lección 6](/fase-1/servicios-systemd-apt/):
+
+```text
+$ ps -o user,pid,cmd -C nginx
+USER         PID CMD
+root        2887 nginx: master process /usr/sbin/nginx -g daemon on; master_process on;
+www-data    2888 nginx: worker process
+```
+
+El proceso de root solo vigila; el que atiende las peticiones es el de `www-data`. En la Fase 8 harás algo parecido con tu propio programa: escuchará en el 3000 con su propio usuario, y nginx, en el 80, le pasará las peticiones.
+
+## Pruébalo
+
+El objetivo: crear un compañero, Luis, en tu servidor de prácticas, y averiguar qué puedes ver de lo suyo y qué no. Primero, el servidor.
+
+### Primero, tu servidor de prácticas
+
+Tu servidor de prácticas es una <Term id="virtual-machine">máquina virtual</Term>: un ordenador simulado dentro del tuyo. Lo que rompas ahí no toca tu ordenador. La crearás con Multipass, de Canonical, la empresa que hace Ubuntu; la primera vez tarda unos minutos, porque descarga Ubuntu.
+
+Instalar Multipass es lo único del curso que pide permisos de administrador en tu ordenador.
+
+<Tabs syncKey="os">
+<TabItem label="macOS">
+
+Con [Homebrew](https://brew.sh/), un programa para instalar programas desde la terminal:
+
+```sh
+brew install --cask multipass
+```
+
+Te pedirá la contraseña de tu Mac. Si no tienes Homebrew, descarga el instalador de [la web de Multipass](https://canonical.com/multipass/install).
+
+</TabItem>
+<TabItem label="Linux">
+
+```sh
+sudo snap install multipass
+```
+
+`sudo` te pedirá tu contraseña: verás qué hace en esta misma lección.
+
+</TabItem>
+<TabItem label="Windows">
+
+No instales nada: tu Ubuntu de WSL es tu servidor de prácticas. Ábrelo desde el menú Inicio y salta al ejercicio 3. `sudo` te pedirá la contraseña que elegiste al instalar WSL.
+
+</TabItem>
+</Tabs>
+
+<TryIt title="1. Crea la máquina virtual" cmd="multipass launch 24.04 --name curso" output="Launched: curso">
+
+`launch` crea y arranca una máquina con Ubuntu 24.04 (para que veas lo mismo que en esta lección) y la llama `curso`. Antes de terminar, verás mensajes de progreso. Si falla, la [documentación de Multipass](https://canonical.com/multipass/docs) explica los problemas más comunes.
+
+</TryIt>
+
+<TryIt title="2. Entra en ella" cmd="multipass shell curso">
+
+Verás un mensaje de bienvenida de Ubuntu y un prompt nuevo: `ubuntu@curso:~$`. Ahora eres el usuario `ubuntu` en la máquina `curso`, y todo lo que sigue se escribe ahí.
+
+`exit` te devuelve a tu ordenador, con la máquina aún encendida. `multipass stop curso` la apaga, y `multipass shell curso` te lleva de vuelta (y la enciende si hace falta). La usarás también en las lecciones [6](/fase-1/servicios-systemd-apt/) y [9](/fase-1/que-es-ssh/).
+
+</TryIt>
+
+### Luis y sus ficheros
+
+<TryIt title="3. ¿Quién eres aquí?" cmd={`whoami\nid\nsudo whoami`} output={`ubuntu
+uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu),4(adm),20(dialout),24(cdrom),25(floppy),27(sudo),29(audio),30(dip),44(video),46(plugdev)
+root`}>
+
+Fíjate en el `27(sudo)`: por eso funciona la tercera orden. En la máquina virtual, `sudo` no pide contraseña, porque Multipass la configura así; en WSL y en muchos servidores, sí. Tu lista de grupos puede ser distinta: lo que importa es que esté `sudo`. En WSL verás tu usuario en lugar de `ubuntu`.
+
+</TryIt>
+
+<TryIt title="4. Crea a Luis" cmd={`sudo useradd -m -s /bin/bash luis\nid luis\nls -l /home`} output={`uid=1001(luis) gid=1001(luis) groups=1001(luis)
+total 8
+drwxr-x--- 2 luis   luis   4096 Oct 12 12:49 luis
+drwxr-x--- 2 ubuntu ubuntu 4096 Oct 12 12:49 ubuntu`}>
+
+Crear usuarios es cosa de root, así que va con `sudo`. `useradd` crea a `luis`, sin escribir nada; `-m` le crea su carpeta, `/home/luis`, y `-s /bin/bash` le da bash como shell.
+
+`luis` tiene el número 1001 y un grupo propio, sin `sudo`. Fíjate en su carpeta: `drwxr-x---`, sin nada para los demás. Tus fechas serán otras, y en WSL la otra carpeta será la tuya.
+
+Si sale `useradd: user 'luis' already exists`, ya lo creaste antes: sigue con el paso siguiente.
+
+</TryIt>
+
+<TryIt title="5. Conviértete en Luis" cmd="sudo -iu luis">
+
+`sudo -u luis` ejecuta una orden como `luis` en lugar de como root, y `-i` abre una sesión entera, como si entraras con su usuario. No escribe nada, pero el prompt cambia a `luis@curso:~$`.
+
+</TryIt>
+
+<TryIt title="6. Luis guarda dos ficheros" cmd={`echo "Lanzamos la tienda el lunes" > plan.txt\necho "Hoy he roto la web sin querer" > diario.txt\nls -l`} output={`total 8
+-rw-rw-r-- 1 luis luis 30 Oct 12 12:49 diario.txt
+-rw-rw-r-- 1 luis luis 28 Oct 12 12:49 plan.txt`}>
+
+`>` guarda lo que escribe `echo` en un fichero, como en la [lección 3](/fase-1/pipes-y-redirecciones/). Los dos ficheros terminan en `r--`: los demás pueden leerlos. ¿Podrás tú? Escribe `exit` para volver a ser `ubuntu`.
+
+</TryIt>
+
+<TryIt title="7. Intenta leer el plan de Luis" cmd={`ls /home/luis\ncat /home/luis/plan.txt`} output={`ls: cannot open directory '/home/luis': Permission denied
+cat: /home/luis/plan.txt: Permission denied`}>
+
+Los dos fallan, aunque `plan.txt` deja leer a los demás: el problema es la carpeta. `/home/luis` es `drwxr-x---`, sin `r` (ver la lista) ni `x` (llegar a lo de dentro) para los demás. La puerta del pasillo está cerrada.
+
+Si `cat` te enseña el plan, comprueba con `whoami` que has vuelto a ser `ubuntu`.
+
+</TryIt>
+
+<TryIt title="8. Ahora, con sudo" cmd="sudo cat /home/luis/plan.txt" output="Lanzamos la tienda el lunes">
+
+Funciona: root no mira los permisos. Por eso `sudo` es tan útil y tan peligroso: quien lo tiene puede leer lo de todos.
+
+</TryIt>
+
+Ahora, el reto. Luis quiere que leas `plan.txt` sin `sudo`. Pero no quiere que leas su diario, ni que veas qué más tiene en su carpeta.
+
+<SelfCheck question="Reto: ¿qué dos chmod tiene que hacer Luis? Hazlos como luis y compruébalo como ubuntu.">
+
+Como `luis` (`sudo -iu luis`):
+
+```sh
+chmod o+x ~
+chmod 600 diario.txt
+exit
+```
+
+Su carpeta queda en `drwxr-x--x`, y el diario, en `-rw-------`. Ya como `ubuntu`:
+
+```text
+$ cat /home/luis/plan.txt
+Lanzamos la tienda el lunes
+$ cat /home/luis/diario.txt
+cat: /home/luis/diario.txt: Permission denied
+$ ls /home/luis
+ls: cannot open directory '/home/luis': Permission denied
+```
+
+La `x` en la carpeta te deja llegar a un fichero si sabes su nombre, y `plan.txt` te deja leerlo. Sin la `r`, no puedes ver la lista. Y el diario, con `600`, solo lo lee Luis.
+
+</SelfCheck>
+
+Para terminar, borra a Luis y su carpeta:
+
+<TryIt title="9. Recoge" cmd="sudo userdel -r luis" output="userdel: luis mail spool (/var/mail/luis) not found">
+
+`userdel` borra el usuario, y `-r`, su carpeta. El aviso dice que Luis no tenía buzón de correo: no pasa nada. Comprueba con `ls -l /home` que solo queda `ubuntu`.
+
+</TryIt>
+
+## Ya lo has visto
+
+- **En tu Mac.** El `ana staff` de `ls -l` en la [lección 1](/fase-1/comandos-basicos-terminal/) son tu usuario y tu grupo. En el Finder, «Obtener información» (<kbd>Cmd</kbd> + <kbd>I</kbd>) termina con «Compartir y permisos»: las mismas tres líneas, para ti, `staff` y todos los demás.
+- **Cuando instalas algo.** El Mac y Windows te piden la contraseña de administrador. Es la idea de `sudo`: trabajas como usuario normal y pides permiso solo para tocar el sistema.
+- **En el móvil.** Cada app pide permiso para la cámara o la ubicación, y solo tiene lo que le das: mínimo privilegio.
+
+Y si programas:
+
+- `npm install -g` responde a veces `EACCES: permission denied`: quiere escribir en una carpeta de root. `sudo` lo «arregla» y deja ficheros de root en tu ordenador; un gestor de versiones como nvm instala Node en tu carpeta y lo evita.
+- Git guarda la `x` de cada fichero. Tras un `chmod +x`, `git diff` enseña `old mode 100644` y `new mode 100755`: los permisos en números, tras un `100` que significa «fichero normal».
+
+## Errores comunes
+
+- **`chmod 777` para quitarse de encima un `Permission denied`.** Funciona, y deja que cualquiera cambie el fichero, también un atacante que entre con el usuario de la web. Mira quién es el dueño y quién lo necesita, y da solo eso.
+- **`sudo` para todo.** Lo que creas con `sudo` es de root, y después no puedes cambiarlo sin `sudo`. Úsalo solo en la orden que lo necesita.
+- **`sudo` con `>`.** `sudo echo "hola" > /etc/saludo.txt` responde `-bash: /etc/saludo.txt: Permission denied`. La redirección la hace tu shell, que no es root, antes de arrancar `sudo` (lo viste en la [lección 3](/fase-1/pipes-y-redirecciones/)). Usa `echo "hola" | sudo tee /etc/saludo.txt`: `tee` copia lo que le llega en un fichero, y aquí lo hace como root.
+- **Una carpeta sin `x`.** `chmod -R 644` (`-R` lo aplica a todo lo de dentro) les quita la `x` a las carpetas, y ya nadie puede entrar en ellas.
+- **En WSL, trabajar en `/mnt/c`.** Son las carpetas de Windows, y ahí los permisos de Linux no funcionan igual: todo sale `rwxrwxrwx` y `chmod` puede no cambiar nada. Practica en `~`.
+
+## Resumen
+
+- Cada fichero tiene un dueño, un grupo y tres grupos de permisos: el dueño (`u`), el grupo (`g`) y los demás (`o`). `ls -l` los enseña al principio de cada línea.
+- `r` es leer, `w` cambiar y `x` ejecutar. En una carpeta, `x` es poder entrar y llegar a lo de dentro.
+- `chmod` cambia los permisos con letras (`u+x`) o con números (`r` = 4, `w` = 2, `x` = 1: `644`, `600`, `755`). `chown` cambia el dueño, y solo root puede hacerlo.
+- root se salta los permisos. Se trabaja con un usuario normal y se usa `sudo` para una sola orden.
+- Mínimo privilegio: cada programa corre con su propio usuario y solo los permisos que necesita. Los servidores web solo usan root para abrir el puerto 80.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Eres ubuntu, del grupo sudo pero no del grupo www-data. ls -l enseña: -rw-r----- 1 www-data www-data 1200 Oct 12 10:00 config.php. ¿Qué puedes hacer con ese fichero sin escribir sudo?"
+  review="Cómo decide Linux si puedes"
+>
+
+<QuizOption text="Leerlo, porque los demás tienen permiso de lectura.">
+
+Los demás no tienen nada: las tres últimas letras son `---`. La `r` es la del grupo.
+
+</QuizOption>
+
+<QuizOption text="Nada: ni leerlo ni cambiarlo." correct>
+
+No eres el dueño ni estás en el grupo, así que te tocan las tres últimas letras, `---`. Ni lees ni escribes.
+
+</QuizOption>
+
+<QuizOption text="Leerlo y cambiarlo: estar en el grupo sudo te salta los permisos.">
+
+El grupo `sudo` te deja usar `sudo`, y solo cuenta cuando lo escribes. Sin él, eres un usuario más, y te tocan las tres últimas letras: `---`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La carpeta de Marta tiene drwxr-x--x, y dentro está informe.txt con -rw-r--r--. Tú no eres Marta ni estás en su grupo. ¿Qué pasa con ls /home/marta y con cat /home/marta/informe.txt?"
+  review="Qué significan r, w y x en una carpeta"
+>
+
+<QuizOption text="Los dos fallan: sin la r de la carpeta no llegas a nada de dentro.">
+
+La `r` de una carpeta solo sirve para ver la lista. Para llegar a un fichero que conoces basta la `x`, y la tienes.
+
+</QuizOption>
+
+<QuizOption text="Los dos funcionan: la x de la carpeta te deja hacer de todo dentro.">
+
+La `x` te deja llegar a los ficheros, pero no ver la lista: para eso hace falta la `r`.
+
+</QuizOption>
+
+<QuizOption text="ls falla, pero cat funciona." correct>
+
+Sin `r` no puedes ver la lista de la carpeta, pero con su `x` llegas a `informe.txt` si sabes su nombre. Y el fichero deja leer a los demás.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Guardas en el servidor un fichero con la contraseña de la base de datos. Solo tiene que leerlo tu programa, que corre con tu usuario. ¿Qué permisos le das?"
+  review="Cambiar permisos con chmod: letras o números"
+>
+
+<QuizOption text="chmod 600: tú lees y escribes; los demás, nada." correct>
+
+`6` es `rw-` para ti, y los dos `0`, nada para el grupo ni para los demás. Es lo que se usa con los secretos.
+
+</QuizOption>
+
+<QuizOption text="chmod 644: con eso ya es privado.">
+
+`644` deja que cualquiera lo lea (`r--` para el grupo y los demás): todos podrían ver la contraseña.
+
+</QuizOption>
+
+<QuizOption text="chmod 066: el primer número es el de los demás usuarios.">
+
+Es al revés: la primera cifra es la del dueño. `066` te deja sin permisos a ti y da lectura y escritura a todos los demás.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Tu servidor web tiene que escuchar en el puerto 80, pero al arrancarlo con su usuario responde Permission denied. ¿Qué haces?"
+  review="Por qué cada servidor tiene su propio usuario"
+>
+
+<QuizOption text="Lo arrancas con sudo, porque no hay otra forma de usar el 80.">
+
+La hay, y es mejor: si tu programa corre como root, un fallo en él le da todo el servidor a quien lo aproveche.
+
+</QuizOption>
+
+<QuizOption text="Le das chmod 777 a tu programa para que pueda abrir cualquier puerto.">
+
+Los permisos del fichero no deciden qué puertos abre el programa: eso depende del usuario con el que corre. Y `777` deja que cualquiera lo cambie.
+
+</QuizOption>
+
+<QuizOption text="Lo dejas en el 8080 y pones nginx delante, en el 80." correct>
+
+nginx abre el 80 como root y atiende con `www-data`. Tu programa sigue con su usuario, en un puerto que no necesita root.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Escribes sudo echo '127.0.0.1 tienda.local' >> /etc/hosts y responde Permission denied. ¿Por qué, si has usado sudo?"
+  review="Errores comunes"
+>
+
+<QuizOption text="Porque /etc/hosts no se puede cambiar ni siquiera con sudo.">
+
+Con `sudo` sí se puede: root se salta los permisos. El problema es quién abre el fichero, y no es root.
+
+</QuizOption>
+
+<QuizOption text="Porque la redirección >> la hace tu shell, que no es root." correct>
+
+Tu shell abre `/etc/hosts` antes de arrancar `sudo`, y lo hace con tu usuario. `sudo` solo afecta a `echo`. Con `| sudo tee -a /etc/hosts` sí funciona: `-a` añade al final, como `>>`.
+
+</QuizOption>
+
+<QuizOption text="Porque sudo no funciona con echo, solo con comandos de administración.">
+
+`sudo` ejecuta cualquier orden como root, también `echo`. Lo que falla es la redirección, que no forma parte de la orden de `sudo`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="El programa de la tienda corre con su propio usuario, tienda, y tiene que guardar sus registros en /var/log/tienda, una carpeta de root con drwxr-xr-x. ¿Cuál es el buen arreglo?"
+  review="Cambiar el dueño con chown"
+>
+
+<QuizOption text="Darle la carpeta al usuario tienda con chown." correct>
+
+Con `sudo chown tienda /var/log/tienda`, el programa puede escribir ahí y en ningún otro sitio de root. Es el mínimo privilegio.
+
+</QuizOption>
+
+<QuizOption text="chmod 777 /var/log/tienda: dar permisos de más no es ningún riesgo.">
+
+Sí lo es: con `777`, cualquier usuario del servidor puede borrar o cambiar los registros, también un atacante que entre por otro programa.
+
+</QuizOption>
+
+<QuizOption text="Arrancar el programa como root, que no es más arriesgado que con su usuario.">
+
+Es mucho más arriesgado: como root, un fallo en el programa le da todo el servidor a quien lo aproveche.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [The Linux Command Line](https://linuxcommand.org/tlcl.php), de William Shotts, en inglés: el capítulo 9, «Permissions», cuenta lo mismo con más detalle, incluido `umask`.
+- [File permissions and attributes](https://wiki.archlinux.org/title/File_permissions_and_attributes) en la wiki de Arch Linux, en inglés: una referencia completa, con los permisos especiales que esta lección no cuenta.

@@ -41,7 +41,7 @@ Only what is needed to keep working gets committed. Git history keeps the rest.
 - Visual design ("code editor" theme, dark and light): `docs/specs/2026-10-02-ide-theme-design.md`.
 - Editor layout (design C: outline in the explorer, minimap, a discreet status bar and VS Code-like scrollbars; since 2026-10-11 without tabs or breadcrumbs, a theme button, «ES · EN» links and smaller headings; since 2026-10-12 the side panel can be hidden and the explorer only has folders, the phases and `recursos/`): `docs/specs/2026-10-03-editor-layout-design.md`.
 - `tcp-handshake` lab (the first React playground, the pattern for the next ones): `docs/specs/2026-10-03-tcp-lab-design.md`.
-- Phase 1 design (approved on 2026-10-07; it starts with a pilot lesson): `docs/specs/2026-10-03-phase-1-design.md`.
+- Phase 1 design (approved on 2026-10-07; completed in Spanish on 2026-10-12): `docs/specs/2026-10-03-phase-1-design.md`.
 - Name and domain: «Backend desde cero» / "Backend from Scratch", on `backenddesdecero.com`, a single domain for both languages (decided on 2026-10-03; analysis in `docs/research/2026-10-03-languages-and-names.md`). Spanish is the main language and domain.
 - Technical names in English: GitHub organisation `backendfromscratch`, repository and package `backend-from-scratch` (decided on 2026-10-08). The site's public name follows each reader's language.
 - Audience: everyone. No lesson assumes any programming knowledge (decided on 2026-10-03; consequences in `docs/specs/2026-10-03-seo-design.md`, §2.3).

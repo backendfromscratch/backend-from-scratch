@@ -10,7 +10,8 @@ export function readingMinutes(body: string): number {
     .replace(/```[\s\S]*?```/g, '')
     // Props with a template literal (terminal output) before the tags: they may contain «>».
     .replace(/\{`[\s\S]*?`\}/g, ' ')
-    .replace(/<[^>]+>/g, ' ');
+    // A tag starts with a letter or «/»: a shell «<» in the prose (`pbcopy < clave.pub`) is not one.
+    .replace(/<\/?[A-Za-z][^>]*>/g, ' ');
   const words = prose.split(/\s+/).filter((word) => word && !TABLE_SYNTAX.test(word)).length;
   return Math.max(1, Math.round(words / WORDS_PER_MINUTE));
 }

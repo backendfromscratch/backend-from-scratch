@@ -45,7 +45,9 @@ function attributes(tag: string): Record<string, string> {
 }
 
 function tags(html: string, name: string): Record<string, string>[] {
-  return [...html.matchAll(new RegExp(`<${name}\\b[^>]*>`, 'gi'))].map(([tag]) => attributes(tag));
+  // A quoted value may contain «>» («Pipes: |, > y 2>&1»): it does not close the tag.
+  const tag = new RegExp(`<${name}\\b(?:"[^"]*"|'[^']*'|[^>"'])*>`, 'gi');
+  return [...html.matchAll(tag)].map(([found]) => attributes(found));
 }
 
 function readJson(raw: string): unknown {
