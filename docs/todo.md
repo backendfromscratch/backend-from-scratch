@@ -61,7 +61,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
   - in English, the same outputs with the VM `course`; lesson 9's host key fingerprint of the VM (`YT3Bmap…`) also comes from Docker.
 - [ ] **On Windows, someday:** the WSL parts of Phase 1 (lesson 6's `/etc/wsl.conf` with `systemd=true`, lesson 7's Windows folders in `PATH`, lesson 5's `lsof`), together with the lesson 1 items in "Content review".
 - [x] **Claude:** translate Phase 1 into English (2026-10-12), with its outputs re-run in English (`~/backend-course/phase-1`, the VM `course`, `repo-shop.sh`).
-- [ ] **Claude, after deploying:** re-run `curl -O https://backenddesdecero.com/practicas/repo-shop.sh` for the output of lesson 10 in English (it was taken from a local server, so its speeds are too high).
+- [x] **Claude, after deploying:** re-run `curl -O https://backenddesdecero.com/practicas/repo-shop.sh` for the output of lesson 10 in English (done on 2026-10-12, from the live site).
 
 ### 5. No rush: nothing depends on it
 
