@@ -44,20 +44,32 @@ const known = [
   },
 ];
 
-/** Fails with each violation and the elements it affects, readable in the CI log. */
-export async function expectAccessible(page: Page, include?: string): Promise<void> {
+/**
+ * Fails with each violation and the elements it affects, readable in the CI log. With
+ * `contrastOnly`, only the colour rules run: the rest do not change with the theme.
+ */
+export async function expectAccessible(
+  page: Page,
+  include?: string,
+  { contrastOnly = false } = {},
+): Promise<void> {
   // A fade-in halfway through would be measured as low contrast: wait for the ones that end.
   await page.waitForFunction(() =>
     document
       .getAnimations()
       .every((a) => a.playState !== 'running' || a.effect?.getTiming().iterations === Infinity),
   );
-  let axe = new AxeBuilder({ page }).options({
-    runOnly: { type: 'tag', values: tags },
-    // Experimental in axe, so off by default: WCAG 2.5.3, the visible text is part of the accessible
-    // name. It matters here because of the links that show a file name (style guide, "File names").
-    rules: { 'label-content-name-mismatch': { enabled: true } },
-  });
+  let axe = new AxeBuilder({ page }).options(
+    contrastOnly
+      ? { runOnly: { type: 'rule', values: ['color-contrast'] } }
+      : {
+          runOnly: { type: 'tag', values: tags },
+          // Experimental in axe, so off by default: WCAG 2.5.3, the visible text is part of the
+          // accessible name. It matters here because of the links that show a file name (style
+          // guide, "File names").
+          rules: { 'label-content-name-mismatch': { enabled: true } },
+        },
+  );
   if (include) axe = axe.include(include);
   const { violations: found } = await axe.analyze();
   const violations = found
