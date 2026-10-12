@@ -66,7 +66,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 ### 5. Phase 2, «HTTP a fondo»
 
 - [x] **You:** review the design, `docs/specs/2026-10-12-phase-2-design.md` (approved on 2026-10-12, with the four proposals of its §9: no pilot, the English after, the CORS lab and no screenshots).
-- [ ] **Claude:** the practice material (spec §5): the CORS files in `_headers` and the shop's nginx configuration, checked in Docker, with their tests.
+- [x] **Claude:** the practice material (spec §5, 2026-10-12): `cors-on.json` and `cors-off.json` with their rule in `_headers`, and the shop's nginx configuration (`tienda-http.conf`, `shop-http.conf`), checked in Docker, with their tests.
 - [ ] **Claude:** the eight lessons in Spanish, each written with its commands run for real and reviewed independently; and the CORS lab, with its own spec.
 - [ ] **You:** read the Spanish lessons. Then Claude translates them into English, with the outputs run again.
 - [ ] **Claude, before each review of the phase:** repeat the outputs taken from backenddesdecero.com (spec §5.1): Cloudflare can change them.
