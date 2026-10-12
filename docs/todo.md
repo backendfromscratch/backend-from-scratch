@@ -51,15 +51,17 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 ### 4. Continue with Phase 1, lesson by lesson
 
 - [x] **Claude:** before lesson 2, the script that generates the practice `access.log` (`web/public/practicas/access.log`). Done on 2026-10-11: what it contains is in the Phase 1 spec, §5.
-- [x] **Claude:** lessons 2 to 10 (2026-10-12, at the author's request, while they were away): each written by one agent with its commands run for real (macOS and Ubuntu 24.04 in Docker, systemd included) and reviewed by another, independent one. The English version of the `bisect` repository needs its own script.
+- [x] **Claude:** lessons 2 to 10 (2026-10-12, at the author's request, while they were away): each written by one agent with its commands run for real (macOS and Ubuntu 24.04 in Docker, systemd included) and reviewed by another, independent one. The English practice repository for `bisect` is `repo-shop.sh` (Phase 1 spec, §5).
 - [ ] **You:** read Phase 1 in your own voice, lesson by lesson, and add the «Nota del autor» where something was hard for you (principle 8). Then check on your Mac what could not be run here (next item).
 - [ ] **You, on your Mac with Multipass** (it could not be installed here without your password; the VM outputs come from Docker):
   - lesson 4: `multipass launch 24.04 --name curso` ends with `Launched: curso`; `sudo` asks no password for `ubuntu`; the group list of `id` (Docker gives `adm dialout cdrom floppy sudo audio dip video plugdev`; a real VM probably `adm cdrom sudo dip lxd`), in two places; the sizes and dates of `/etc/passwd` and `/etc/shadow`;
   - lesson 6: `multipass restart`; whether `ubuntu` is in `adm` (otherwise `journalctl` needs `sudo`; the lesson says so); the real `apt update` lines;
   - lesson 9: `multipass list` shows the IP in an `IPv4` column; `multipass exec curso -- tee -a …` passes what it receives through a pipe; Multipass's own key in `/home/ubuntu/.ssh/authorized_keys`; password login off (`Permission denied (publickey)`); the welcome line and the host key comment;
   - lesson 10: Git comes installed in the VM, and the default editor.
+  - in English, the same outputs with the VM `course`; lesson 9's host key fingerprint of the VM (`YT3Bmap…`) also comes from Docker.
 - [ ] **On Windows, someday:** the WSL parts of Phase 1 (lesson 6's `/etc/wsl.conf` with `systemd=true`, lesson 7's Windows folders in `PATH`, lesson 5's `lsof`), together with the lesson 1 items in "Content review".
-- [ ] **Claude:** translate Phase 1 into English once you approve the Spanish.
+- [x] **Claude:** translate Phase 1 into English (2026-10-12), with its outputs re-run in English (`~/backend-course/phase-1`, the VM `course`, `repo-shop.sh`).
+- [ ] **Claude, after deploying:** re-run `curl -O https://backenddesdecero.com/practicas/repo-shop.sh` for the output of lesson 10 in English (it was taken from a local server, so its speeds are too high).
 
 ### 5. No rush: nothing depends on it
 

@@ -1,0 +1,570 @@
+---
+translationKey: users-and-permissions
+title: "Linux file permissions: chmod, chown and sudo"
+description: "Linux users, groups and permissions from scratch: how to read rwx in ls -l, use chmod with letters and numbers, chown and sudo, and why root is dangerous."
+sidebar:
+  label: "Users and permissions"
+  order: 4
+lesson:
+  oneLiner: "On Linux, every file has an owner, a group and three sets of permissions, rwx: what its owner, its group and everyone else can read, change or run. root bypasses every permission, and that's why it's used as little as possible."
+  objectives:
+    - Create your practice server, a virtual machine running Ubuntu.
+    - Find out who you are with whoami and id, and read the permissions ls -l shows.
+    - Change permissions with chmod, with letters and with numbers, and a file's owner with chown.
+    - Use sudo knowing what it does, and explain why each server runs as its own user and not as root.
+  prerequisites: [pipes-and-redirection]
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+Imagine a friend's online shop has a bug in the form where customers upload their photo. Someone discovers it and manages to make the server run their commands. What can they do from there? It depends on one thing only: which user the server program runs as.
+
+If it runs as the administrator, the attacker can do everything: read the passwords, copy the database, delete it and install whatever they want. If it runs as a user of its own that can only touch its folder, the damage stays in that folder.
+
+In your day-to-day work you'll see it differently: a `Permission denied` when you try to read a file or start a program. The temptation is to fix it with `sudo` or with `chmod 777`, and that opens exactly the holes from the first paragraph. Here you'll learn to read permissions and to grant them carefully, on your own practice server.
+
+## The analogy
+
+<Analogy>
+
+Imagine an office building. Each person has a badge with their name, and the badge also says which departments they belong to. Each office has a sign on the door with three lines: what its owner, its department and anyone else can do: read the papers, change them or use what's inside. To reach an office, you go through hallways with doors, and each door has its own sign.
+
+The building manager has a master key that opens everything. If you need something your badge doesn't open, you ask him for it just for that one thing, and he writes down in a logbook who asked for it and what for.
+
+The cleaning company has its own badge, which only opens the rooms it cleans. If someone steals it, they don't get into the safe.
+
+On Linux, the badges are users; the departments, groups; the signs, permissions; and the building manager, root.
+
+<div slot="limits">
+
+- The sign only has three lines: the owner, one group and everyone else. You can't write “Luis yes, Marta no.”
+- Your badge travels with what you do. Every program you start carries a copy, and it can do everything you can. In a building, the courier you send on an errand doesn't carry your badge.
+- The master key doesn't just open doors: root can change the signs, make new badges or tear down the building, and nobody asks it “are you sure?”
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+The examples in this section are from an Ubuntu server like the one you'll create in “Try it.” If you want to try them while you read, [create it first](#first-your-practice-server).
+
+### Every person and every program is a user
+
+On Linux, everything that happens is done by a <Term id="user">user</Term>: every <Term id="process">process</Term> runs on behalf of one, and every file has one as its owner. Two commands tell you who you are:
+
+```text
+$ whoami
+ubuntu
+$ id
+uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu),4(adm),20(dialout),24(cdrom),25(floppy),27(sudo),29(audio),30(dip),44(video),46(plugdev)
+```
+
+`whoami` gives your name. `id` gives more details:
+
+- **`uid=1000(ubuntu)`:** your user number. To the system, a user is a number; the name is for people.
+- **`gid=1000(ubuntu)`:** your primary group. On Ubuntu, every user has one with the same name.
+- **`groups=…`:** all your <Term id="group">groups</Term>. A group brings users together so they can be given permissions all at once. The one that matters here is `sudo`: whoever is in it can act as the administrator.
+
+The list of users is in a text file, `/etc/passwd`. Each line is one user, with their details separated by `:`:
+
+```text
+$ grep www-data /etc/passwd
+www-data:x:33:33:www-data:/var/www:/usr/sbin/nologin
+```
+
+They are the name, an `x` (the password is stored in another file, `/etc/shadow`), the user number, the group number, a description, the home folder and the <Term id="shell">shell</Term>. `www-data` isn't a person: it's the user for web servers, and its shell, `nologin`, doesn't let anyone log in as it.
+
+### The ten letters of `ls -l`
+
+In [lesson 1](/en/phase-1/basic-terminal-commands/) you saw letters like `drwxr-xr-x` at the start of `ls -l`. They're the <Term id="permissions">permissions</Term>. This is `ubuntu`'s home folder, with a file and a folder:
+
+```text
+$ ls -l
+total 8
+-rw-rw-r-- 1 ubuntu ubuntu    6 Oct 12 13:29 notes.txt
+drwxrwxr-x 2 ubuntu ubuntu 4096 Oct 12 13:29 project
+```
+
+The ten letters read like this, with `notes.txt`:
+
+| `-` | `rw-` | `rw-` | `r--` |
+|---|---|---|---|
+| Type: `-` is a file; `d`, a folder (*directory*) | The owner (*user*, `u`) | The group (`g`) | Everyone else (*others*, `o`) |
+
+After them come the owner (`ubuntu`) and the group (`ubuntu`). Each set of three letters says the same thing, always in the same order:
+
+- **`r`** (*read*): read.
+- **`w`** (*write*): write, that is, change.
+- **`x`** (*execute*): run, if it's a program.
+
+A dash means “no.” So `notes.txt` can be read and changed by its owner and its group, and everyone else can only read it.
+
+### What r, w and x mean on a folder
+
+On a folder, the same letters mean something else:
+
+| Letter | On a file | On a folder |
+|---|---|---|
+| `r` | Read its contents | See the list of what's inside (`ls`) |
+| `w` | Change its contents | Create, rename and delete files inside |
+| `x` | Run it as a program | Go in (`cd`) and reach what's inside |
+
+A folder's `x` is the hallway door: **without it you can't reach any file inside**, even if the file lets you read it. And it's the folder's `w`, not the file's, that decides whether you can delete it.
+
+### How Linux decides whether you can
+
+When a program opens a file, the system asks, in order:
+
+1. Are you root? You can do almost anything; permissions don't count.
+2. Are you the owner? The first three letters are used, and nothing else.
+3. Are you in the file's group? The middle three are used.
+4. If not, the last three.
+
+Look at `/etc/shadow`, the password file:
+
+```text
+$ ls -l /etc/passwd /etc/shadow
+-rw-r--r-- 1 root root   888 Sep 17 02:17 /etc/passwd
+-rw-r----- 1 root shadow 502 Sep 17 02:17 /etc/shadow
+$ cat /etc/shadow
+cat: /etc/shadow: Permission denied
+```
+
+`ubuntu` isn't the owner (`root`) and isn't in the `shadow` group, so it gets the last three letters: `---`. `/etc/passwd`, on the other hand, ends in `r--`: anyone can read it.
+
+### Changing permissions with `chmod`: letters or numbers
+
+Imagine you download a script, `hello.sh`: a file with commands for the shell (you'll write some in [lesson 8](/en/phase-1/bash-scripts/)). You try to run it:
+
+```text
+$ ./hello.sh
+-bash: ./hello.sh: Permission denied
+$ ls -l hello.sh
+-rw-rw-r-- 1 ubuntu ubuntu 42 Oct 12 13:29 hello.sh
+$ chmod u+x hello.sh
+$ ls -l hello.sh
+-rwxrw-r-- 1 ubuntu ubuntu 42 Oct 12 13:29 hello.sh
+$ ./hello.sh
+Hello from course
+```
+
+Without `x`, it couldn't be run. `chmod` (*change mode*) changes the permissions, and `u+x` means “add `x` for the owner.” Only a file's owner, or root, can change them.
+
+**With letters** you say who, which operation and which permission:
+
+- Who: `u` (the owner), `g` (the group), `o` (everyone else) or `a` (all).
+- The operation: `+` adds, `-` removes and `=` sets exactly those.
+- Examples: `chmod o-r notes.txt` takes reading away from everyone else; `chmod go= secret.txt` takes everything away from the group and everyone else.
+
+**With numbers**, each permission is worth an amount: `r` = 4, `w` = 2 and `x` = 1. You add up the ones in each set of three, and you get three digits: the owner, the group and everyone else. `rw-` is 4 + 2 = 6, and `r-x` is 4 + 1 = 5:
+
+```text
+$ chmod 600 notes.txt
+$ ls -l notes.txt
+-rw------- 1 ubuntu ubuntu 6 Oct 12 13:29 notes.txt
+$ chmod 755 hello.sh
+$ ls -l hello.sh
+-rwxr-xr-x 1 ubuntu ubuntu 42 Oct 12 13:29 hello.sh
+```
+
+With numbers you set all nine permissions; with letters, only the ones you name. These are the most common:
+
+| Number | Letters | What for |
+|---|---|---|
+| `644` | `rw-r--r--` | A normal file: you change it, everyone reads it |
+| `600` | `rw-------` | A secret, like a password or a key: only you |
+| `755` | `rwxr-xr-x` | A program or a folder: everyone goes in or runs it, only you change it |
+| `700` | `rwx------` | A private folder: only you go in |
+| `777` | `rwxrwxrwx` | Everyone can do everything. Almost never a good idea |
+
+### Changing the owner with `chown`
+
+`chown` (*change owner*) gives a file to another user. Imagine the shop's website, which runs as `www-data`, has to save photos in the `uploads` folder:
+
+```text
+$ chown www-data uploads
+chown: changing ownership of 'uploads': Operation not permitted
+$ sudo chown www-data uploads
+$ ls -ld uploads
+drwxrwxr-x 2 www-data ubuntu 4096 Oct 12 13:29 uploads
+```
+
+Only root can give files away; otherwise, anyone could put their own files in someone else's name. That's why you need `sudo`, which you'll see next. To change the group too: `sudo chown www-data:www-data uploads`. (`-d` makes `ls` show the folder itself and not what's inside it.)
+
+### root, `sudo` and least privilege
+
+<Term id="root">root</Term> is the Linux administrator: user number 0, the building manager from the analogy. Permissions don't affect it: it can do everything, including making mistakes with nothing to stop it.
+
+That's why nobody works as root. You work as a normal user, and when you need something only the administrator can do, you ask for it for one single command with <Term id="sudo">sudo</Term> (from *superuser do*):
+
+```text
+$ whoami
+ubuntu
+$ sudo whoami
+root
+$ sudo head -1 /etc/shadow
+root:*:20713:0:99999:7:::
+```
+
+`sudo` runs the command that follows it as root, and only that one. On Ubuntu, users in the `sudo` group can use it. It normally asks for your password, and it records every use in a log: the building manager's logbook.
+
+Behind all this there's a rule, <Term id="least-privilege">least privilege</Term>: **every user and every program has only the permissions it needs, and no more**. If one day something fails or someone gets in where they shouldn't, the damage stays within the little that user could touch.
+
+### Why each server has its own user
+
+Because of that rule, each program on a server has its own user: `www-data` for the web server, `postgres` for the database (Phase 5). That way, if someone tricks the web server, as in “The problem,” they can't read the database's files.
+
+But there's a catch. In [Phase 0](/en/phase-0/ip-ports-sockets/) you saw that the web uses <Term id="port">port</Term> 80. On Linux, **ports 0 to 1023 can only be opened by root**:
+
+```text
+$ nc -l 80
+nc: Permission denied
+```
+
+With 8080 there would be no problem. Web servers solve it in two steps: they start as root, open port 80 and hand the work over to processes that run as their own user. This is what nginx looks like, the web server you'll install in [lesson 6](/en/phase-1/systemd-services-and-apt/):
+
+```text
+$ ps -o user,pid,cmd -C nginx
+USER         PID CMD
+root        2887 nginx: master process /usr/sbin/nginx -g daemon on; master_process on;
+www-data    2888 nginx: worker process
+```
+
+The root process only supervises; the one that handles the requests is the `www-data` one. In Phase 8 you'll do something similar with your own program: it will listen on 3000 as its own user, and nginx, on 80, will pass the requests on to it.
+
+## Try it
+
+The goal: create a teammate, Luis, on your practice server, and find out what you can see of his and what you can't. First, the server.
+
+### First, your practice server
+
+Your practice server is a <Term id="virtual-machine">virtual machine</Term>: a computer simulated inside yours. Whatever you break there doesn't touch your computer. You'll create it with Multipass, from Canonical, the company that makes Ubuntu; the first time takes a few minutes, because it downloads Ubuntu.
+
+Installing Multipass is the only thing in the course that asks for administrator permissions on your computer.
+
+<Tabs syncKey="os">
+<TabItem label="macOS">
+
+With [Homebrew](https://brew.sh/), a program for installing programs from the terminal:
+
+```sh
+brew install --cask multipass
+```
+
+It will ask for your Mac's password. If you don't have Homebrew, download the installer from [the Multipass website](https://canonical.com/multipass/install).
+
+</TabItem>
+<TabItem label="Linux">
+
+```sh
+sudo snap install multipass
+```
+
+`sudo` will ask for your password: you'll see what it does in this very lesson.
+
+</TabItem>
+<TabItem label="Windows">
+
+Don't install anything: your WSL Ubuntu is your practice server. Open it from the Start menu and skip to exercise 3. `sudo` will ask for the password you chose when you installed WSL.
+
+</TabItem>
+</Tabs>
+
+<TryIt title="1. Create the virtual machine" cmd="multipass launch 24.04 --name course" output="Launched: course">
+
+`launch` creates and starts a machine with Ubuntu 24.04 (so you see the same as in this lesson) and names it `course`. Before it finishes, you'll see progress messages. If it fails, the [Multipass documentation](https://canonical.com/multipass/docs) explains the most common problems.
+
+</TryIt>
+
+<TryIt title="2. Go into it" cmd="multipass shell course">
+
+You'll see a welcome message from Ubuntu and a new prompt: `ubuntu@course:~$`. Now you're the user `ubuntu` on the machine `course`, and everything that follows is typed there.
+
+`exit` takes you back to your computer, with the machine still running. `multipass stop course` shuts it down, and `multipass shell course` takes you back (and starts it if needed). You'll also use it in lessons [6](/en/phase-1/systemd-services-and-apt/) and [9](/en/phase-1/what-is-ssh/).
+
+</TryIt>
+
+### Luis and his files
+
+<TryIt title="3. Who are you here?" cmd={`whoami\nid\nsudo whoami`} output={`ubuntu
+uid=1000(ubuntu) gid=1000(ubuntu) groups=1000(ubuntu),4(adm),20(dialout),24(cdrom),25(floppy),27(sudo),29(audio),30(dip),44(video),46(plugdev)
+root`}>
+
+Notice the `27(sudo)`: that's why the third command works. In the virtual machine, `sudo` doesn't ask for a password, because Multipass sets it up that way; on WSL and on many servers, it does. Your list of groups may be different: what matters is that `sudo` is in it. On WSL you'll see your user instead of `ubuntu`.
+
+</TryIt>
+
+<TryIt title="4. Create Luis" cmd={`sudo useradd -m -s /bin/bash luis\nid luis\nls -l /home`} output={`uid=1001(luis) gid=1001(luis) groups=1001(luis)
+total 8
+drwxr-x--- 2 luis   luis   4096 Oct 12 13:29 luis
+drwxr-x--- 2 ubuntu ubuntu 4096 Oct 12 13:29 ubuntu`}>
+
+Creating users is root's job, so it goes with `sudo`. `useradd` creates `luis`, without printing anything; `-m` creates his folder, `/home/luis`, and `-s /bin/bash` gives him bash as his shell.
+
+`luis` has number 1001 and a group of his own, without `sudo`. Look at his folder: `drwxr-x---`, nothing for everyone else. Your dates will be different, and on WSL the other folder will be yours.
+
+If you get `useradd: user 'luis' already exists`, you created him earlier: move on to the next step.
+
+</TryIt>
+
+<TryIt title="5. Become Luis" cmd="sudo -iu luis">
+
+`sudo -u luis` runs a command as `luis` instead of as root, and `-i` opens a whole session, as if you logged in as him. It doesn't print anything, but the prompt changes to `luis@course:~$`.
+
+</TryIt>
+
+<TryIt title="6. Luis saves two files" cmd={`echo "We launch the shop on Monday" > plan.txt\necho "Today I broke the website by accident" > diary.txt\nls -l`} output={`total 8
+-rw-rw-r-- 1 luis luis 38 Oct 12 13:29 diary.txt
+-rw-rw-r-- 1 luis luis 29 Oct 12 13:29 plan.txt`}>
+
+`>` saves what `echo` writes into a file, as in [lesson 3](/en/phase-1/pipes-and-redirection/). Both files end in `r--`: everyone else can read them. Will you be able to? Type `exit` to go back to being `ubuntu`.
+
+</TryIt>
+
+<TryIt title="7. Try to read Luis's plan" cmd={`ls /home/luis\ncat /home/luis/plan.txt`} output={`ls: cannot open directory '/home/luis': Permission denied
+cat: /home/luis/plan.txt: Permission denied`}>
+
+Both fail, even though `plan.txt` lets everyone else read it: the problem is the folder. `/home/luis` is `drwxr-x---`, with no `r` (see the list) and no `x` (reach what's inside) for everyone else. The hallway door is locked.
+
+If `cat` shows you the plan, check with `whoami` that you've gone back to being `ubuntu`.
+
+</TryIt>
+
+<TryIt title="8. Now, with sudo" cmd="sudo cat /home/luis/plan.txt" output="We launch the shop on Monday">
+
+It works: root doesn't look at permissions. That's why `sudo` is so useful and so dangerous: whoever has it can read everyone's files.
+
+</TryIt>
+
+Now, the challenge. Luis wants you to read `plan.txt` without `sudo`. But he doesn't want you to read his diary, or to see what else he has in his folder.
+
+<SelfCheck question="Challenge: which two chmod commands does Luis have to run? Run them as luis and check as ubuntu.">
+
+As `luis` (`sudo -iu luis`):
+
+```sh
+chmod o+x ~
+chmod 600 diary.txt
+exit
+```
+
+His folder ends up as `drwxr-x--x`, and the diary as `-rw-------`. Now as `ubuntu`:
+
+```text
+$ cat /home/luis/plan.txt
+We launch the shop on Monday
+$ cat /home/luis/diary.txt
+cat: /home/luis/diary.txt: Permission denied
+$ ls /home/luis
+ls: cannot open directory '/home/luis': Permission denied
+```
+
+The `x` on the folder lets you reach a file if you know its name, and `plan.txt` lets you read it. Without the `r`, you can't see the list. And the diary, with `600`, can only be read by Luis.
+
+</SelfCheck>
+
+To finish, delete Luis and his folder:
+
+<TryIt title="9. Clean up" cmd="sudo userdel -r luis" output="userdel: luis mail spool (/var/mail/luis) not found">
+
+`userdel` deletes the user, and `-r`, his folder. The warning says Luis had no mailbox: nothing to worry about. Check with `ls -l /home` that only `ubuntu` is left.
+
+</TryIt>
+
+## You have already seen it
+
+- **On your Mac.** The `ana staff` in `ls -l` in [lesson 1](/en/phase-1/basic-terminal-commands/) are your user and your group. In the Finder, “Get Info” (<kbd>Cmd</kbd> + <kbd>I</kbd>) ends with “Sharing & Permissions”: the same three lines, for you, `staff` and everyone else.
+- **When you install something.** Your Mac and Windows ask for the administrator password. That's the idea behind `sudo`: you work as a normal user and ask for permission only to touch the system.
+- **On your phone.** Each app asks for permission to use the camera or your location, and it only has what you give it: least privilege.
+
+And if you code:
+
+- `npm install -g` sometimes answers `EACCES: permission denied`: it wants to write to a folder that belongs to root. `sudo` “fixes” it and leaves root-owned files on your computer; a version manager like nvm installs Node in your folder and avoids it.
+- Git stores each file's `x`. After a `chmod +x`, `git diff` shows `old mode 100644` and `new mode 100755`: the permissions as numbers, after a `100` that means “regular file.”
+
+## Common mistakes
+
+- **`chmod 777` to get rid of a `Permission denied`.** It works, and it lets anyone change the file, including an attacker who gets in as the website's user. Check who the owner is and who needs it, and grant only that.
+- **`sudo` for everything.** What you create with `sudo` belongs to root, and afterwards you can't change it without `sudo`. Use it only on the command that needs it.
+- **`sudo` with `>`.** `sudo echo "hello" > /etc/greeting.txt` answers `-bash: /etc/greeting.txt: Permission denied`. The redirection is done by your shell, which isn't root, before `sudo` starts (you saw this in [lesson 3](/en/phase-1/pipes-and-redirection/)). Use `echo "hello" | sudo tee /etc/greeting.txt`: `tee` copies whatever reaches it into a file, and here it does so as root.
+- **A folder without `x`.** `chmod -R 644` (`-R` applies it to everything inside) takes the `x` away from the folders, and then nobody can go into them.
+- **On WSL, working in `/mnt/c`.** Those are the Windows folders, and Linux permissions don't work the same way there: everything shows up as `rwxrwxrwx` and `chmod` may not change anything. Practice in `~`.
+
+## Summary
+
+- Every file has an owner, a group and three sets of permissions: the owner (`u`), the group (`g`) and everyone else (`o`). `ls -l` shows them at the start of each line.
+- `r` is read, `w` change and `x` run. On a folder, `x` means being able to go in and reach what's inside.
+- `chmod` changes permissions with letters (`u+x`) or with numbers (`r` = 4, `w` = 2, `x` = 1: `644`, `600`, `755`). `chown` changes the owner, and only root can do it.
+- root bypasses permissions. You work as a normal user and use `sudo` for one single command.
+- Least privilege: every program runs as its own user with only the permissions it needs. Web servers only use root to open port 80.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="You’re ubuntu, in the sudo group but not in the www-data group. ls -l shows: -rw-r----- 1 www-data www-data 1200 Oct 12 10:00 config.php. What can you do with that file without typing sudo?"
+  review="How Linux decides whether you can"
+>
+
+<QuizOption text="Read it, because everyone else has read permission.">
+
+Everyone else has nothing: the last three letters are `---`. The `r` is the group's.
+
+</QuizOption>
+
+<QuizOption text="Nothing: neither read it nor change it." correct>
+
+You're not the owner and you're not in the group, so you get the last three letters, `---`. You can't read or write.
+
+</QuizOption>
+
+<QuizOption text="Read it and change it: being in the sudo group bypasses permissions.">
+
+The `sudo` group lets you use `sudo`, and it only counts when you type it. Without it, you're just another user, and you get the last three letters: `---`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Marta’s folder has drwxr-x--x, and inside it is report.txt with -rw-r--r--. You’re not Marta and you’re not in her group. What happens with ls /home/marta and with cat /home/marta/report.txt?"
+  review="What r, w and x mean on a folder"
+>
+
+<QuizOption text="Both fail: without the folder’s r you can’t reach anything inside.">
+
+A folder's `r` is only for seeing the list. To reach a file you know, the `x` is enough, and you have it.
+
+</QuizOption>
+
+<QuizOption text="Both work: the folder’s x lets you do anything inside.">
+
+The `x` lets you reach the files, but not see the list: for that you need the `r`.
+
+</QuizOption>
+
+<QuizOption text="ls fails, but cat works." correct>
+
+Without `r` you can't see the folder's list, but with its `x` you reach `report.txt` if you know its name. And the file lets everyone else read it.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You keep a file on the server with the database password. Only your program has to read it, and it runs as your user. What permissions do you give it?"
+  review="Changing permissions with chmod: letters or numbers"
+>
+
+<QuizOption text="chmod 600: you read and write; everyone else, nothing." correct>
+
+`6` is `rw-` for you, and the two `0`s, nothing for the group or everyone else. It's what's used for secrets.
+
+</QuizOption>
+
+<QuizOption text="chmod 644: that already makes it private.">
+
+`644` lets anyone read it (`r--` for the group and everyone else): everyone could see the password.
+
+</QuizOption>
+
+<QuizOption text="chmod 066: the first digit is for the other users.">
+
+It's the other way around: the first digit is the owner's. `066` leaves you with no permissions and gives read and write to everyone else.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Your web server has to listen on port 80, but when you start it as its own user it answers Permission denied. What do you do?"
+  review="Why each server has its own user"
+>
+
+<QuizOption text="Start it with sudo, because there’s no other way to use port 80.">
+
+There is, and it's better: if your program runs as root, a bug in it hands the whole server to whoever exploits it.
+
+</QuizOption>
+
+<QuizOption text="Give your program chmod 777 so it can open any port.">
+
+The file's permissions don't decide which ports the program opens: that depends on the user it runs as. And `777` lets anyone change it.
+
+</QuizOption>
+
+<QuizOption text="Leave it on 8080 and put nginx in front, on 80." correct>
+
+nginx opens port 80 as root and handles requests as `www-data`. Your program keeps running as its own user, on a port that doesn't need root.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You type sudo echo '127.0.0.1 shop.local' >> /etc/hosts and it answers Permission denied. Why, if you used sudo?"
+  review="Common mistakes"
+>
+
+<QuizOption text="Because /etc/hosts can’t be changed, not even with sudo.">
+
+With `sudo` it can: root bypasses permissions. The problem is who opens the file, and it isn't root.
+
+</QuizOption>
+
+<QuizOption text="Because the >> redirection is done by your shell, which isn’t root." correct>
+
+Your shell opens `/etc/hosts` before starting `sudo`, and it does so as your user. `sudo` only affects `echo`. With `| sudo tee -a /etc/hosts` it works: `-a` appends to the end, like `>>`.
+
+</QuizOption>
+
+<QuizOption text="Because sudo doesn’t work with echo, only with administration commands.">
+
+`sudo` runs any command as root, `echo` included. What fails is the redirection, which isn't part of the command `sudo` runs.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="The shop’s program runs as its own user, shop, and has to save its logs in /var/log/shop, a root folder with drwxr-xr-x. What’s the right fix?"
+  review="Changing the owner with chown"
+>
+
+<QuizOption text="Give the folder to the shop user with chown." correct>
+
+With `sudo chown shop /var/log/shop`, the program can write there and nowhere else that belongs to root. That's least privilege.
+
+</QuizOption>
+
+<QuizOption text="chmod 777 /var/log/shop: giving extra permissions isn’t a risk.">
+
+It is: with `777`, any user on the server can delete or change the logs, including an attacker who gets in through another program.
+
+</QuizOption>
+
+<QuizOption text="Start the program as root, which is no riskier than with its own user.">
+
+It's much riskier: as root, a bug in the program hands the whole server to whoever exploits it.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [The Linux Command Line](https://linuxcommand.org/tlcl.php), by William Shotts: chapter 9, “Permissions,” covers the same ground in more detail, including `umask`.
+- [File permissions and attributes](https://wiki.archlinux.org/title/File_permissions_and_attributes) on the Arch Linux wiki: a complete reference, with the special permissions this lesson doesn't cover.
