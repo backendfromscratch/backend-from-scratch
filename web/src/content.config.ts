@@ -46,6 +46,8 @@ export const collections = {
         'explorer.comingSoon': z.string(),
         'explorer.playgrounds': z.string(),
         'explorer.glossary': z.string(),
+        'explorer.resources': z.string(),
+        'explorer.toggle': z.string(),
         'theme.toggle': z.string(),
         'status.lesson': z.string(),
         'status.lessonNoTotal': z.string(),

@@ -22,6 +22,7 @@
 - **No breadcrumbs:** the phase was already in the explorer and in the status bar. Only the reading time stays, above the title of a lesson (§4.4).
 - **Theme and language** (§4.1): a single button for the theme and the languages as two links, «ES · EN», instead of Starlight's two `<select>`, whose names were cut short («Auto…», «Españ…»).
 - **Smaller headings** (§4.4): Starlight's were 42 px for the title on a computer, and look bigger still in monospace.
+- **The side panel can be hidden again, and the explorer only has folders (2026-10-12):** a button on the left of the header hides and shows the whole panel on a computer (§4.1); `inicio.md` goes away, because the site title already leads to the home page; and the playgrounds and the glossary go into a `recursos/` folder after the phases (§4.3).
 - **A maximum width, and centered on very wide monitors** (§4.4): at 2,560 px everything sat on the left with an empty half on the right, and the wide pieces stretched to about 2,000 px (the weather diagram had two 740 px cards and a one-line caption 1,500 px long).
 
 ## 3. The layout by screen width
@@ -40,6 +41,7 @@ The minimap threshold comes from adding up the side panel (≈ 308 px), line num
 
 ### 4.1 Header
 
+- **Panel button (since 2026-10-12)** on the far left, only on a computer (`ExplorerToggle.astro`): it hides and shows the side panel, like VS Code's "Toggle Primary Side Bar", and the content takes its width. Its icon fills the left column while the panel is shown; its name, «Mostrar u ocultar el explorador», does not change, and `aria-expanded` says the state. The choice is remembered (`ide-explorer`) and applied by an inline script before painting, so the panel does not flash. On mobile it is not drawn: the panel is the ☰ menu. Logic with tests: `web/src/lib/explorer-panel.ts`.
 - Site name on the left and search in the center, with the text «Buscar lección, término o comando» (already planned in the theme).
 - On the right (since 2026-10-11), the theme and the language. On mobile, they are in the ☰ menu, below the explorer. Both replace Starlight's components, so its mobile menu uses them too:
   - **Theme** (`overrides/ThemeSelect.astro`): one icon button that switches between dark and light. The icon is the theme the click leads to (the sun in dark mode). Until the first click the page follows the system, as before; then it remembers the choice in Starlight's key (`starlight-theme`), so Starlight's script in the `<head>` paints it with no flash. Logic with tests: `web/src/lib/theme.ts`.
@@ -53,7 +55,7 @@ Removed on 2026-10-11 (§2). From 2026-10-03 to 2026-10-11 there was a strip wit
 
 Two sections, one above the other, each with its own scroll. Their scrollbars are like VS Code's (added on 2026-10-04), like all the site's scrollbars: straight, with no arrows or track, and in the theme's translucent gray (`--ide-scrollbar`); 10 px in the panel, the code, the tables and the labs, and 14 px for the page, as in the editor. The panel's ones sit flush with its edge and only show with the mouse over them or focus inside; the others, always. Mouse only: on touch screens and in forced colors, the system's ones. The tree does not collapse: the home page and the phases are always visible. The outline does collapse (`<details>`):
 
-- **EXPLORADOR (explorer):** `inicio.md`, `playgrounds.md` (flask icon) and `glosario.md` (book icon), then the phases, with no root folder. The syllabus (`temario.md`) is not there: it is linked from the home page. From 2026-10-03 to 2026-10-11 the playgrounds and the glossary were pinned tabs. The logic, with tests: `explorerPages` in `web/src/lib/explorer.ts`. Compared with the previous tree:
+- **EXPLORADOR (explorer):** only folders: the phases and, after them, `recursos/` (`resources/` in English), with `playgrounds.md` (flask icon) and `glosario.md` (book icon). That folder opens when one of its pages is the current one, and otherwise remembers whether the reader opened it, like the phases. There is no `inicio.md` since 2026-10-12: the site title in the header leads to the home page. The syllabus (`temario.md`) is not there: it is linked from the home page. From 2026-10-03 to 2026-10-11 the playgrounds and the glossary were pinned tabs, and until 2026-10-12, loose files under `inicio.md`. The logic, with tests: `explorerPages` in `web/src/lib/explorer.ts`. Compared with the previous tree:
   - arrows instead of triangles;
   - a `#` icon in front of each file, in `--ide-info`;
   - a vertical indentation guide on open folders.

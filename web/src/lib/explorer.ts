@@ -154,7 +154,7 @@ export interface ExplorerPage {
 
 const EXPLORER_PAGES: readonly ExplorerPageId[] = ['playgrounds', 'glossary'];
 
-/** The files under the home page, before the phases: the playgrounds and the glossary. */
+/** The files in the explorer's «recursos/» folder, after the phases: the playgrounds and the glossary. */
 export function explorerPages(locale: Locale, pathname: string): ExplorerPage[] {
   const path = pathname.endsWith('/') ? pathname : `${pathname}/`;
   return EXPLORER_PAGES.map((id) => {
@@ -231,7 +231,7 @@ export function folderOpenByDefault(
 
 /**
  * What is in the Starlight menu that the explorer would not draw: loose links and groups with
- * pages outside the phases. The explorer only knows about the home page and the phases; if anything else
+ * pages outside the phases. The explorer only knows about the phases (and its own resources folder); if anything else
  * shows up (someone adds it to the configuration), the build must fail instead of hiding it.
  */
 export function unexpectedSidebarEntries(
