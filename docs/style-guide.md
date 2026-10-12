@@ -29,7 +29,7 @@ What research on reading and learning says works best in courses and technical a
    - Concrete before abstract: real names, real numbers and real outputs (`example.com`, `200`, `ana@portatil`), not «un servidor X» or «cierto código».
 4. **Analogies with their limits.** Always with `<Analogy>` and its `limits` slot (the build fails without it). The analogy comes from everyday life, not from another technology the reader may not know, and the limits say where it stops being true before it causes a wrong idea.
 5. **The expected output of every command.** Every `<TryIt>` has its real `output` (see "Terminal exercises"), and the explanation says what to look at in it («fíjate en el `200` de la primera línea») and what to do if it is different: the most likely error and how to fix it.
-6. **Questions to check what was learned** (retrieval practice: trying to remember fixes things better than reading again; Roediger and Karpicke, 2006). The questions of "¿Lo has entendido?" (a `<Quiz>` in the pilot lesson, `<SelfCheck>` in the others; see "Quiz"):
+6. **Questions to check what was learned** (retrieval practice: trying to remember fixes things better than reading again; Roediger and Karpicke, 2006). The `<Quiz>` of "¿Lo has entendido?" (see "Quiz"):
    - make the reader apply the idea to a new case (a scenario, an output to interpret, a decision), never repeat a sentence from the lesson word for word;
    - at least one of them is a situation («Tu web devuelve 502 a las tres de la mañana: ¿qué miras primero?»);
    - the answer explains why, not only what.
@@ -53,7 +53,7 @@ The order is fixed. Each section is an `##`, except the header, which comes from
 6. `## Ya lo has visto`: where the reader has already come across this without knowing it (the browser, the phone, the home wifi) and, if they code, in their code (`fetch`, DevTools). What anyone can see goes first; the points for people who code go at the end, after a standalone line «Y si programas:» («And if you code:»).
 7. `## Errores comunes`
 8. `## Resumen`: 3 to 5 points.
-9. `## ¿Lo has entendido?`: 2 to 4 `<SelfCheck>`. Pilot since 2026-10-12: a `<Quiz>` of 6 questions in «Qué es el backend» (see "Quiz"); if the author approves it, it replaces `<SelfCheck>` in every lesson.
+9. `## ¿Lo has entendido?`: a `<Quiz>` of 6 questions (see "Quiz"). Since 2026-10-12 it replaces the open questions of `<SelfCheck>`.
 10. `## Para profundizar`: external links (MDN, RFCs…).
 
 In English, the headings are: The problem, The analogy, How it really works, Try it, You have already seen it, Common mistakes, Summary, Did you get it?, Further reading.
@@ -85,7 +85,9 @@ They are imported with the `~/` alias:
 import Term from '~/components/Term.astro';
 import TryIt from '~/components/TryIt.astro';
 import Analogy from '~/components/Analogy.astro';
-import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
 ```
 
 **MDX rule:** leave a blank line after opening and before closing any component that contains Markdown, and around the contents of `<div slot="limits">`. Without those lines, MDX treats it as inline text and the content ends up in the wrong place.
@@ -97,13 +99,13 @@ import SelfCheck from '~/components/SelfCheck.astro';
   - for several lines, use a template literal: ``cmd={`línea 1\nlínea 2`}``.
   - `lang` changes the highlighting of `cmd` (default `sh`); use `lang="http"` when what the reader types is an HTTP message and not a command.
 - `<Analogy>…<div slot="limits">…</div></Analogy>`: without `limits`, the build fails.
-- `<SelfCheck question="¿…?">answer</SelfCheck>`
 - `<Quiz>`, `<QuizQuestion>` and `<QuizOption>`: the test at the end of a lesson (see "Quiz").
+- `<SelfCheck question="¿…?">answer</SelfCheck>`: a challenge with a hidden solution inside «Pruébalo» («Reto: …»). Not for «¿Lo has entendido?», which is a `<Quiz>`.
 - From Starlight (`@astrojs/starlight/components`): `Aside`, `Tabs`/`TabItem`, `Steps`, `FileTree`, `Code`, `Badge`, `Card`/`CardGrid`, `LinkCard`.
 
 ## Quiz
 
-The test at the end of a lesson (pilot: «Qué es el backend», 2026-10-12). The reader chooses an answer, checks it and sees at once whether it was right and why; at the end, the score and links to the sections of the lesson to review. Each question is checked with a button and not on choosing, because with the keyboard the arrows move through the options and would choose them.
+The test at the end of every lesson (piloted in «Qué es el backend» and adopted by the author on 2026-10-12). The reader chooses an answer, checks it and sees at once whether it was right and why; at the end, the score and links to the sections of the lesson to review. Each question is checked with a button and not on choosing, because with the keyboard the arrows move through the options and would choose them.
 
 ```mdx
 import Quiz from '~/components/Quiz.astro';
@@ -279,7 +281,7 @@ Used when a lesson is drafted and again when it is reviewed (the independent rev
 **Practice (5, 6)**
 - [ ] Every command has its real output, says what to look at and what to do if it is different.
 - [ ] "Pruébalo" has a goal: something to find out or to fix.
-- [ ] Each `<SelfCheck>` or quiz question makes the reader apply the idea; at least one asks about a situation, and the answers explain why. In a quiz, the wrong options are real mistakes and each one says why it is wrong.
+- [ ] Each quiz question makes the reader apply the idea; at least one asks about a situation, and the answers explain why. In a quiz, the wrong options are real mistakes and each one says why it is wrong.
 
 **Stories and voice (7, 8)**
 - [ ] "El problema" starts from a concrete situation.
