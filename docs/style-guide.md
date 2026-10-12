@@ -135,7 +135,7 @@ Why it is wrong: the mistaken idea behind it, and what is true instead.
 ```
 
 - **6 questions**, with 3 options each and exactly one `correct`. The right one goes in a different position from one question to the next, and it is not the longest one.
-- **Wrong answers that look right:** each one is a mistake people really make (the lesson's "Errores comunes" are a good source), not an obvious joke. Multiple choice only makes the reader remember if the wrong options compete (Little and Bjork, 2012).
+- **Wrong answers that look right:** each one is a mistake people really make (the lesson's "Errores comunes" are a good source), not an obvious joke. The option states the mistaken belief itself, so that everything in it is false: «Sí: para comprar hay que pasar por el formulario», not «Sí: si el formulario no te deja seguir, la compra no llega al backend», which is true and only fails as a reason. An option with a true reason tests reading, not understanding. Multiple choice only makes the reader remember if the wrong options compete (Little and Bjork, 2012).
 - **Every option explains itself:** the right one, why; a wrong one, why not. The reader sees the explanation of what they chose and of the right answer right after checking, so a wrong answer is not remembered as true (Butler and Roediger, 2008).
 - **`review` is the text of a heading of the same page**, the one that explains the question. If it does not exist, the build fails. In English, a straight apostrophe matches the typographic one of the heading.
 - The rest of principle 6 still applies: apply the idea to a new case, at least one situation, and nothing copied from the lesson. The tone is not an exam: «Has acertado 4 de 6», never a pass or a fail.
