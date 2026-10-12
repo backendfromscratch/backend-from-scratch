@@ -101,7 +101,7 @@ The phase's `lessonCount` in `web/src/data/phases.ts` becomes 8, and its status 
 
 Static files whose headers are set in `web/public/_headers`, so the lessons have a stable server with known answers:
 
-- `con-cors.json` with `Access-Control-Allow-Origin: *`, and `sin-cors.json` without it: from the console of another origin (`https://example.com`), the first can be read and the second gives the CORS error (lesson 6). It needs no server code: `_headers` already sets headers on `/practicas/` (`X-Robots-Tag`, `Content-Type`).
+- `cors-on.json` with `Access-Control-Allow-Origin: *`, and `cors-off.json` without it (one pair for both languages, like `access.log`; **done on 2026-10-12**): from the console of another origin (`https://example.com`), the first can be read and the second gives the CORS error (lesson 6). It needs no server code: `_headers` already sets headers on `/practicas/` (`X-Robots-Tag`, `Content-Type`).
 - Nothing else is needed: what the rest of the lessons show on the site is already there (checked on 2026-10-12: `POST`, `PUT`, `DELETE` and `OPTIONS` answer `405` without `Allow`; `/fase-0` answers `307` to `/fase-0/`; `http://` answers `301`; the HTML is `public, max-age=0, must-revalidate`, compressed with `br` and without `ETag`; the `/_astro/` files are `public, max-age=31536000, immutable`, with `ETag` and `304` for `If-None-Match`; `alt-svc: h3=":443"`).
 - **Risk:** Cloudflare can change these details (for example, add `Allow` to the `405`). Outputs carry their date, and a test cannot check production; a note in `docs/todo.md` asks to repeat them before each review of the phase.
 
@@ -109,7 +109,8 @@ Static files whose headers are set in `web/public/_headers`, so the lessons have
 
 - `web/public/practicas/tienda-http.conf` (Spanish) and `shop-http.conf` (English), served as text like the Phase 1 scripts, so the reader reads them before installing them. The lessons install them with `curl -O`, `sudo cp … /etc/nginx/sites-available/`, a link in `sites-enabled`, `sudo nginx -t` and `sudo systemctl reload nginx`.
 - **What it answers** (on port 8080 of the VM, so the default site on port 80 from Phase 1, lessons 6 and 9, keeps working): `/productos` (a JSON list), `/ofertas` (`301` to `/productos`), `/carrito` (`Set-Cookie` with `HttpOnly`, `SameSite=Lax` and `Max-Age`), `/api/` (CORS for the shop's frontend origin and answers to the preflight), `/img/` (static files with `ETag` and `Cache-Control`) and `/mantenimiento` (`503` with `Retry-After`). Each lesson changes one line, reloads and compares.
-- **Checked when it is written:** `nginx -t` and every `curl` of the lessons in Ubuntu 24.04 with nginx 1.24.0 (Docker), the way Phase 1 was checked. A test in CI checks that both files define the same locations, so the languages do not drift apart.
+- **Done on 2026-10-12** and checked in Ubuntu 24.04 with nginx 1.24.0 (Docker): `nginx -t` passes, every path answers what is described above (`POST /productos` gets `405` with `Allow: GET, HEAD`, the preflight `204` with the CORS headers, an image's `ETag` gives `304`), and the site on port 80 keeps working. Things the lessons can use: nginx makes the `Location` of the `301` absolute (`http://localhost:8080/productos`), and its reason phrases are its own (`405 Not Allowed`, `503 Service Temporarily Unavailable`). The images are not in the configuration: lesson 7 creates one in `/var/www/tienda/img/`; until then `/img/` answers `404`. Each lesson re-runs its `curl` commands when it is written.
+- **Tests** (`web/src/lib/practice/http-practice.test.ts`): both configurations do the same (directives and numbers), listen on 8080 and not on 80, explain their own installation, and are served as text; `_headers` gives CORS to `cors-on.json` and not to `cors-off.json`.
 - **Multipass:** the lessons that use the VM inherit Phase 1's pending check on the author's Mac (`docs/todo.md`). The VM part of each exercise says what to do without a VM: read the given output, or skip it.
 
 ## 6. Glossary
@@ -121,7 +122,7 @@ New terms, in both languages, with `acronym` where it applies (expected; the fin
 Small, and none of them blocks the first lesson:
 
 1. `phases.ts`: Phase 2 `available` with `lessonCount: 8`, when its first lesson is published.
-2. `_headers`: the CORS rule for `/practicas/http/con-cors.json` (§5.1); the `.conf` files served as text.
+2. `_headers`: the CORS rule for `/practicas/http/cors-on.json` (§5.1); the `.conf` files served as text (done on 2026-10-12).
 3. `playgrounds.ts`: the CORS lab, when it is built.
 4. The pattern "you will see it in Phase 2" in Phase 0 (caching, `keep-alive`, HTTP/3) becomes a link to the lesson that explains it.
 
