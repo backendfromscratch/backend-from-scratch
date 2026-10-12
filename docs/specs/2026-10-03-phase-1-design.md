@@ -1,7 +1,7 @@
 # Design: Phase 1, «Terminal, Linux y SSH»
 
 - **Date:** 2026-10-03
-- **Status:** approved on 2026-10-07. The author chose the Multipass VM (§2.1), WSL as the only route on Windows (§2.2) and the ten lessons (§3), and to wait until Phase 3 for the first guided project (§8). It started with a pilot lesson (the introduction and lesson 1); the author approved it on 2026-10-12 and asked for the rest the same day. **Completed on 2026-10-12:** the ten lessons in Spanish (the English translation follows), each written with its commands run for real and reviewed independently. What could only be checked on the author's Mac (Multipass) or on Windows (WSL) is listed in `docs/todo.md`.
+- **Status:** approved on 2026-10-07. The author chose the Multipass VM (§2.1), WSL as the only route on Windows (§2.2) and the ten lessons (§3), and to wait until Phase 3 for the first guided project (§8). It started with a pilot lesson (the introduction and lesson 1); the author approved it on 2026-10-12 and asked for the rest the same day. **Completed on 2026-10-12:** the ten lessons in Spanish and English, each written with its commands run for real and reviewed independently. What could only be checked on the author's Mac (Multipass) or on Windows (WSL) is listed in `docs/todo.md`.
 - **Origin:** the roadmap in `CLAUDE.md` (Phase 1). The author asked for it to be designed without consulting him ("don't ask me anything"), so the decisions are argued here and summarized in `docs/todo.md`.
 - **Reference spec:** `docs/specs/2026-10-02-site-and-phase-0-design.md`. The lesson template, the three levels of «Pruébalo» ("Try it"), the languages and the visual theme do not change.
 
@@ -99,7 +99,7 @@ The phase's `lessonCount` in `web/src/data/phases.ts` becomes 10.
   - **The bug:** commit `58582d7`, «Ordena el código y añade comentarios», turns «less than 50 €» into «more than 50 €» the wrong way round, so a 50 € order pays shipping again (`comprobar.sh` expects 60,50 € and gets 65,50 €). `git bisect start main v1.0` and `git bisect run ./comprobar.sh` find it.
   - **The same hashes for every reader** (`HEAD` is `d3e34b6`): authors and dates are fixed, the object format is `sha1` (Git 3 may change the default), and each command passes `-c` to ignore the reader's signing, hooks and line-ending settings without changing their configuration. Checked with Git 2.50 on macOS (bash 3.2), Git 2.43 on Ubuntu 24.04 and a hostile global configuration; `repo-tienda.test.ts` checks it on every CI run, with the tests at `v1.0` and `main`, `bisect run` and that an existing folder is not touched.
   - **bash 3.2 (macOS):** a variable next to a non-ASCII character goes in braces (`«${dir}»`): otherwise bash 3.2 reads the first byte of «»» as part of the name.
-  - **Only in Spanish:** the English version of lesson 10 needs English commit messages, so its own script and its own hashes.
+  - **In English (2026-10-12):** `web/public/practicas/repo-shop.sh`, the same story and guarantees with English commit messages, so its own hashes: it creates `shop/` with `price.sh` and `check.sh` (prices as `Total: €60.50`); `HEAD` is `1b1e80d`, `v1.0` is `fb511b4` («Prepare version 1.0») and the bug is `2859a11`, «Tidy up the code and add comments». Its tests are in `repo-shop.test.ts`.
 - **No custom VM images:** the standard Ubuntu image from Multipass is used, which the reader downloads with `multipass launch`.
 
 ## 6. Changes to the site before publishing the first lesson
