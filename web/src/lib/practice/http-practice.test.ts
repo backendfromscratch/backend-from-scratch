@@ -15,7 +15,9 @@ function headerRules(text: string) {
   for (const line of text.split('\n')) {
     if (!line.trim() || line.startsWith('#')) continue;
     if (!line.startsWith(' ')) {
-      const pattern = new RegExp(`^${line.trim().replace(/[.]/g, '\\.').replace(/\*/g, '.*')}$`);
+      // Every character is literal except «*», Cloudflare's wildcard.
+      const literal = line.trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const pattern = new RegExp(`^${literal.replace(/\\\*/g, '.*')}$`);
       rules.push({ pattern, headers: {} });
     } else {
       const [name, ...value] = line.trim().split(':');
