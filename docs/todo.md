@@ -90,7 +90,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 - [ ] **Read the "for everyone" changes** of Phase 0 in your own voice (`docs/reviews/2026-10-03-phase-0-for-everyone-changes.md`): they were proposed by agents, checked by an independent reviewer and are applied, but you have not read them. Once read, delete the file: it only exists for this review.
 - [ ] **DevTools names in Spanish:** the lessons use *Network* and *Timing*. In Chrome in Spanish they are *Red* and another name; they should be checked and added.
 - [ ] **Chrome texts quoted from memory:** «La conexión no es privada» ("Your connection is not private") (lesson 8). Check that they match those of your browser.
-- [ ] **Outside Phase 0:** the glossary (`web/src/content/glossary/`) has not been reviewed with the "for everyone" criterion.
+- [x] **Outside Phase 0:** the glossary (`web/src/content/glossary/`) reviewed with the "for everyone" criterion on 2026-10-12: the 59 Spanish entries, and their English counterparts. Eight used a technical word without explaining it, and they now say it in plain words: «zona» (authoritative server, now explained as in the DNS lesson), «recursos» (HTTP), «ancho de banda» (latency), «unidad de datos» (packet and segment), «salto» (routing and TTL) and «campos binarios» (header). After CodeRabbit's review, latency says «casi no mejora» with bandwidth, as lesson 9 does, and segment names the acknowledgment number. In English, “Name: value” keeps its comma outside: it is a literal format. To read in your voice: the changed `short` lines.
 
 ## Phase 1 design
 
