@@ -271,7 +271,7 @@ Levels: **1** = terminal exercise, **2** = playground with a real tool, **3** = 
 - Caching: HTML is revalidated on every visit (Cloudflare's default), so a deploy is visible at once. Files under `/_astro/` have a content hash in their name and are cached for a year (`web/public/_headers`).
 - A GitHub Actions workflow (`.github/workflows/ci.yml`, since 2026-10-07) checks formatting, types, tests and build on every PR and every push to `main`. Since 2026-10-11 it also checks the workflows and `dependabot.yml` with zizmor; since 2026-10-12, unused files, exports and dependencies with Knip (`knip.jsonc` lists what Knip cannot see, each with its reason). It does not deploy.
 - **Security and supply chain (2026-10-11),** after the npm attacks of 2025:
-  - GitHub settings: secret scanning with push protection, Dependabot alerts and security updates, CodeQL (default setup, not a required check for now) and private vulnerability reporting;
+  - GitHub settings: secret scanning with push protection, Dependabot alerts and security updates, CodeQL (default setup; its "CodeQL" check, which fails when a PR adds a high or critical security alert or any other alert of severity "error", is required to merge since 2026-10-12) and private vulnerability reporting;
   - pnpm (`pnpm-workspace.yaml`): only the listed packages run install scripts, a version must be 7 days old to be installed (`minimumReleaseAge`) and a version published with weaker guarantees than the previous ones is refused (`trustPolicy: no-downgrade`);
   - Dependabot (`.github/dependabot.yml`): npm and GitHub Actions every Monday, grouped, with the same 7-day wait (`cooldown`);
   - Actions pinned by commit SHA, and `actions/checkout` without persisted credentials.
