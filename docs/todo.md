@@ -22,7 +22,7 @@ The code has been on GitHub since 2026-10-09: `backendfromscratch/backend-from-s
 ### 2. Unblock Phase 1
 
 - [x] **You:** try the quiz at the end of «Qué es el backend» (pilot, 2026-10-12). Adopted the same day: every lesson of Phase 0 and Phase 1 ends with a 6-question quiz. Rules in `docs/style-guide.md`, "Quiz".
-- [ ] **You:** review the pilot: read and do, as a reader, the introduction and lesson 1 of Phase 1. The other nine lessons wait for your verdict on the template and the tone. While reading, note what was hard or surprising for you when you learned it: those become the «Nota del autor» (principle 8 in the style guide).
+- [x] **You:** review the pilot: read and do, as a reader, the introduction and lesson 1 of Phase 1 (finished on 2026-10-12). The other nine lessons wait for your verdict on the template and the tone. While reading, note what was hard or surprising for you when you learned it: those become the «Nota del autor» (principle 8 in the style guide).
 - [x] **You:** two quick decisions before writing more (2026-10-11):
   - English punctuation: American, the period inside the quotation marks. Phase 0 is changed and the rule is in the style guide ("Translation");
   - the JavaScript limit per page: 400 KB, the one the SEO audit already checks. Preact is left for when a page gets close to it.
@@ -51,7 +51,14 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 ### 4. Continue with Phase 1, lesson by lesson
 
 - [x] **Claude:** before lesson 2, the script that generates the practice `access.log` (`web/public/practicas/access.log`). Done on 2026-10-11: what it contains is in the Phase 1 spec, §5.
-- [ ] **Claude, and you review each one:** lessons 2 to 10, each with a short plan, commands run for real and an independent review. In lesson 4, Multipass is checked on your Mac. The Git repository script for `bisect` is done (2026-10-12, Phase 1 spec, §5); the English version needs its own script.
+- [x] **Claude:** lessons 2 to 10 (2026-10-12, at the author's request, while they were away): each written by one agent with its commands run for real (macOS and Ubuntu 24.04 in Docker, systemd included) and reviewed by another, independent one. The English version of the `bisect` repository needs its own script.
+- [ ] **You:** read Phase 1 in your own voice, lesson by lesson, and add the «Nota del autor» where something was hard for you (principle 8). Then check on your Mac what could not be run here (next item).
+- [ ] **You, on your Mac with Multipass** (it could not be installed here without your password; the VM outputs come from Docker):
+  - lesson 4: `multipass launch 24.04 --name curso` ends with `Launched: curso`; `sudo` asks no password for `ubuntu`; the group list of `id` (Docker gives `adm dialout cdrom floppy sudo audio dip video plugdev`; a real VM probably `adm cdrom sudo dip lxd`), in two places; the sizes and dates of `/etc/passwd` and `/etc/shadow`;
+  - lesson 6: `multipass restart`; whether `ubuntu` is in `adm` (otherwise `journalctl` needs `sudo`; the lesson says so); the real `apt update` lines;
+  - lesson 9: `multipass list` shows the IP in an `IPv4` column; `multipass exec curso -- tee -a …` passes what it receives through a pipe; Multipass's own key in `/home/ubuntu/.ssh/authorized_keys`; password login off (`Permission denied (publickey)`); the welcome line and the host key comment;
+  - lesson 10: Git comes installed in the VM, and the default editor.
+- [ ] **On Windows, someday:** the WSL parts of Phase 1 (lesson 6's `/etc/wsl.conf` with `systemd=true`, lesson 7's Windows folders in `PATH`, lesson 5's `lsof`), together with the lesson 1 items in "Content review".
 - [ ] **Claude:** translate Phase 1 into English once you approve the Spanish.
 
 ### 5. No rush: nothing depends on it
@@ -65,7 +72,7 @@ The sooner it is published, the sooner Google starts to trust the domain. Phase 
 
 ## Content review
 
-- [ ] **Phase 1 pilot lesson:** read and do, as a reader, the introduction (`fase-1/index.mdx`) and lesson 1, «La shell: comandos y rutas» ("The shell: commands and paths") (`fase-1/comandos-basicos-terminal.mdx`), and say whether the template and the tone work for the other nine. Until then, no more are written. Decisions taken while writing it: Multipass is installed in lesson 4, the title and the URL come from real searches, and the term «terminal» is explained now in this lesson.
+- [x] **Phase 1 pilot lesson** (reviewed by the author on 2026-10-12): read and do, as a reader, the introduction (`fase-1/index.mdx`) and lesson 1, «La shell: comandos y rutas» ("The shell: commands and paths") (`fase-1/comandos-basicos-terminal.mdx`), and say whether the template and the tone work for the other nine. Until then, no more are written. Decisions taken while writing it: Multipass is installed in lesson 4, the title and the URL come from real searches, and the term «terminal» is explained now in this lesson.
 - [ ] **WSL not verified in lesson 1:** it was checked on a Docker Ubuntu, not on WSL. It should be tested on a Windows machine: that WSL opened from Windows Terminal starts in `/mnt/c/Users/…`, the key for `~` (AltGr + 4) and the `-bash:` prefix of the errors.
 - [ ] Read and do, as a reader, **lesson 1, «Qué es el backend»** ("What is the backend") (`fase-0/que-es-el-backend.mdx`) and rewrite it in your voice. It was written by an agent from the 2026-10-04 spec. Try the Open-Meteo exercise in your browser.
 - [ ] Read and do, as a reader, **lesson 2, «Modelo cliente-servidor»** ("Client-server model") (`web/src/content/docs/fase-0/modelo-cliente-servidor.mdx`) and rewrite it in their voice. Answer:
