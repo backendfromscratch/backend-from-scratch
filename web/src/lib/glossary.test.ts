@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  acronymIn,
+  acronymParts,
   glossaryEntryId,
   sortGlossary,
   termIdFromEntryId,
@@ -116,5 +118,60 @@ describe('explainingLessons', () => {
     expect(() => explained([{ id: 'port', lesson: 'ip-port-sockets' }])).toThrow(
       /"port".*"ip-port-sockets"/,
     );
+  });
+});
+
+describe('acronymParts', () => {
+  const templates = {
+    plain: '{letters} viene del inglés {stands}.',
+    translated: '{letters} viene del inglés {stands} («{translation}»).',
+  };
+  const api = { letters: 'API', stands: 'Application Programming Interface' };
+
+  it('marks the English words as foreign on a page in another language', () => {
+    expect(acronymParts(api, templates, true)).toEqual([
+      { text: 'API' },
+      { text: ' viene del inglés ' },
+      { text: 'Application Programming Interface', foreign: true },
+      { text: '.' },
+    ]);
+  });
+
+  it('uses the template with the translation when there is one', () => {
+    const parts = acronymParts(
+      { ...api, translation: 'interfaz de programación' },
+      templates,
+      true,
+    );
+    expect(parts.map((part) => part.text).join('')).toBe(
+      'API viene del inglés Application Programming Interface («interfaz de programación»).',
+    );
+  });
+
+  it('does not mark anything on an English page', () => {
+    const parts = acronymParts(
+      api,
+      { plain: '{letters} stands for {stands}.', translated: '' },
+      false,
+    );
+    expect(parts.some((part) => part.foreign)).toBe(false);
+  });
+
+  it('leaves an unknown placeholder as it is', () => {
+    const parts = acronymParts(api, { plain: '{letters} {other}', translated: '' }, false);
+    expect(parts.map((part) => part.text).join('')).toBe('API {other}');
+  });
+});
+
+describe('acronymIn', () => {
+  it('finds the first group of capital letters', () => {
+    expect(acronymIn('API')).toBe('API');
+    expect(acronymIn('Dirección IP')).toBe('IP');
+    expect(acronymIn('TTL (en DNS)')).toBe('TTL');
+  });
+
+  it('ignores words that only start with a capital', () => {
+    expect(acronymIn('Servidor autoritativo')).toBeUndefined();
+    expect(acronymIn('localhost')).toBeUndefined();
   });
 });

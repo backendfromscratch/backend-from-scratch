@@ -2,7 +2,7 @@
  * Sätteri plugin (Astro 7's Markdown processor): replaces each ```mermaid block with its diagram
  * as HTML (sequences or chains). No JavaScript in the browser, with the text in the HTML (search
  * engines and screen readers read it) and using the theme colors. A diagram that cannot be drawn
- * fails the build. Registered by src/integrations/diagrams.ts.
+ * fails the build. Registered by src/integrations/markdown-plugins.ts.
  */
 import { fileURLToPath } from 'node:url';
 import { parseChain, renderChain } from './chain';

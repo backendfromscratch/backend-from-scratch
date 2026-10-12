@@ -29,7 +29,7 @@ What research on reading and learning says works best in courses and technical a
    - Concrete before abstract: real names, real numbers and real outputs (`example.com`, `200`, `ana@portatil`), not «un servidor X» or «cierto código».
 4. **Analogies with their limits.** Always with `<Analogy>` and its `limits` slot (the build fails without it). The analogy comes from everyday life, not from another technology the reader may not know, and the limits say where it stops being true before it causes a wrong idea.
 5. **The expected output of every command.** Every `<TryIt>` has its real `output` (see "Terminal exercises"), and the explanation says what to look at in it («fíjate en el `200` de la primera línea») and what to do if it is different: the most likely error and how to fix it.
-6. **Questions to check what was learned** (retrieval practice: trying to remember fixes things better than reading again; Roediger and Karpicke, 2006). The `<SelfCheck>` of "¿Lo has entendido?":
+6. **Questions to check what was learned** (retrieval practice: trying to remember fixes things better than reading again; Roediger and Karpicke, 2006). The questions of "¿Lo has entendido?" (a `<Quiz>` in the pilot lesson, `<SelfCheck>` in the others; see "Quiz"):
    - make the reader apply the idea to a new case (a scenario, an output to interpret, a decision), never repeat a sentence from the lesson word for word;
    - at least one of them is a situation («Tu web devuelve 502 a las tres de la mañana: ¿qué miras primero?»);
    - the answer explains why, not only what.
@@ -53,7 +53,7 @@ The order is fixed. Each section is an `##`, except the header, which comes from
 6. `## Ya lo has visto`: where the reader has already come across this without knowing it (the browser, the phone, the home wifi) and, if they code, in their code (`fetch`, DevTools). What anyone can see goes first; the points for people who code go at the end, after a standalone line «Y si programas:» («And if you code:»).
 7. `## Errores comunes`
 8. `## Resumen`: 3 to 5 points.
-9. `## ¿Lo has entendido?`: 2 to 4 `<SelfCheck>`.
+9. `## ¿Lo has entendido?`: 2 to 4 `<SelfCheck>`. Pilot since 2026-10-12: a `<Quiz>` of 6 questions in «Qué es el backend» (see "Quiz"); if the author approves it, it replaces `<SelfCheck>` in every lesson.
 10. `## Para profundizar`: external links (MDN, RFCs…).
 
 In English, the headings are: The problem, The analogy, How it really works, Try it, You have already seen it, Common mistakes, Summary, Did you get it?, Further reading.
@@ -98,7 +98,48 @@ import SelfCheck from '~/components/SelfCheck.astro';
   - `lang` changes the highlighting of `cmd` (default `sh`); use `lang="http"` when what the reader types is an HTTP message and not a command.
 - `<Analogy>…<div slot="limits">…</div></Analogy>`: without `limits`, the build fails.
 - `<SelfCheck question="¿…?">answer</SelfCheck>`
+- `<Quiz>`, `<QuizQuestion>` and `<QuizOption>`: the test at the end of a lesson (see "Quiz").
 - From Starlight (`@astrojs/starlight/components`): `Aside`, `Tabs`/`TabItem`, `Steps`, `FileTree`, `Code`, `Badge`, `Card`/`CardGrid`, `LinkCard`.
+
+## Quiz
+
+The test at the end of a lesson (pilot: «Qué es el backend», 2026-10-12). The reader chooses an answer, checks it and sees at once whether it was right and why; at the end, the score and links to the sections of the lesson to review. Each question is checked with a button and not on choosing, because with the keyboard the arrows move through the options and would choose them.
+
+```mdx
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+<Quiz>
+
+<QuizQuestion
+  question="La web de una tienda comprueba en el formulario que tienes más de 18 años. ¿Es suficiente?"
+  review="Por qué no puede hacerlo todo el frontend"
+>
+
+<QuizOption text="No: el backend tiene que volver a comprobar la edad." correct>
+
+Why it is right, in one or two sentences.
+
+</QuizOption>
+
+<QuizOption text="Sí, siempre que el formulario esté bien programado.">
+
+Why it is wrong: the mistaken idea behind it, and what is true instead.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+```
+
+- **6 questions**, with 3 options each and exactly one `correct`. The right one goes in a different position from one question to the next, and it is not the longest one.
+- **Wrong answers that look right:** each one is a mistake people really make (the lesson's "Errores comunes" are a good source), not an obvious joke. Multiple choice only makes the reader remember if the wrong options compete (Little and Bjork, 2012).
+- **Every option explains itself:** the right one, why; a wrong one, why not. The reader sees the explanation of what they chose and of the right answer right after checking, so a wrong answer is not remembered as true (Butler and Roediger, 2008).
+- **`review` is the text of a heading of the same page**, the one that explains the question. If it does not exist, the build fails. In English, a straight apostrophe matches the typographic one of the heading.
+- The rest of principle 6 still applies: apply the idea to a new case, at least one situation, and nothing copied from the lesson. The tone is not an exam: «Has acertado 4 de 6», never a pass or a fail.
+- `question` and `text` are props: they are not Markdown, so in English write the typographic apostrophe (’) yourself. The explanations are Markdown.
 
 ## Diagrams
 
@@ -122,6 +163,15 @@ term: Puerto
 short: Una o dos frases. Sin jerga que no esté a su vez en el glosario.
 related: [server, localhost]   # ids of other terms; they must exist in the same language
 lesson: ip-ports-sockets       # optional: the translationKey of the lesson that explains it
+```
+
+A term with an acronym (capital letters: «API», «Dirección IP», «TTL (en DNS)») says what the letters stand for, so the reader learns what it literally means too. The popover and the glossary page show it above the definition («API viene del inglés *Application Programming Interface* («interfaz de programación de aplicaciones»).»), with the English words marked `lang="en"` for screen readers. Without it, the build fails. The definition (`short`) does not repeat it.
+
+```yaml
+acronym:
+  letters: API                                 # as they appear in the term
+  stands: Application Programming Interface    # in English: Title Case for names, lowercase for measures (time to live)
+  translation: interfaz de programación de aplicaciones   # only in Spanish
 ```
 
 The glossary links each term to the lesson that explains it («Se explica en…», "Explained in…"): by default, the first one in the course that uses it with `<Term>`, counting the phase introductions. If that lesson only mentions it and another one explains it, point to the right one with `lesson`. If the key does not exist in any language, the build fails.
@@ -229,7 +279,7 @@ Used when a lesson is drafted and again when it is reviewed (the independent rev
 **Practice (5, 6)**
 - [ ] Every command has its real output, says what to look at and what to do if it is different.
 - [ ] "Pruébalo" has a goal: something to find out or to fix.
-- [ ] Each `<SelfCheck>` makes the reader apply the idea; at least one asks about a situation, and the answers explain why.
+- [ ] Each `<SelfCheck>` or quiz question makes the reader apply the idea; at least one asks about a situation, and the answers explain why. In a quiz, the wrong options are real mistakes and each one says why it is wrong.
 
 **Stories and voice (7, 8)**
 - [ ] "El problema" starts from a concrete situation.

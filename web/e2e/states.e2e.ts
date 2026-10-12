@@ -6,7 +6,7 @@ import { strings as tcpStrings } from '../src/playgrounds/tcp-handshake/strings'
 import { expectAccessible, hydrate, open, settled, themes } from './axe';
 
 // What the page scan does not see, because it only appears after something is done: the labs'
-// states, the menu on a phone, a glossary popover and the folded parts of the explorer.
+// states, a quiz answered, the menu on a phone, a glossary popover and the folded parts of the explorer.
 
 /** The DNS lab answers with the responses recorded for its unit tests: no network, same result. */
 async function recordedDns(page: Page): Promise<void> {
@@ -92,6 +92,29 @@ for (const theme of themes) {
       // The decrypted message above also uses .crypto-lab__good: look for the verdict's text.
       await expect(lab.locator('.crypto-lab__good', { hasText: t.valid })).toBeVisible();
       await expectAccessible(page, '.crypto-lab');
+    });
+
+    test('the quiz: a right answer, a wrong one and the score', async ({ page }) => {
+      await open(page, '/fase-0/que-es-el-backend/', theme);
+      const questions = page.locator('.quiz__question');
+      const answer = async (index: number, option: number) => {
+        await questions.nth(index).locator('.quiz__choice').nth(option).click();
+        await questions.nth(index).locator('.quiz__check').click();
+      };
+      // The first one wrong and the rest right: both marks and the sections to review show up.
+      await answer(0, 0);
+      for (const [index, option] of [
+        [1, 2],
+        [2, 0],
+        [3, 2],
+        [4, 1],
+        [5, 0],
+      ] as const) {
+        await answer(index, option);
+      }
+      await expect(page.locator('.quiz__score')).toHaveText('Has acertado 5 de 6.');
+      await expect(page.locator('.quiz__review-list a')).toHaveCount(1);
+      await expectAccessible(page, '.quiz');
     });
 
     test('a glossary popover, open', async ({ page }) => {

@@ -11,7 +11,7 @@ import { localeLabels } from './src/lib/locales';
 import { fallbackUrls } from './src/lib/translations';
 import sitemap from '@astrojs/sitemap';
 import { siteTitle, siteUrl } from './src/data/site';
-import { diagrams } from './src/integrations/diagrams';
+import { markdownPlugins } from './src/integrations/markdown-plugins';
 
 // The fallback copies Starlight would generate: they are deleted from the build and kept out of the sitemap.
 const fallbacks = new Set(
@@ -24,8 +24,9 @@ export default defineConfig({
   integrations: [
     // Before Starlight: deletes the fallback copies before Pagefind indexes the build.
     dropFallbacks(fallbacks),
-    // Before Starlight: ```mermaid blocks are converted to HTML at build time (src/lib/diagrams/).
-    diagrams(),
+    // Before Starlight: ```mermaid blocks are converted to HTML at build time (src/lib/diagrams/),
+    // and a glossary term keeps the punctuation glued to it on its line (src/lib/term-punctuation.ts).
+    markdownPlugins(),
     starlight({
       title: siteTitle,
       // Spanish lives at the root (no /es/) and English under /en/.

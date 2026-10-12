@@ -162,6 +162,7 @@ A `LessonIntro` component renders these fields at the start of each lesson. If a
 | `<TryIt>`                   | "Try it in your terminal" block: command, expected output and explanation. Supports per-operating-system variants (macOS/Linux and Windows).                                         |
 | `<Analogy>`                 | The analogy and its "where the analogy breaks down" section                                                                                                                          |
 | `<SelfCheck question="…">`  | A question with a collapsible answer (`<details>`)                                                                                                                                   |
+| `<Quiz>`                    | The test at the end of a lesson (pilot since 2026-10-12): questions with options, the explanation of each answer and the score. Rules in the style guide, "Quiz"                      |
 | `LessonIntro`               | The lesson header (see §5.2)                                                                                                                                                         |
 
 ### 5.4 Glossary
