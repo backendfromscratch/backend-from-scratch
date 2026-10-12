@@ -21,6 +21,7 @@ The code has been on GitHub since 2026-10-09: `backendfromscratch/backend-from-s
 
 ### 2. Unblock Phase 1
 
+- [ ] **You:** try the quiz at the end of «Qué es el backend» (pilot, 2026-10-12): 6 questions with three options, an explanation for each one and the score at the end. If it works, Claude turns the `<SelfCheck>` of the other Phase 0 lessons into quizzes and it goes into the Phase 1 template. Rules in `docs/style-guide.md`, "Quiz".
 - [ ] **You:** review the pilot: read and do, as a reader, the introduction and lesson 1 of Phase 1. The other nine lessons wait for your verdict on the template and the tone. While reading, note what was hard or surprising for you when you learned it: those become the «Nota del autor» (principle 8 in the style guide).
 - [x] **You:** two quick decisions before writing more (2026-10-11):
   - English punctuation: American, the period inside the quotation marks. Phase 0 is changed and the rule is in the style guide ("Translation");

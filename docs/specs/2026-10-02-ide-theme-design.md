@@ -87,10 +87,11 @@ No MDX lesson needs changes: `<Term>`, `<TryIt>`, `<Analogy>`, `<SelfCheck>` and
 | Component | New look |
 |---|---|
 | `LessonIntro` | A quote block (`>`) with the sentence in large type, the goals as tasks (`- [ ]`) and the prerequisites as imports: `import 01-modelo-cliente-servidor.md // requisito previo` |
-| `<Term>` | Term with an accent wavy underline. The definition opens like an IDE's info box: a `(término) protocolo` header, a body with the definition and a footer with the «Ir a la definición» link. It keeps the current behavior (touch, keyboard and mouse) |
+| `<Term>` | Term with an accent wavy underline. The definition opens like an IDE's info box: a header with the term in monospace (the `(término)` label VS Code-style was removed on 2026-10-12: there is only one kind, so it said nothing), a body with the definition and a footer with the «Ir a la definición» link. It keeps the current behavior (touch, keyboard and mouse) |
 | `<TryIt>` | The integrated terminal panel: a header with the title and the system tabs (macOS / Linux · Windows), the command with its `$` prompt and the usual copy button, the output and the explanation as the panel footer |
 | `<Analogy>` | A `/* analogía */` header, the text and "where it breaks down" as a `//` comment block |
 | `<SelfCheck>` | An entry in the «PROBLEMAS» panel: a `?` icon, the question and the collapsible answer |
+| `<Quiz>` | Each question, a panel like `<SelfCheck>`, numbered in accent; the answers marked in words («tu respuesta», «respuesta correcta») and with a `string` (right) or `accent` (wrong) border |
 | `<Encapsulation>` | The same blocks, with the token colors (`keyword`, `string`, `accent`…) |
 | Code (Expressive Code) | `tokyo-night` theme in dark and `one-light` in light, with frames in the style of the panels |
 | Mermaid | Colors adjusted to the palette in both themes, if `astro-mermaid` allows it through theme variables; if not, its default dark and light themes |

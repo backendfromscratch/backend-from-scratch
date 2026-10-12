@@ -85,3 +85,52 @@ export function explainingLessons(
   }
   return result;
 }
+
+/** What the letters of a term stand for: «API» → «Application Programming Interface». */
+export interface Acronym {
+  /** The letters, as they appear in the term («IP» in «Dirección IP»). */
+  letters: string;
+  /** The words they come from, in English. */
+  stands: string;
+  /** Their literal translation, only in the languages that are not English. */
+  translation?: string;
+}
+
+/** A piece of text; `foreign` marks the English words on a page in another language. */
+export interface TextPart {
+  text: string;
+  foreign?: boolean;
+}
+
+/**
+ * The sentence that says what an acronym stands for, in pieces, so the English words can be
+ * marked with their language (a screen reader then pronounces them in English). `templates` are
+ * the UI strings with {letters}, {stands} and {translation}: one without a translation and one with it.
+ */
+export function acronymParts(
+  acronym: Acronym,
+  templates: { plain: string; translated: string },
+  foreign: boolean,
+): TextPart[] {
+  const template = acronym.translation ? templates.translated : templates.plain;
+  const values: Record<string, string> = {
+    letters: acronym.letters,
+    stands: acronym.stands,
+    translation: acronym.translation ?? '',
+  };
+  return template
+    .split(/(\{\w+\})/)
+    .filter((piece) => piece !== '')
+    .map((piece) => {
+      const name = /^\{(\w+)\}$/.exec(piece)?.[1];
+      if (name === undefined || !(name in values)) return { text: piece };
+      return name === 'stands' && foreign
+        ? { text: values[name]!, foreign: true }
+        : { text: values[name]! };
+    });
+}
+
+/** The first group of capital letters in a term, if it has one: «TTL (en DNS)» → «TTL». */
+export function acronymIn(term: string): string | undefined {
+  return /\b[A-Z]{2,}\b/.exec(term)?.[0];
+}

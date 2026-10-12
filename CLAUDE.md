@@ -82,7 +82,7 @@ pnpm knip                    # unused files, exports and dependencies (knip.json
 
 - **The build fails on purpose** if an internal link is broken or crosses languages (`starlight-links-validator`), if a mermaid block can't be drawn, if a `<Term>` has no glossary entry, if an `<Analogy>` has no `limits`, if a UI string is missing in one language or if an SEO audit rule breaks. Fix the cause; don't disable the check.
 - Tests live next to the code (`x.ts` → `x.test.ts`). The ones that render a playground in a simulated document are named `*.dom.test.tsx`, start with `// @vitest-environment happy-dom` and use `web/src/playgrounds/dom-test.ts`.
-- Browser tests live in `web/e2e/` and are named `*.e2e.ts`, so Vitest does not pick them up. They run axe-core (WCAG 2.2 A and AA, plus "Label in Name") on every page of the sitemap and on the states that only appear after doing something (`states.e2e.ts`: the labs, the glossary popover, the open explorer, the phone menu), in dark and light. A violation that is not ours to fix goes in the `known` list of `e2e/axe.ts`, with its reason. The first time, `pnpm --filter web exec playwright install chromium`.
+- Browser tests live in `web/e2e/` and are named `*.e2e.ts`, so Vitest does not pick them up. They run axe-core (WCAG 2.2 A and AA, plus "Label in Name") on every page of the sitemap and on the states that only appear after doing something (`states.e2e.ts`: the labs, a quiz answered, the glossary popover, the open explorer, the phone menu), in dark and light. A violation that is not ours to fix goes in the `known` list of `e2e/axe.ts`, with its reason. The first time, `pnpm --filter web exec playwright install chromium`.
 - prettier doesn't touch `.md` or `.mdx` files (`.prettierignore`): content formatting is set by `docs/style-guide.md`.
 - **CI** (`.github/workflows/ci.yml`): on every PR and every push to `main` it runs `format:check`, zizmor (the workflows), `check`, `knip`, `test`, `build` and `test:e2e`. It doesn't deploy. Actions are pinned by commit SHA (with the version in a comment); Dependabot updates them.
 - **Supply chain** (`pnpm-workspace.yaml`): pnpm installs no version younger than 7 days and refuses versions published with weaker guarantees. If an urgent security fix is newer, add its exact version to `minimumReleaseAgeExclude`. Design in `docs/specs/2026-10-02-site-and-phase-0-design.md`, §7.
@@ -111,7 +111,7 @@ Astro generates static HTML. Starlight provides the base of a documentation site
 Paths relative to `web/`:
 
 ```
-astro.config.ts                 integrations and their order: drop-fallbacks and diagrams before Starlight; seo-audit, last
+astro.config.ts                 integrations and their order: drop-fallbacks and markdown-plugins before Starlight; seo-audit, last
 src/content.config.ts           schemas: docs (`lesson` header, `translationKey`), i18n (required UI strings) and glossary
 src/content/docs/               MDX pages: Spanish at the root (fase-0/…) and English in en/ (en/phase-0/…)
 src/content/glossary/           one YAML per term and language (es/port.yaml, en/port.yaml)
@@ -122,8 +122,10 @@ src/data/playgrounds.ts         labs and playgrounds, for the /playgrounds/ page
 src/data/site.ts                public URL, site name in each language and the content license
 src/routeData.ts                Starlight middleware: fixes the sidebar, pagination, hreflang and language picker for translated routes
 src/pages/og/[...route].png.ts  a 1200 × 630 PNG per page (og:image), generated at build time
-src/integrations/               our own Astro integrations: drop-fallbacks (deletes the fallback pages), diagrams and seo-audit
-src/components/                 lessons (Term, TryIt, Analogy, SelfCheck), general pages (PhaseList, PlaygroundList, GlossaryList, CodeLens)
+src/integrations/               our own Astro integrations: drop-fallbacks (deletes the fallback pages), markdown-plugins
+                                (registers our Sätteri plugins: diagrams and term punctuation) and seo-audit
+src/components/                 lessons (Term, TryIt, Analogy, SelfCheck, Quiz with QuizQuestion and QuizOption), general pages (PhaseList, PlaygroundList, GlossaryList, CodeLens),
+                                AcronymLine (what a glossary acronym stands for, in Term and GlossaryList)
                                 and layout (Outline, Minimap, ExplorerToggle; LessonIntro, the lesson header, from overrides/PageTitle.astro)
 src/components/overrides/       replacements for Starlight components, registered in astro.config.ts: Header, Sidebar, PageTitle, LanguageSelect,
                                 TwoColumnContent, PageSidebar, Pagination, Footer, SiteTitle and ThemeSelect
@@ -137,11 +139,13 @@ src/lib/                        pure logic, no DOM, with tests:
   locales.ts, links.ts          the course languages and each language's internal URLs
   content-i18n.ts               UI strings in the content's language, not the URL's
   lessons.ts, sidebar.ts        what a lesson is and which phase it belongs to; one menu group per published phase
-  glossary.ts                   glossary ids, alphabetical order and the lesson that explains each term
+  glossary.ts                   glossary ids, alphabetical order, the lesson that explains each term and what an acronym stands for
   explorer.ts, outline.ts       file explorer and page outline
   minimap.ts, theme.ts          minimap, and the theme button's choice
   explorer-panel.ts             whether the side panel starts hidden
   reading.ts                    reading minutes
+  quiz.ts                       the quiz: score, sections to review and the heading each question links to
+  term-punctuation.ts           Sätteri plugin: a glossary term and the punctuation glued to it stay on one line
   storage.ts                    localStorage that doesn't fail (private browsing, full quota)
   structured-data.ts            JSON-LD: breadcrumbs and the site name (WebSite, home page only)
   color.ts                      WCAG contrast
@@ -162,7 +166,7 @@ e2e/                            browser tests with Playwright against the built 
 
 - **Translated routes.** Starlight assumes a page's translation has the same route with another language prefix, and that's not the case here (`/fase-0/que-es-dns/` ↔ `/en/phase-0/what-is-dns/`). The frontmatter's `translationKey` links each pair: `lib/translations.ts` builds the index and `routeData.ts` uses it to fix what Starlight gets wrong. The fallback pages Starlight would generate for untranslated pages are deleted from the build and the sitemap (`integrations/drop-fallbacks.ts`). Rules in `docs/style-guide.md`, "Routes, translations and SEO".
 - **Pure logic, UI that only renders.** Anything that decides something goes in `src/lib/` (or in each playground's logic, like `machine.ts` in `tcp-handshake`) as pure functions with tests. The `.astro` and `.tsx` files only call it and render. The playground pattern is in `docs/style-guide.md`, "Playgrounds".
-- **Integration order matters** (`astro.config.ts`): `drop-fallbacks` deletes the fallback pages before Pagefind indexes, `diagrams` turns mermaid blocks into HTML before Starlight processes the Markdown, and `seo-audit` goes last because it needs the sitemap already written.
+- **Integration order matters** (`astro.config.ts`): `drop-fallbacks` deletes the fallback pages before Pagefind indexes, `markdown-plugins` turns mermaid blocks into HTML before Starlight processes the Markdown, and `seo-audit` goes last because it needs the sitemap already written.
 
 ---
 

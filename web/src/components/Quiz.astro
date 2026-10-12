@@ -1,0 +1,154 @@
+---
+import { contentT } from '~/lib/content-i18n';
+
+// The test at the end of a lesson («¿Lo has entendido?»): <QuizQuestion>s with their
+// <QuizOption>s. Each question is checked on its own and explains the answer at once; at the
+// end, the score and the sections to review. Rules in docs/style-guide.md, "Quiz".
+const t = contentT(Astro.locals);
+---
+
+<div
+  class="quiz"
+  data-pick={t('quiz.pick')}
+  data-right={t('quiz.right')}
+  data-wrong={t('quiz.wrong')}
+  data-score-all={t('quiz.scoreAll')}
+  data-score-some={t('quiz.scoreSome')}
+>
+  <slot />
+  <div class="quiz__result" role="status">
+    <div class="quiz__summary" hidden>
+      <p class="quiz__score"></p>
+      <div class="quiz__review" hidden>
+        <p>{t('quiz.review')}</p>
+        <ul class="quiz__review-list"></ul>
+      </div>
+      <button type="button" class="quiz__retry">
+        {t('quiz.retry')}
+      </button>
+    </div>
+  </div>
+</div>
+
+<script>
+  import { quizResult, scoreText, type Answer } from '~/lib/quiz';
+
+  document.querySelectorAll<HTMLElement>('.quiz').forEach((quiz, quizIndex) => {
+    const questions = [...quiz.querySelectorAll<HTMLElement>('.quiz__question')];
+    const answers = new Map<HTMLElement, Answer>();
+    const summary = quiz.querySelector<HTMLElement>('.quiz__summary')!;
+    const strings = quiz.dataset;
+
+    const radios = (question: HTMLElement) => [
+      ...question.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+    ];
+    // The radio buttons of a question form a group: one answer, and the arrows move through them.
+    questions.forEach((question, index) => {
+      for (const radio of radios(question)) radio.name = `quiz-${quizIndex}-${index}`;
+    });
+
+    function check(question: HTMLElement) {
+      const verdict = question.querySelector<HTMLElement>('.quiz__verdict')!;
+      const chosen = radios(question).find((radio) => radio.checked);
+      if (!chosen) {
+        verdict.textContent = strings.pick ?? '';
+        return;
+      }
+      const option = chosen.closest<HTMLElement>('.quiz__option')!;
+      const right = question.querySelector<HTMLElement>('.quiz__option[data-correct]')!;
+      const correct = option === right;
+      for (const radio of radios(question)) radio.disabled = true;
+      question.querySelector<HTMLButtonElement>('.quiz__check')!.hidden = true;
+      option.classList.add(correct ? 'is-right' : 'is-wrong');
+      option.querySelector<HTMLElement>('.quiz__mark--yours')!.hidden = false;
+      option.querySelector<HTMLElement>('.quiz__why')!.hidden = false;
+      if (!correct) {
+        right.classList.add('is-answer');
+        right.querySelector<HTMLElement>('.quiz__mark--right')!.hidden = false;
+        right.querySelector<HTMLElement>('.quiz__why')!.hidden = false;
+      }
+      verdict.textContent = (correct ? strings.right : strings.wrong) ?? '';
+      answers.set(question, {
+        correct,
+        review: { href: question.dataset.reviewHref!, text: question.dataset.reviewText! },
+      });
+      if (answers.size === questions.length) finish();
+    }
+
+    function finish() {
+      const result = quizResult(questions.map((question) => answers.get(question)!));
+      quiz.querySelector('.quiz__score')!.textContent = scoreText(result, {
+        all: strings.scoreAll ?? '',
+        some: strings.scoreSome ?? '',
+      });
+      const list = quiz.querySelector<HTMLElement>('.quiz__review-list')!;
+      list.replaceChildren(
+        ...result.review.map(({ href, text }) => {
+          const item = document.createElement('li');
+          const link = document.createElement('a');
+          link.href = href;
+          link.textContent = text;
+          item.append(link);
+          return item;
+        }),
+      );
+      quiz.querySelector<HTMLElement>('.quiz__review')!.hidden = result.review.length === 0;
+      summary.hidden = false;
+    }
+
+    function reset() {
+      answers.clear();
+      for (const question of questions) {
+        for (const radio of radios(question)) {
+          radio.checked = false;
+          radio.disabled = false;
+        }
+        question.querySelector<HTMLButtonElement>('.quiz__check')!.hidden = false;
+        question.querySelector<HTMLElement>('.quiz__verdict')!.textContent = '';
+        for (const option of question.querySelectorAll<HTMLElement>('.quiz__option')) {
+          option.classList.remove('is-right', 'is-wrong', 'is-answer');
+          for (const hidden of option.querySelectorAll<HTMLElement>('.quiz__mark, .quiz__why')) {
+            hidden.hidden = true;
+          }
+        }
+      }
+      summary.hidden = true;
+      radios(questions[0]!)[0]?.focus();
+    }
+
+    for (const question of questions) {
+      question.querySelector('.quiz__check')!.addEventListener('click', () => check(question));
+    }
+    quiz.querySelector('.quiz__retry')!.addEventListener('click', reset);
+  });
+</script>
+
+<style>
+  .quiz {
+    counter-reset: quiz;
+  }
+  .quiz__summary {
+    margin-top: 1rem;
+    padding: 1rem;
+    border: 1px solid var(--ide-accent);
+    border-radius: 0.375rem;
+    background: var(--ide-chrome);
+  }
+  .quiz__score {
+    font-weight: 600;
+    color: var(--ide-strong);
+  }
+  .quiz__retry {
+    margin-top: 0.75rem;
+    padding: 0.375rem 0.875rem;
+    border: 1px solid var(--ide-border);
+    border-radius: 0.25rem;
+    background: var(--ide-bg);
+    color: var(--ide-strong);
+    font: inherit;
+    cursor: pointer;
+  }
+  .quiz__retry:hover {
+    border-color: var(--ide-accent);
+  }
+</style>
