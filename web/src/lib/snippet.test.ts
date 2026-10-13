@@ -66,5 +66,6 @@ describe('readProjectFile', () => {
   it('refuses what is not there, or outside projects/', () => {
     expect(() => readProjectFile('tienda-api/no-existe.ts')).toThrow('There is no project file');
     expect(() => readProjectFile('../package.json')).toThrow('There is no project file');
+    expect(() => readProjectFile('../projects-old/x.ts')).toThrow('There is no project file');
   });
 });

@@ -4,7 +4,7 @@
  * `// #region name` and `// #endregion name`. A region that does not exist fails the build.
  */
 import { existsSync, readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 
 const marker = /^\s*\/\/ #(end)?region\b.*$/;
 
@@ -65,7 +65,7 @@ const projects = resolve(process.cwd(), '..', 'projects');
 /** A file of a project: `tienda-api/04-servidor-http/src/app.ts`. */
 export function readProjectFile(file: string): string {
   const path = resolve(projects, file);
-  if (!path.startsWith(projects) || !existsSync(path)) {
+  if (!path.startsWith(projects + sep) || !existsSync(path)) {
     throw new Error(`There is no project file «${file}» in ${projects}`);
   }
   return readFileSync(path, 'utf8');

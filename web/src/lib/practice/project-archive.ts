@@ -55,7 +55,7 @@ export function tarGz(entries: ArchiveEntry[]): Buffer {
 }
 
 /** The `// #region` markers that let lessons show part of a file: the reader never sees them. */
-const regionMarker = /^\s*\/\/ #(end)?region\b.*\n/gm;
+const regionMarker = /^\s*\/\/ #(end)?region\b.*(\n|$)/gm;
 
 /** A file as the reader gets it: code files without region markers, so line numbers match the lessons. */
 function readerCopy(path: string): Buffer {

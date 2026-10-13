@@ -17,7 +17,8 @@ function fakeStep(): string {
   writeFileSync(join(step, 'package.json'), '{"name":"tienda-api"}\n');
   writeFileSync(
     join(step, 'src', 'app.ts'),
-    "// #region saludo\nconsole.log('¡Hola, ñandú!');\n  // #endregion saludo\n",
+    // The last marker has no newline after it: it must go too.
+    "// #region saludo\nconsole.log('¡Hola, ñandú!');\n  // #endregion saludo",
   );
   writeFileSync(join(step, 'test', '.env'), 'LOG_LEVEL=silent\n');
   writeFileSync(join(step, '.env'), 'ADMIN_TOKEN=secreto\n');

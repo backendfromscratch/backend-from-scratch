@@ -7,10 +7,14 @@ import { app as appFastify } from '../comparar/fastify.ts';
 test('Express devuelve los mismos productos', async () => {
   const servidor = appExpress.listen(0, '127.0.0.1');
   await new Promise((listo) => servidor.once('listening', listo));
-  const { port } = servidor.address() as AddressInfo;
-  const res = await fetch(`http://127.0.0.1:${port}/productos`);
-  assert.equal((await res.json()).length, 3);
-  servidor.close();
+  try {
+    const { port } = servidor.address() as AddressInfo;
+    const res = await fetch(`http://127.0.0.1:${port}/productos`);
+    assert.equal((await res.json()).length, 3);
+  } finally {
+    // Aunque la comprobación falle, el servidor se cierra y los tests no se quedan colgados.
+    servidor.close();
+  }
 });
 
 test('Fastify devuelve los mismos productos', async () => {
