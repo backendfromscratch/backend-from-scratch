@@ -1,0 +1,632 @@
+---
+translationKey: migrations
+title: "Migraciones de base de datos sin perder datos"
+description: "Qué es una migración de base de datos: cambia tus tablas sin perder datos, con ficheros numerados, una tabla que los apunta y una transacción por cambio."
+sidebar:
+  label: Migraciones
+  order: 6
+lesson:
+  oneLiner: "Una migración es un fichero numerado con un cambio de tus tablas, que se aplica una sola vez y en orden. La base de datos apunta en una tabla las aplicadas, y cada una entra entera o no entra: los datos que ya había se quedan."
+  objectives:
+    - Explicar por qué borrar las tablas y crearlas otra vez deja de servir cuando hay datos de verdad.
+    - Escribir un ejecutor de migraciones de unas 30 líneas, con una tabla que apunta las aplicadas y una transacción por migración.
+    - Añadir una columna NOT NULL a una tabla con filas, en tres pasos, y planear un cambio de nombre con expandir y contraer.
+    - Explicar por qué una migración aplicada no se edita.
+  prerequisites: [node-postgres]
+---
+
+import { FileTree } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Ana quiere que la API diga cuántas unidades quedan de cada producto: una columna nueva, `stock`, en `productos`. En las lecciones 4 y 5, para cambiar una tabla editabas `bd/esquema.sql` y ejecutabas `npm run bd:crear`, que borra las tablas y las crea otra vez.
+
+Mira qué hace ese script con un pedido de verdad. Con la API en marcha, crea uno. Después, detén el servidor con <kbd>Ctrl</kbd> + <kbd>C</kbd>, ejecuta `bd:crear`, arráncalo otra vez y pide el pedido:
+
+<TryIt
+  title="Un pedido, antes y después de bd:crear"
+  cmd={`curl -s -w '\\n' -X POST localhost:3000/v2/pedidos -H 'Content-Type: application/json' -d '{"productoId":2,"cantidad":1}'\nnpm run bd:crear\ncurl -s -w '\\n' localhost:3000/v2/pedidos/26`}
+  output={`{"id":26,"productoId":2,"cantidad":1,"estado":"pendiente","creadoEn":"2026-10-13T23:10:38.774Z"}
+
+> tienda-api@1.0.0 bd:crear
+> node --env-file-if-exists=.env scripts/crear-bd.ts
+
+Tablas creadas: 4 productos, 3 categorías y 25 pedidos
+{"type":"about:blank","title":"Not Found","status":404,"detail":"No existe ese pedido"}`}
+>
+
+El pedido 26 ya no existe: `bd:crear` deja la tienda como el primer día.
+
+</TryIt>
+
+Con datos de ejemplo daba igual. Con pedidos de clientes, no puedes borrarlos para añadir una columna. Y hay otra pregunta: tu base de datos, la de los tests y la de producción necesitan el mismo cambio. ¿Cómo sabe cada una cuáles le faltan?
+
+## La analogía
+
+<Analogy>
+
+Imagina que reformas una casa con la familia dentro. Nadie la tira para añadir un enchufe. Cada obra va en una hoja numerada: «1. Levantar las paredes», «2. Un enchufe en la cocina». En la nevera, una lista con las obras ya hechas.
+
+El albañil mira la lista, hace las que faltan en orden y apunta cada una al terminar. Si una obra hecha estaba mal, no se reescribe su hoja: se añade otra, «3. Mover el enchufe».
+
+<div slot="limits">
+
+- Una obra se puede quedar a medias. Una migración en PostgreSQL no: si falla, no queda nada de ella.
+- En una casa ves si el enchufe está. En una base de datos no: por eso la lista de lo hecho vive dentro de ella, en una tabla.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Una migración es un cambio, no el esquema entero
+
+`bd/esquema.sql` desaparece. En su lugar, una carpeta con dos ficheros:
+
+<FileTree>
+
+- bd/
+  - migraciones/
+    - 001-tienda.sql las tablas de las lecciones 4 y 5
+    - 002-stock.sql la columna stock
+  - datos.sql
+
+</FileTree>
+
+Cada fichero es una **<Term id="migration">migración</Term>**: un cambio en tus tablas, en <Term id="sql">SQL</Term>. La 001 es tu `esquema.sql` con `IF NOT EXISTS` («si no existe») detrás de cada `CREATE TABLE`:
+
+<ProjectCode file="tienda-api/20-migraciones/bd/migraciones/001-tienda.sql" region="productos" />
+
+En una base de datos vacía, crea la tabla. En la tuya, que ya la tiene, no hace nada, y tus datos se quedan. Desde aquí, **las tablas solo cambian con migraciones nuevas**: la 002, la 003…
+
+### Solo hacia delante, y una tabla que lo apunta
+
+Un programa, el **ejecutor de migraciones**, aplica las que falten. Para saberlo, guarda en la propia base de datos una tabla, `migraciones`, con una fila por cada una aplicada:
+
+```
+     nombre     |          aplicada_en
+----------------+-------------------------------
+ 001-tienda.sql | 2026-10-13 23:11:01.362857+00
+ 002-stock.sql  | 2026-10-13 23:11:01.364939+00
+(2 rows)
+```
+
+Tres reglas lo hacen funcionar:
+
+- **El número decide el orden.** La 002 añade una columna a una tabla que crea la 001: al revés no funcionaría.
+- **Cada una se aplica una sola vez.** Si su nombre está en la tabla, se salta.
+- **Solo hacia delante.** Para deshacer un cambio, escribes otra migración. La historia de tus tablas es la lista de ficheros, y viaja en Git con el código ([Fase 1](/fase-1/git-por-dentro/)).
+
+¿Por qué `001` y no `1`? El ejecutor ordena los nombres como texto, letra a letra, y así `10-…` va antes que `2-…`. Con tres cifras, `002` va antes que `010`.
+
+### Cada migración, entera o nada
+
+Una migración con varias órdenes puede fallar a mitad. Si la primera ya hubiera cambiado la tabla, tu base de datos quedaría en un estado que no está en ningún fichero. Por eso el ejecutor mete cada migración en una **transacción**: un grupo de órdenes que PostgreSQL guarda todas juntas o ninguna.
+
+- `BEGIN` («empieza») abre la transacción.
+- `COMMIT` («confirma») guarda todo lo que se hizo desde el `BEGIN`.
+- `ROLLBACK` («marcha atrás») lo deshace todo, como si no hubiera pasado.
+
+En PostgreSQL, hasta un `ALTER TABLE` se deshace con `ROLLBACK`; en MySQL, no: se guarda al momento. Las transacciones las verás a fondo en la lección 8, «Transacciones».
+
+### El ejecutor, pieza a pieza
+
+El ejecutor es `scripts/migrar.ts`, y lo escribes tú, sin librerías, para ver que no hay magia: como [`node:http` antes de Hono](/fase-3/servidor-http-node/) en la Fase 3. El principio:
+
+<ProjectCode file="tienda-api/20-migraciones/scripts/migrar.ts" region="carpeta" />
+
+- `pool` es el pool de conexiones de `src/bd.ts`, el de la lección 5.
+- `process.argv[2]` es lo que escribas detrás del nombre del script. Si no escribes nada, es `undefined`, y `??` usa lo de su derecha: la carpeta `bd/migraciones`.
+
+Después, qué falta por aplicar:
+
+<ProjectCode file="tienda-api/20-migraciones/scripts/migrar.ts" region="registro" />
+
+- `CREATE TABLE IF NOT EXISTS migraciones` crea la tabla de registro la primera vez. `nombre` es la clave primaria, así que no se repite, y `aplicada_en` se rellena sola con la hora (`DEFAULT now()`).
+- `SELECT nombre FROM migraciones` lee las aplicadas, y `new Set(…)` las guarda en un conjunto: una lista a la que se pregunta «¿está este?» con `.has()`.
+- `readdir` lee los nombres de los ficheros de la carpeta. `filter` deja los `.sql`, `sort()` los ordena por nombre, y el segundo `filter` deja los que no están en el conjunto ([`filter` y `map`, en la Fase 3](/fase-3/javascript-para-backend/#elegir-y-transformar-una-lista-filter-y-map)).
+
+Y aplicarlas, cada una en su transacción:
+
+<ProjectCode file="tienda-api/20-migraciones/scripts/migrar.ts" region="aplicar" mark={[5, 9, 13]} />
+
+- `pool.connect()` pide una conexión al pool y se la queda: una transacción vive en una sola conexión.
+- Dentro del `for`, lee cada fichero, se lo manda entero a PostgreSQL y apunta su nombre en `migraciones`, con un parámetro (`$1`), como en la lección 5.
+- **El cambio y su apunte van en la misma transacción:** quedan los dos, o ninguno.
+- Si algo falla, el `catch` hace `ROLLBACK`, escribe el error, deja un <Term id="exit-code">código de salida</Term> 1 y para con `break`: la siguiente puede depender de la que ha fallado.
+- `finally` se ejecuta pase lo que pase: devuelve la conexión (`release`) y cierra el pool, para que el programa termine. `try` y `catch` son los de la [lección 8 de la Fase 3](/fase-3/errores-y-logs-node/).
+
+Poco más de 30 líneas, sin los comentarios. En `package.json`, `bd:crear` deja su sitio a `"bd:migrar": "node --env-file-if-exists=.env scripts/migrar.ts"`.
+
+### Añadir stock a una tabla que ya tiene filas
+
+Lo primero que se le ocurre a cualquiera es una sola orden: añade la columna `stock`, de tipo `integer`, que no pueda faltar (`NOT NULL`). Pruébala; como falla, no cambia nada:
+
+<TryIt
+  title="Una columna NOT NULL, de golpe"
+  lang="sql"
+  cmd="ALTER TABLE productos ADD COLUMN stock integer NOT NULL;"
+  output={`ERROR:  column "stock" of relation "productos" contains null values`}
+>
+
+Dentro de `psql -d tienda`, como en la [introducción](/fase-5/). La columna `stock` de la tabla («*relation*») `productos` tendría valores `NULL`.
+
+</TryIt>
+
+Una columna nueva llega a los cuatro productos sin valor, `NULL`, y `NOT NULL` lo prohíbe. Lo traicionero: en una tabla vacía, como la de tus tests, la misma orden funciona. **Falla donde hay datos, que suele ser producción.**
+
+La forma segura son tres pasos, en `002-stock.sql`. Primero, la columna sin la regla:
+
+<ProjectCode file="tienda-api/20-migraciones/bd/migraciones/002-stock.sql" region="columna" />
+
+`ALTER TABLE productos` («cambia la tabla productos») y `ADD COLUMN stock integer` («añade la columna stock, entera»). Las filas que ya hay la reciben vacía, y de momento se permite.
+
+Segundo, un valor para cada fila que ya había:
+
+<ProjectCode file="tienda-api/20-migraciones/bd/migraciones/002-stock.sql" region="rellenar" />
+
+El `UPDATE` de la [lección 1](/fase-5/que-es-sql/), solo en las filas sin valor. Diez es un stock de partida, hasta que Ana cuente su almacén.
+
+Tercero, ahora que ninguna fila está vacía, las reglas:
+
+<ProjectCode file="tienda-api/20-migraciones/bd/migraciones/002-stock.sql" region="reglas" />
+
+Palabra a palabra:
+
+- `ALTER COLUMN stock SET DEFAULT 0`: un producto nuevo empieza con 0 si nadie dice otra cosa.
+- `ALTER COLUMN stock SET NOT NULL`: desde ahora no puede faltar. PostgreSQL lo comprueba en todas las filas, y pasa: el paso 2 las rellenó.
+- `ADD CONSTRAINT stock_no_negativo CHECK (stock >= 0)`: una restricción con nombre: el stock nunca es negativo.
+- Las tres van en una orden, separadas por comas.
+
+¿Y `ADD COLUMN stock integer NOT NULL DEFAULT 10`, de una vez? En PostgreSQL funciona, pero los productos nuevos también empezarían con 10. Los tres pasos sirven siempre, también si el valor de cada fila se calcula con otras columnas.
+
+### Una base de datos nueva: migrar y cargar los datos
+
+Una compañera clona tu proyecto, con su base de datos vacía. Migra, y otro script, `bd:datos`, carga los datos de ejemplo:
+
+<TryIt
+  title="Una base de datos vacía, al día"
+  cmd={`npm run bd:migrar\nnpm run bd:datos`}
+  output={`> tienda-api@1.0.0 bd:migrar
+> node --env-file-if-exists=.env scripts/migrar.ts
+
+Aplicada: 001-tienda.sql
+Aplicada: 002-stock.sql
+
+> tienda-api@1.0.0 bd:datos
+> node --env-file-if-exists=.env scripts/cargar-datos.ts
+
+Datos de ejemplo cargados`}
+>
+
+Aquí la 002 no tiene filas que rellenar: los productos entran con su stock desde `bd/datos.sql`, 40 camisetas, 60 tazas, 25 sudaderas y 15 gorras.
+
+</TryIt>
+
+`bd:datos` es `scripts/cargar-datos.ts`:
+
+<ProjectCode file="tienda-api/20-migraciones/scripts/cargar-datos.ts" />
+
+Si ya hay productos, se niega, porque los repetiría: al contrario que `bd:crear`, **nunca borra nada**. En tu base de datos, contesta `La base de datos ya tiene productos`.
+
+### La API enseña el stock, solo en la versión 2
+
+En `src/datos.ts`, `stock` entra en el tipo `Producto` (`stock: number;`) y en las columnas que se piden de cada producto:
+
+<ProjectCode file="tienda-api/20-migraciones/src/datos.ts" region="columnas" mark={5} />
+
+Y en `src/esquemas.ts`, el contrato de la versión 2 lo documenta:
+
+<ProjectCode file="tienda-api/20-migraciones/src/esquemas.ts" region="producto" />
+
+La versión 1 no cambia: su adaptador, `productoV1` en `src/v1.ts`, copia solo `id`, `nombre` y el precio en euros. En la 2, un campo nuevo no rompe a nadie: es [cambiar añadiendo](/fase-4/versionado-api/#lo-primero-cambiar-añadiendo).
+
+### Renombrar sin romper: expandir y contraer
+
+Renombrar una columna es otra cosa: `ALTER TABLE productos RENAME COLUMN nombre TO titulo` tarda un instante, pero el servidor en marcha sigue pidiendo `nombre`, y falla hasta que llega el código nuevo. Con dos servidores que se actualizan por turnos, el código viejo y el nuevo conviven un rato.
+
+La solución es **expandir y contraer** (*expand and contract*): primero amplías, después recortas, y cada paso es una migración o un despliegue distinto:
+
+| Paso | Qué cambia | Quién funciona |
+|---|---|---|
+| 1. Expandir | Una migración añade `titulo` y copia en ella cada `nombre` | El código viejo, que no la ve |
+| 2. Código nuevo | Lee `titulo` y escribe en las dos columnas | El viejo y el nuevo a la vez |
+| 3. Contraer | Sin código viejo en marcha, una migración copia a `titulo` lo que el viejo escribió solo en `nombre`, y borra `nombre` | El nuevo |
+
+Nunca hay código pidiendo una columna que no existe.
+
+### Una migración aplicada no se edita
+
+Imagina que, tras migrar, cambias el `DEFAULT 0` de `002-stock.sql` por `DEFAULT 5`. Tu base de datos no se entera: la 002 ya está apuntada, y el ejecutor la salta. La de tu compañera, recién creada, sí la aplica con 5. **Mismos ficheros, distintas bases de datos**, y nada te avisa.
+
+Por eso, una migración que ya salió de tu ordenador no se toca: si estaba mal, se escribe otra, la 003.
+
+### Lo que añaden las herramientas
+
+Las herramientas de migraciones hacen lo mismo que tu ejecutor, y algo más:
+
+- **Generar el SQL.** drizzle-kit compara tus tablas, descritas en TypeScript, con su versión anterior y escribe la migración. Lo verás en la lección 9, «ORM», con tu ejecutor aplicándola.
+- **Detectar ediciones.** Flyway, muy usado con Java, guarda una huella de cada migración aplicada y se niega a seguir si un fichero ha cambiado.
+- **Deshacer y esperar turno.** node-pg-migrate, para Node, deja escribir cómo deshacer cada migración, y usa un cerrojo para que dos servidores que arrancan a la vez no apliquen la misma.
+
+## Pruébalo
+
+El objetivo: añadir el stock a tu tienda sin perder tus pedidos, y comprobar que una migración que falla no deja nada a medias.
+
+### Antes de cambiar nada
+
+<TryIt
+  title="1. productos, sin stock"
+  cmd={`psql -d tienda -c '\\d productos'`}
+  output={`                            Table "public.productos"
+     Column      |  Type   | Collation | Nullable |           Default
+-----------------+---------+-----------+----------+------------------------------
+ id              | integer |           | not null | generated always as identity
+ nombre          | text    |           | not null |
+ precio_centimos | integer |           | not null |
+Indexes:
+    "productos_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "productos_precio_centimos_check" CHECK (precio_centimos > 0)
+Referenced by:
+    TABLE "pedidos" CONSTRAINT "pedidos_producto_id_fkey" FOREIGN KEY (producto_id) REFERENCES productos(id)
+    TABLE "productos_categorias" CONSTRAINT "productos_categorias_producto_id_fkey" FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE`}
+>
+
+`\d` («*describe*») es una orden de `psql` que enseña cómo es una tabla: cada columna con su tipo, si admite `NULL` (`Nullable`) y su valor por defecto; debajo, sus claves y restricciones. Ninguna columna es `stock`.
+
+</TryIt>
+
+Con el servidor de la lección 5 en marcha, crea un pedido con el `POST` del principio y apunta su número: es el dato que no quieres perder. Hazlo ahora, porque el código nuevo pide una columna que aún no existe.
+
+### Prepara el proyecto
+
+Sigues en `~/curso-backend/fase-3/tienda-api`, con el código de la lección 5. Escribe los cambios:
+
+1. Crea la carpeta `bd/migraciones/` y mueve a ella `bd/esquema.sql` como `001-tienda.sql`. Añade `IF NOT EXISTS` detrás de cada `CREATE TABLE`.
+2. Crea `bd/migraciones/002-stock.sql`, `scripts/migrar.ts` y `scripts/cargar-datos.ts` con los bloques que has visto.
+3. Borra `scripts/crear-bd.ts`. En `package.json`, cambia `bd:crear` por `bd:migrar` y añade `"bd:datos": "node --env-file-if-exists=.env scripts/cargar-datos.ts"`.
+4. En `bd/datos.sql`, añade `stock` a los productos: 40, 60, 25 y 15.
+5. Añade `stock` en `src/datos.ts` y en `src/esquemas.ts`, como arriba.
+
+Los tests ahora preparan su base de datos con las migraciones. Descarga la carpeta de esta lección (desde `~/curso-backend/fase-3`, `curl -O https://backenddesdecero.com/practicas/tienda-api/20-migraciones.tar.gz` y `tar -xzf 20-migraciones.tar.gz`), copia su `test/` sobre el tuyo y, si te atascas, compara tu código con el suyo.
+
+### Migra, dos veces
+
+<TryIt
+  title="2. Las migraciones que faltan"
+  cmd="npm run bd:migrar"
+  output={`> tienda-api@1.0.0 bd:migrar
+> node --env-file-if-exists=.env scripts/migrar.ts
+
+Aplicada: 001-tienda.sql
+Aplicada: 002-stock.sql`}
+>
+
+Sin tabla `migraciones`, para el ejecutor faltaban las dos. La 001 no ha hecho nada, porque tus tablas ya existían; la 002 ha añadido la columna. Si sale un error de SQL, compara con la descarga. Las salidas son de PostgreSQL 18.6 y Node 26.11.1; tus fechas serán otras.
+
+</TryIt>
+
+<TryIt
+  title="3. Otra vez"
+  cmd="npm run bd:migrar"
+  output={`> tienda-api@1.0.0 bd:migrar
+> node --env-file-if-exists=.env scripts/migrar.ts
+
+No hay migraciones nuevas: la base de datos está al día`}
+>
+
+Las dos están apuntadas: nada que hacer. Por eso puede ir en cada despliegue, antes de arrancar el servidor.
+
+</TryIt>
+
+### Mira la tabla después
+
+<TryIt
+  title="4. productos, con stock"
+  cmd={`psql -d tienda -c '\\d productos'\npsql -d tienda -c 'SELECT id, nombre, stock FROM productos;'`}
+  output={`                            Table "public.productos"
+     Column      |  Type   | Collation | Nullable |           Default
+-----------------+---------+-----------+----------+------------------------------
+ id              | integer |           | not null | generated always as identity
+ nombre          | text    |           | not null |
+ precio_centimos | integer |           | not null |
+ stock           | integer |           | not null | 0
+Indexes:
+    "productos_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "productos_precio_centimos_check" CHECK (precio_centimos > 0)
+    "stock_no_negativo" CHECK (stock >= 0)
+Referenced by:
+    TABLE "pedidos" CONSTRAINT "pedidos_producto_id_fkey" FOREIGN KEY (producto_id) REFERENCES productos(id)
+    TABLE "productos_categorias" CONSTRAINT "productos_categorias_producto_id_fkey" FOREIGN KEY (producto_id) REFERENCES productos(id) ON DELETE CASCADE
+
+ id |  nombre  | stock
+----+----------+-------
+  1 | Camiseta |    10
+  2 | Taza     |    10
+  3 | Sudadera |    10
+  4 | Gorra    |    10
+(4 rows)`}
+>
+
+Fíjate en `stock`, `not null` y `0` por defecto, y en `stock_no_negativo`. Los productos tienen 10, el stock de partida del paso 2: ya existían, así que no pasaron por `datos.sql`. `SELECT * FROM migraciones;` enseña el registro.
+
+</TryIt>
+
+Intenta, en `psql -d tienda`, dejar la taza en negativo:
+
+<TryIt
+  title="5. Un stock negativo"
+  lang="sql"
+  cmd="UPDATE productos SET stock = -1 WHERE id = 2;"
+  output={`ERROR:  new row for relation "productos" violates check constraint "stock_no_negativo"
+DETAIL:  Failing row contains (2, Taza, 850, -1).`}
+>
+
+La fila resultante («*failing row*») tendría `-1`, y `stock_no_negativo` no la deja entrar.
+
+</TryIt>
+
+### La API, con y sin stock
+
+Arranca el servidor y pide los productos en las dos versiones, y tu pedido:
+
+<TryIt
+  title="6. /v2 y /v1"
+  cmd={`curl -s -w '\\n' localhost:3000/v2/productos\ncurl -s -w '\\n' localhost:3000/v1/productos\ncurl -s -w '\\n' localhost:3000/v2/pedidos/26`}
+  output={`[{"id":1,"nombre":"Camiseta","precioCentimos":2000,"stock":10},{"id":2,"nombre":"Taza","precioCentimos":850,"stock":10},{"id":3,"nombre":"Sudadera","precioCentimos":3500,"stock":10},{"id":4,"nombre":"Gorra","precioCentimos":1500,"stock":10}]
+[{"id":1,"nombre":"Camiseta","precio":20},{"id":2,"nombre":"Taza","precio":8.5},{"id":3,"nombre":"Sudadera","precio":35},{"id":4,"nombre":"Gorra","precio":15}]
+{"id":26,"productoId":2,"cantidad":1,"estado":"pendiente","creadoEn":"2026-10-13T23:10:50.995Z"}`}
+>
+
+La versión 2 trae `stock`; la 1, lo de siempre. Y tu pedido sigue ahí (cambia el 26 por tu número). Si `/v2` no trae `stock`, falta en las columnas de `src/datos.ts`.
+
+</TryIt>
+
+### Haz que una migración falle
+
+Crea `bd/migraciones/003-color.sql` con dos órdenes. La primera funcionaría; la segunda tiene una errata, `producto` sin `s`:
+
+```sql
+ALTER TABLE productos ADD COLUMN color text;
+UPDATE producto SET color = 'negro' WHERE id = 1;
+```
+
+<TryIt
+  title="7. Una migración que falla"
+  cmd={`npm run bd:migrar\npsql -d tienda -c 'SELECT color FROM productos;'`}
+  output={`> tienda-api@1.0.0 bd:migrar
+> node --env-file-if-exists=.env scripts/migrar.ts
+
+No se ha aplicado 003-color.sql: relation "producto" does not exist
+ERROR:  column "color" does not exist
+LINE 1: SELECT color FROM productos;
+               ^`}
+>
+
+El `UPDATE` ha fallado, y el `ROLLBACK` se ha llevado también el `ALTER TABLE` que funcionó: `color` no existe. Tampoco está apuntada: `migraciones` sigue con dos filas. **Borra `003-color.sql`**: era un experimento.
+
+</TryIt>
+
+### Los tests
+
+<TryIt
+  title="8. Las pruebas de las migraciones"
+  cmd="npm test -- test/migraciones.test.ts"
+  output={`> tienda-api@1.0.0 test
+> node --env-file=test/.env --test --test-concurrency=1 test/migraciones.test.ts
+
+✔ en una base de datos vacía se aplican todas, en orden, y quedan apuntadas (127.703922ms)
+✔ migrar otra vez no aplica nada: la base de datos ya está al día (90.653976ms)
+✔ una migración que falla no deja nada a medias, ni se apunta (100.938604ms)
+✔ 002 en una tabla que ya tiene filas: las que había reciben el stock de partida (205.134381ms)
+✔ bd:datos solo carga los datos en una base de datos vacía (286.897529ms)
+✔ v2 enseña el stock de cada producto, y lo documenta; v1 sigue igual (18.855768ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1008.549621`}
+>
+
+Usan `tienda_test`, nunca tu base de datos: la vacían y la migran cada vez. Si sale `No se puede usar la base de datos de los tests`, PostgreSQL no está en marcha. Tus tiempos serán otros.
+
+</TryIt>
+
+## Ya lo has visto
+
+- **Las apps de tu móvil** guardan tus datos en una pequeña base de datos dentro del teléfono. Si una actualización cambia sus tablas, trae migraciones, y tus notas siguen ahí.
+- **WordPress**, tras actualizarse, a veces pide pulsar un botón para actualizar la base de datos: son sus migraciones.
+- **Rails, Django o Laravel**, frameworks de otros lenguajes, tienen su carpeta de migraciones y una orden para aplicarlas.
+
+## Errores comunes
+
+- **Editar una migración ya aplicada.** Las bases de datos que ya la tenían no cambian: escribe otra.
+- **Añadir una columna `NOT NULL` sin valor a una tabla con filas.** En tu tabla vacía funciona y en producción falla: tres pasos.
+- **Renombrar o borrar una columna a la vez que llega el código nuevo.** El viejo, aún en marcha, la pide: expandir y contraer.
+- **Cambiar las tablas a mano con `psql` en producción.** Ese cambio no está en ningún fichero: ninguna otra base de datos lo tendrá.
+- **Numerar `1`, `2`… `10`.** Ordenados como texto, `10` va antes que `2`: usa tres cifras.
+
+## Resumen
+
+- Borrar las tablas y crearlas otra vez solo sirve sin datos que conservar.
+- Una migración es un fichero numerado con un cambio. El ejecutor aplica las que faltan, en orden, y las apunta en una tabla de la propia base de datos.
+- Cada migración va en una transacción, junto con su apunte: si algo falla, `ROLLBACK`, y no queda nada a medias.
+- Una columna `NOT NULL` en una tabla con filas va en tres pasos: la columna, un valor para cada fila y las reglas. Un cambio de nombre, con expandir y contraer.
+- Una migración aplicada no se edita: se escribe otra.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Escribes una migración con ALTER TABLE pedidos ADD COLUMN pais text NOT NULL. Tus tests pasan, pero al desplegar, la migración falla en producción. ¿Por qué?"
+  review="Añadir stock a una tabla que ya tiene filas"
+>
+
+<QuizOption text="En producción, PostgreSQL no deja cambiar una tabla mientras el servidor la está usando.">
+
+Sí deja: el cambio espera a que terminen las consultas en curso y se hace. El problema son las filas que ya hay.
+
+</QuizOption>
+
+<QuizOption text="Producción tiene pedidos, que recibirían la columna sin país: NOT NULL lo impide." correct>
+
+En la de los tests, la tabla está vacía al migrar: no hay filas que rompan la regla. En producción, sí.
+
+</QuizOption>
+
+<QuizOption text="Añadir columnas en producción exige conectarse como superusuario.">
+
+Basta con ser el dueño de la tabla, como el rol `tienda`. Y el error dice `contains null values`, no habla de permisos.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="002-stock.sql ya está aplicada en tu portátil y en producción, y descubres que el stock de partida debía ser 20. ¿Qué haces?"
+  review="Una migración aplicada no se edita"
+>
+
+<QuizOption text="Cambias el 10 por un 20 en 002-stock.sql y ejecutas npm run bd:migrar.">
+
+El ejecutor ve `002-stock.sql` apuntada y la salta: tus productos siguen con 10, en el portátil y en producción.
+
+</QuizOption>
+
+<QuizOption text="Borras la fila de 002-stock.sql de la tabla migraciones y migras otra vez, para que se aplique con el 20.">
+
+La 002 empieza con `ADD COLUMN stock`, y la columna ya existe: falla, `ROLLBACK`, y te quedas igual, con el registro roto.
+
+</QuizOption>
+
+<QuizOption text="Escribes 003, una migración nueva con el UPDATE que lo corrige." correct>
+
+Solo hacia delante: la 003 llega igual a todas las bases de datos, tengan la 002 desde hace un mes o desde hoy.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="El ejecutor dice «No se ha aplicado 004-precios.sql» y sale con error. La 004 tenía un ALTER TABLE que funcionó y un UPDATE que falló. ¿Qué hay ahora en tu base de datos?"
+  review="Cada migración, entera o nada"
+>
+
+<QuizOption text="Nada de la 004: ni el cambio del ALTER TABLE, ni su nombre en migraciones." correct>
+
+El `ROLLBACK` deshace todo lo que hizo la transacción, y el apunte iba dentro. Cuando la arregles, se aplicará entera.
+
+</QuizOption>
+
+<QuizOption text="El cambio del ALTER TABLE, pero no el del UPDATE: tienes que deshacerlo a mano antes de migrar otra vez.">
+
+Eso pasaría sin transacción. Con ella, PostgreSQL deshace también el `ALTER TABLE`.
+
+</QuizOption>
+
+<QuizOption text="La 004, apuntada como fallida en migraciones, y el ejecutor ya no la volverá a intentar.">
+
+La tabla solo guarda las aplicadas, y el apunte se deshace con el resto. La próxima vez, la 004 sigue pendiente.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Tu API corre en dos servidores que se actualizan uno detrás de otro, y quieres que la columna nombre pase a llamarse titulo. ¿Qué plan no rompe ninguna petición?"
+  review="Renombrar sin romper: expandir y contraer"
+>
+
+<QuizOption text="Una migración con RENAME COLUMN y, justo después, el código nuevo: el cambio de nombre es instantáneo.">
+
+El cambio es instantáneo, pero el código viejo sigue en marcha un rato y pide `nombre`, que ya no existe.
+
+</QuizOption>
+
+<QuizOption text="Añadir titulo, código que lee titulo y escribe en las dos, y borrar nombre al final." correct>
+
+Es expandir y contraer: en todo momento, las columnas que pide el código que está en marcha existen.
+
+</QuizOption>
+
+<QuizOption text="Parar la API, renombrar y arrancarla con el código nuevo: es la única forma de no romper nada.">
+
+Mientras la API está parada, todas las peticiones fallan: sí rompe. Y no es la única forma: expandir y contraer no para nada.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un compañero nombra sus migraciones 1-tienda.sql, 2-stock.sql… y llega a 10-envios.sql. ¿Qué pasa con este ejecutor en una base de datos vacía?"
+  review="Solo hacia delante, y una tabla que lo apunta"
+>
+
+<QuizOption text="Nada raro: sort() entiende el número del principio de cada nombre.">
+
+`sort()` compara textos, letra a letra. No sabe que `10` es un número.
+
+</QuizOption>
+
+<QuizOption text="El ejecutor se niega: los nombres tienen que empezar por tres cifras.">
+
+Este ejecutor no comprueba los nombres: acepta cualquier `.sql`. Por eso el error pasa desapercibido.
+
+</QuizOption>
+
+<QuizOption text="La 10 se aplica justo detrás de la 1, antes que la 2." correct>
+
+Como texto, `10-…` va antes que `2-…`, porque `1` va antes que `2`. Con tres cifras, `002` va antes que `010`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Una compañera clona el proyecto y tiene su PostgreSQL con una base de datos tienda vacía. ¿Qué ejecuta para tener la tienda con sus datos de ejemplo?"
+  review="Una base de datos nueva: migrar y cargar los datos"
+>
+
+<QuizOption text="Solo npm run bd:datos: crea las tablas y las llena.">
+
+`datos.sql` solo tiene `INSERT`: sin las tablas, falla con `relation "productos" does not exist`. Las tablas las crean las migraciones.
+
+</QuizOption>
+
+<QuizOption text="npm run bd:migrar y después npm run bd:datos." correct>
+
+Las migraciones crean las tablas desde la 001, y `bd:datos` las llena, porque aún están vacías.
+
+</QuizOption>
+
+<QuizOption text="Una copia de tu base de datos: las migraciones solo sirven para una que ya tiene tablas.">
+
+En una vacía, la 001 crea las tablas: así parten de cero los tests y cualquier servidor nuevo.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [ALTER TABLE](https://www.postgresql.org/docs/18/sql-altertable.html) (PostgreSQL, en inglés): todo lo que se puede cambiar de una tabla.
+- [Modifying Tables](https://www.postgresql.org/docs/18/ddl-alter.html) (PostgreSQL, en inglés): columnas y restricciones, con ejemplos.
+- [Evolutionary Database Design](https://martinfowler.com/articles/evodb.html) (Martin Fowler y Pramod Sadalage, en inglés): migraciones pequeñas, junto al código.
+- [Parallel Change](https://martinfowler.com/bliki/ParallelChange.html) (Martin Fowler, en inglés): expandir y contraer, paso a paso.
+- [node-pg-migrate](https://salsita.github.io/node-pg-migrate/) (en inglés): un ejecutor de migraciones para Node y PostgreSQL.

@@ -65,7 +65,8 @@ export const phases: Phase[] = [
   },
   {
     number: 5,
-    status: 'coming-soon',
+    status: 'available',
+    lessonCount: 10,
     title: { es: 'Bases de datos', en: 'Databases' },
     summary: {
       es: 'SQL con PostgreSQL, modelado, índices, transacciones, migraciones, ORMs y cuándo tiene sentido NoSQL.',

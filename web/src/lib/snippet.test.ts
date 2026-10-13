@@ -24,6 +24,13 @@ function f() {
 `;
 
 describe('extractRegion', () => {
+  it('reads SQL regions, marked with --', () => {
+    const sql =
+      '-- #region tabla\nCREATE TABLE t (\n  id integer\n);\n-- #endregion tabla\nSELECT 1;';
+    expect(extractRegion(sql, 'tabla')).toBe('CREATE TABLE t (\n  id integer\n);');
+    expect(extractRegion(sql)).toBe('CREATE TABLE t (\n  id integer\n);\nSELECT 1;');
+  });
+
   it('without a region: the whole file, without the markers', () => {
     expect(extractRegion(source)).toBe(
       "import { x } from 'y';\n\napp.get('/', () => {\n  return 1;\n});\n\nfunction f() {\n  if (a) {\n    b();\n  }\n}",
@@ -57,6 +64,7 @@ describe('languageOf', () => {
     expect(languageOf('a/package.json')).toBe('json');
     expect(languageOf('a/tsconfig.json')).toBe('jsonc');
     expect(languageOf('a/ejemplos/pedido.proto')).toBe('proto');
+    expect(languageOf('a/bd/migraciones/002-stock.sql')).toBe('sql');
     expect(languageOf('a/.npmrc')).toBe('ini');
     expect(() => languageOf('a/foto.png')).toThrow();
   });

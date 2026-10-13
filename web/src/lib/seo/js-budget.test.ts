@@ -19,6 +19,12 @@ describe('scriptEntries', () => {
 });
 
 describe('jsImports', () => {
+  it('does not follow workers: they start on demand (sql-playground starts its own on the first run)', () => {
+    const code =
+      'function s(){return new Worker(new URL("/_astro/worker-Cg63fnTR.js",import.meta.url),{type:"module"})}';
+    expect(jsImports(code, '/_astro/SqlPlayground.js')).toEqual([]);
+  });
+
   it('resolves static and dynamic imports, with double, single or backtick quotes', () => {
     const code =
       'import{a}from"./a.js";import "./b.js";const c=()=>import(`./sub/c.js`);import(\'/_astro/d.js\');';

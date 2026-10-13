@@ -1,0 +1,544 @@
+---
+translationKey: joins
+title: "JOIN en SQL con ejemplos"
+description: "Une tablas en SQL con ejemplos reales: claves primarias y foráneas, INNER JOIN, LEFT JOIN y alias. Y por qué un JOIN puede multiplicar las filas."
+sidebar:
+  label: "JOIN"
+  order: 2
+lesson:
+  oneLiner: "Un JOIN junta las filas de dos tablas que encajan según una condición, como cada pedido con el producto cuyo id lleva. No es la intersección de un diagrama de Venn: empareja filas, y si una fila encaja con dos, sale dos veces."
+  objectives:
+    - Explicar por qué los datos de la tienda están en varias tablas, unidas por claves primarias y foráneas.
+    - Juntar pedidos y productos con INNER JOIN, y encontrar con LEFT JOIN los productos que nadie ha pedido.
+    - Unir tres tablas a través de una tabla intermedia.
+    - Calcular cuántas filas devuelve un JOIN, y explicar por qué pueden ser más que las de cualquiera de sus tablas.
+  prerequisites: [sql]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+import SqlPlayground from '~/playgrounds/sql-playground/SqlPlayground';
+
+## El problema
+
+La empresa de reparto de la [Fase 4](/fase-4/) quiere imprimir una etiqueta por pedido: «Pedido 1: 2 × Taza». Le pides los pedidos a la base de datos y esto es lo que hay:
+
+```sql
+SELECT id, producto_id, cantidad, estado FROM pedidos ORDER BY id LIMIT 3;
+```
+
+```
+ id | producto_id | cantidad | estado  
+----+-------------+----------+---------
+  1 |           2 |        2 | enviado
+  2 |           3 |        3 | enviado
+  3 |           1 |        4 | enviado
+(3 rows)
+```
+
+Ni rastro de «Taza». El pedido 1 dice `producto_id` 2, y el nombre está en otra tabla, `productos`. Es a propósito: la Taza sale en 9 de los 25 pedidos. Si cada pedido copiara su nombre y su precio, cambiar el nombre a «Taza grande» sería cambiar 9 filas, y si se te olvida una, la tienda tendría dos nombres para la misma taza.
+
+Cada dato vive en un solo sitio, y el pedido solo apunta a él. Para la etiqueta, hay que volver a juntarlos: eso es un <Term id="join">JOIN</Term>.
+
+## La analogía
+
+<Analogy>
+
+Luis apunta los pedidos en una libreta. Cada línea dice «producto nº 2, 2 unidades». En la primera página tiene la lista de precios: «nº 1: Camiseta, 20 €; nº 2: Taza, 8,50 €…». Para preparar un paquete, mira el número de la línea y lo busca en la primera página.
+
+Si la Taza sube de precio, cambia una sola línea de la primera página, no todos los pedidos. Y si quiere apuntar al lado de cada pedido la categoría de su producto, y la Taza está en «Hogar» y en «Regalos», ese pedido ocupa dos líneas: una por categoría.
+
+<div slot="limits">
+
+- Luis busca a ojo, pedido a pedido. La base de datos tiene varias formas de encontrar las parejas y elige la más rápida (lo verás en la lección 7, «Índices»).
+- Luis se daría cuenta de que ha copiado un pedido dos veces. La base de datos no: devuelve cada pareja, y saber si eso es lo que querías es cosa tuya.
+- Nada impide a Luis apuntar «producto nº 99», aunque no exista. La base de datos sí lo impide, como verás enseguida.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+Las consultas de esta lección usan los datos de la tienda (`tienda.sql`), los mismos de la lección 1. Las salidas son de PostgreSQL 18.6, que contesta en inglés: `(3 rows)` es «3 filas». Si tu PostgreSQL está instalado en español, puede que te conteste en español.
+
+### Cada fila tiene un número único: la clave primaria
+
+Así empieza la tabla `productos` en `tienda.sql`:
+
+```sql
+CREATE TABLE productos (
+  id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+```
+
+`PRIMARY KEY` hace de `id` la <Term id="primary-key">clave primaria</Term>: la columna que identifica cada fila. **Su valor no se repite y no puede faltar.** `GENERATED ALWAYS AS IDENTITY` le pide a PostgreSQL que ponga el número él mismo, 1, 2, 3…, al insertar cada producto.
+
+Una clave primaria también puede ser de dos columnas. En `productos_categorias`, que dice en qué categorías está cada producto, es la pareja `(producto_id, categoria_id)`: la Camiseta puede estar en Ropa una vez, no dos. Si lo intentas:
+
+```sql
+INSERT INTO productos_categorias VALUES (1, 1);
+```
+
+```
+ERROR:  duplicate key value violates unique constraint "productos_categorias_pkey"
+DETAIL:  Key (producto_id, categoria_id)=(1, 1) already exists.
+```
+
+«El valor de clave duplicado incumple la regla de unicidad»: la pareja (1, 1) ya existe.
+
+### Un pedido apunta a su producto: la clave foránea
+
+En `pedidos`, la columna que apunta al producto se declara así:
+
+```sql
+producto_id integer NOT NULL REFERENCES productos (id),
+```
+
+`REFERENCES productos (id)` la convierte en una <Term id="foreign-key">clave foránea</Term> (*foreign key*): sus valores tienen que existir en la columna `id` de `productos`. Mira qué pasa si alguien crea un pedido del producto 99:
+
+```sql
+INSERT INTO pedidos (producto_id, cantidad, estado, creado_en)
+VALUES (99, 1, 'pendiente', now());
+```
+
+```
+ERROR:  insert or update on table "pedidos" violates foreign key constraint "pedidos_producto_id_fkey"
+DETAIL:  Key (producto_id)=(99) is not present in table "productos".
+```
+
+La base de datos se niega: el producto 99 no está en `productos`. `now()` es la fecha y la hora de este momento.
+
+Funciona también al revés. `DELETE FROM productos WHERE id = 2;` falla con `Key (id)=(2) is still referenced`: la Taza tiene filas que apuntan a ella. Qué hacer en ese caso (prohibirlo, borrar también sus filas…) lo decides en la lección 4, «Modelado».
+
+**La clave foránea garantiza que cada pedido apunta a un producto que existe.** Sin ella, un error en el programa dejaría pedidos huérfanos, y un JOIN no encontraría su producto.
+
+### INNER JOIN junta cada pedido con su producto
+
+Esta es la consulta de las etiquetas:
+
+```sql
+SELECT ped.id, p.nombre, ped.cantidad
+FROM pedidos AS ped
+JOIN productos AS p ON p.id = ped.producto_id
+ORDER BY ped.id
+LIMIT 5;
+```
+
+```
+ id |  nombre  | cantidad 
+----+----------+----------
+  1 | Taza     |        2
+  2 | Sudadera |        3
+  3 | Camiseta |        4
+  4 | Taza     |        1
+  5 | Sudadera |        2
+(5 rows)
+```
+
+Palabra a palabra:
+
+- `FROM pedidos AS ped`: la primera tabla, los pedidos. `AS ped` le da un nombre corto, un alias.
+- `JOIN productos AS p`: la segunda tabla, con el alias `p`. `JOIN` a secas es `INNER JOIN`; las dos formas valen.
+- `ON p.id = ped.producto_id`: la condición. Una fila de pedidos y una de productos van juntas cuando el `id` del producto es el `producto_id` del pedido.
+- `SELECT ped.id, p.nombre, ped.cantidad`: las columnas, cada una con la tabla de la que sale delante. `ped.id` es el id del pedido, no el del producto.
+- `ORDER BY` y `LIMIT`, los de la lección 1.
+
+PostgreSQL busca, para cada pedido, los productos que cumplen la condición, y **cada pareja que encaja es una fila del resultado**. El pedido 1 lleva el 2, y el producto 2 es la Taza: fila «1, Taza, 2».
+
+El `INNER` («interior») quiere decir que solo salen las parejas. Un producto sin pedidos, o un pedido sin producto, no aparece.
+
+### Los alias acortan los nombres de las tablas
+
+Las dos tablas tienen una columna `id`. Si no dices de cuál hablas, PostgreSQL no adivina:
+
+```sql
+SELECT id, nombre, cantidad
+FROM pedidos
+JOIN productos ON productos.id = pedidos.producto_id;
+```
+
+```
+ERROR:  column reference "id" is ambiguous
+LINE 1: SELECT id, nombre, cantidad
+               ^
+```
+
+«La referencia a la columna "id" es ambigua», y el `^` señala dónde. `nombre` y `cantidad` no dan error, porque solo existen en una de las dos. Se arregla con el nombre de la tabla delante: `pedidos.id`.
+
+Con alias, en vez de `pedidos.id` escribes `ped.id`. El `AS` es opcional (`FROM pedidos ped` también vale), pero se lee mejor. **Un alias solo dura lo que dura la consulta**: no cambia el nombre de la tabla.
+
+### LEFT JOIN conserva también las filas sin pareja
+
+¿Qué producto no ha pedido nadie? Con `INNER JOIN` no lo puedes ver: el producto sin pedidos no tiene pareja, y desaparece. Para eso está `LEFT JOIN`:
+
+```sql
+SELECT p.nombre, ped.id AS pedido
+FROM productos AS p
+LEFT JOIN pedidos AS ped ON ped.producto_id = p.id
+ORDER BY ped.id DESC
+LIMIT 3;
+```
+
+```
+  nombre  | pedido 
+----------+--------
+ Gorra    |       
+ Taza     |     25
+ Camiseta |     24
+(3 rows)
+```
+
+`LEFT JOIN` («unión por la izquierda») devuelve las mismas parejas que `INNER JOIN` y, además, **cada fila de la tabla de la izquierda que no encaja con nada, una vez, con las columnas de la derecha vacías**. La de la izquierda es la que va antes del `JOIN`: aquí, `productos`. La Gorra no tiene pedidos, y sale con `pedido` vacío: es `NULL`, el «no hay valor» de la lección 1.
+
+`ped.id AS pedido` cambia el nombre de la columna en el resultado. `DESC` ordena de mayor a menor, y PostgreSQL pone los `NULL` los primeros en ese orden: por eso la Gorra encabeza la lista.
+
+Para quedarte solo con los que no tienen pareja, filtra por ese vacío:
+
+```sql
+SELECT p.nombre
+FROM productos AS p
+LEFT JOIN pedidos AS ped ON ped.producto_id = p.id
+WHERE ped.id IS NULL;
+```
+
+`WHERE ped.id IS NULL` deja las filas en las que no ha aparecido ningún pedido. Sale una: Gorra.
+
+También existe `RIGHT JOIN`, el mismo con las tablas al revés, y `FULL JOIN`, que conserva las sin pareja de los dos lados. Casi siempre se escribe `LEFT JOIN` con la tabla que quieres entera a la izquierda.
+
+### Tres tablas: los productos y sus categorías
+
+Un producto puede estar en varias categorías, y una categoría tiene varios productos. Por eso ni `productos` ni `categorias` guardan la relación: está en una tercera tabla, `productos_categorias`, con una fila por pareja. Para leer los nombres, hacen falta dos JOIN seguidos:
+
+```sql
+SELECT p.nombre, c.nombre AS categoria
+FROM productos AS p
+JOIN productos_categorias AS pc ON pc.producto_id = p.id
+JOIN categorias AS c ON c.id = pc.categoria_id
+ORDER BY p.id, c.nombre;
+```
+
+```
+  nombre  | categoria 
+----------+-----------
+ Camiseta | Ropa
+ Taza     | Hogar
+ Taza     | Regalos
+ Sudadera | Ropa
+ Gorra    | Regalos
+ Gorra    | Ropa
+(6 rows)
+```
+
+- El primer `JOIN` empareja cada producto con sus filas de `productos_categorias`.
+- El segundo empareja cada una de esas filas con su categoría, por `categoria_id`.
+- `ORDER BY p.id, c.nombre` ordena por producto y, dentro de cada uno, por categoría.
+
+Cuatro productos y seis filas: la Taza y la Gorra salen dos veces, una por categoría. Por qué esta tabla intermedia es la forma correcta de guardar la relación lo verás en la lección 4, «Modelado».
+
+### Un JOIN empareja filas, no cruza conjuntos
+
+Si buscas «SQL JOIN» en imágenes, verás círculos que se cruzan: dos tablas, y el `INNER JOIN` es la zona común. Ese dibujo sugiere que el resultado nunca tiene más filas que la tabla más pequeña. Es falso. Cuenta las filas de cada consulta de esta lección (`count(*)` cuenta las filas del resultado, y lo verás a fondo en la lección 3):
+
+| Consulta | Filas |
+|---|---|
+| `pedidos` sola | 25 |
+| `productos` sola | 4 |
+| `pedidos JOIN productos` | 25 |
+| `productos LEFT JOIN pedidos` | 26 |
+| `pedidos JOIN productos_categorias` (cada pedido con las categorías de su producto) | 34 |
+
+`pedidos JOIN productos` da 25, no 4 ni 3: cada pedido encuentra un producto. Y con las categorías, 34, más que cualquiera de las dos tablas:
+
+```sql
+SELECT ped.id, p.nombre, c.nombre AS categoria
+FROM pedidos AS ped
+JOIN productos AS p ON p.id = ped.producto_id
+JOIN productos_categorias AS pc ON pc.producto_id = p.id
+JOIN categorias AS c ON c.id = pc.categoria_id
+ORDER BY ped.id, c.nombre
+LIMIT 4;
+```
+
+```
+ id |  nombre  | categoria 
+----+----------+-----------
+  1 | Taza     | Hogar
+  1 | Taza     | Regalos
+  2 | Sudadera | Ropa
+  3 | Camiseta | Ropa
+(4 rows)
+```
+
+El pedido 1 sale dos veces. Las cuentas: 9 pedidos de Taza por 2 categorías, 18 filas; más 8 de Sudadera y 8 de Camiseta, con una cada uno; 34.
+
+**La regla: cada fila de una tabla sale tantas veces como filas de la otra encajen con ella.** Cero veces en un `INNER JOIN` (en un `LEFT JOIN`, una, con vacíos), una vez si encaja con una, y varias si encaja con varias. El diagrama de Venn solo acierta en qué filas sobreviven, no en cuántas veces salen.
+
+Esto importa cuando cuentas o sumas: si alguien suma las unidades vendidas después de juntar pedidos con categorías, cada taza cuenta dos veces.
+
+## Pruébalo
+
+El objetivo: preparar las etiquetas de los pedidos pagados, descubrir qué producto no ha vendido nadie y predecir cuántas filas devuelve un JOIN antes de ejecutarlo.
+
+Cada consulta va dos veces: en el playground, que no necesita instalar nada, y en `psql`, el PostgreSQL de tu ordenador. Abre `psql -d tienda`, como en la introducción de la fase. Si en la lección 1 borraste o cambiaste datos, vuelve a cargar `tienda.sql` como allí; en el playground, pulsa «Restaurar datos».
+
+### Las etiquetas de los pedidos pagados
+
+<SqlPlayground client:visible lang="es" rows={6} query={`SELECT ped.id, ped.cantidad, p.nombre
+FROM pedidos AS ped
+JOIN productos AS p ON p.id = ped.producto_id
+WHERE ped.estado = 'pagado'
+ORDER BY ped.id;`} />
+
+<TryIt
+  title="1. Las etiquetas, en psql"
+  lang="sql"
+  cmd={`SELECT ped.id, ped.cantidad, p.nombre
+FROM pedidos AS ped
+JOIN productos AS p ON p.id = ped.producto_id
+WHERE ped.estado = 'pagado'
+ORDER BY ped.id;`}
+  output={` id | cantidad |  nombre  
+----+----------+----------
+ 13 |        2 | Taza
+ 14 |        3 | Sudadera
+ 15 |        4 | Camiseta
+ 16 |        1 | Taza
+ 17 |        2 | Sudadera
+ 18 |        3 | Camiseta
+ 19 |        4 | Taza
+ 20 |        1 | Sudadera
+(8 rows)`}
+>
+
+Escríbela después del prompt `tienda=>`. `psql` no la ejecuta hasta el `;`: si pulsas Enter antes, el prompt cambia a `tienda->`, que quiere decir «sigo esperando». Ocho pedidos pagados, del 13 al 20, cada uno con su nombre. El `WHERE` se aplica a las filas ya juntadas, así que puede usar columnas de las dos tablas. Si sale `relation "pedidos" does not exist`, no has cargado `tienda.sql` o estás en otra base de datos: mira que el prompt empiece por `tienda`.
+
+</TryIt>
+
+Ahora cámbiala: pide los `'pendiente'`, o añade `p.precio_centimos` a las columnas para poner el precio en la etiqueta.
+
+### El producto que no ha vendido nadie
+
+<SqlPlayground client:visible lang="es" query={`SELECT p.nombre
+FROM productos AS p
+LEFT JOIN pedidos AS ped ON ped.producto_id = p.id
+WHERE ped.id IS NULL;`} />
+
+<TryIt
+  title="2. Los productos sin pedidos, en psql"
+  lang="sql"
+  cmd={`SELECT p.nombre
+FROM productos AS p
+LEFT JOIN pedidos AS ped ON ped.producto_id = p.id
+WHERE ped.id IS NULL;`}
+  output={` nombre 
+--------
+ Gorra
+(1 row)`}
+>
+
+Una fila: la Gorra. Cambia `LEFT JOIN` por `JOIN` y vuelve a ejecutarla: sale `(0 rows)`, porque `INNER JOIN` ya ha quitado la Gorra antes de que el `WHERE` la busque.
+
+</TryIt>
+
+<SelfCheck question="Reto: antes de ejecutarla, calcula cuántas filas devuelve la unión de productos con productos_categorias (sin categorias). Después, compruébalo con SELECT count(*) FROM productos AS p JOIN productos_categorias AS pc ON pc.producto_id = p.id;">
+
+Seis. Cada producto sale tantas veces como categorías tiene: Camiseta 1, Taza 2, Sudadera 1 y Gorra 2. Son las seis filas de `productos_categorias`, porque cada una encaja con un solo producto:
+
+```
+ count 
+-------
+     6
+(1 row)
+```
+
+</SelfCheck>
+
+## Ya lo has visto
+
+- **El correo de confirmación de una compra** lleva el nombre y la foto de cada producto, aunque el pedido guarde solo su número: alguien ha hecho un JOIN para escribirlo.
+- **BUSCARV** (*VLOOKUP*) en una hoja de cálculo es un JOIN hecho a mano: para cada fila, busca su valor en otra tabla y trae una columna. La diferencia: BUSCARV se queda con la primera que encaja, y un JOIN las devuelve todas.
+- **La API de la tienda** devuelve `productoId` en cada pedido, y en la [lección de GraphQL](/fase-4/graphql-grpc-rest/#el-problema) la app tenía que hacer una petición más por producto. Con un JOIN en el servidor, el nombre puede llegar en la misma respuesta.
+
+## Errores comunes
+
+- **Olvidar la condición.** `JOIN` sin `ON` es un error de sintaxis en PostgreSQL, pero la forma antigua, `FROM pedidos, productos`, sin `WHERE`, empareja cada pedido con cada producto: 100 filas (25 por 4), casi todas falsas.
+- **Usar `INNER JOIN` cuando quieres todos.** Un informe de ventas por producto con `INNER JOIN` no tiene la fila de la Gorra: parece que no existe, cuando lo que pasa es que vende cero.
+- **Filtrar en el `WHERE` la tabla de la derecha de un `LEFT JOIN`.** Con `LEFT JOIN pedidos … WHERE ped.estado = 'pendiente'`, la Gorra desaparece otra vez, porque su `estado` está vacío. Si quieres «cada producto con sus pedidos pendientes, si tiene», pon la condición en el `ON`: `ON ped.producto_id = p.id AND ped.estado = 'pendiente'`.
+- **Sumar después de un JOIN que multiplica.** Si una fila sale dos veces, sus números cuentan dos veces.
+- **Escribir `id` cuando hay dos.** Columna ambigua: pon la tabla o su alias delante.
+
+## Resumen
+
+- Los datos de la tienda están en varias tablas para que cada uno viva en un solo sitio. La clave primaria identifica cada fila, y una clave foránea apunta a la de otra tabla.
+- `REFERENCES` no deja guardar un pedido de un producto que no existe, ni borrar un producto al que apuntan.
+- `INNER JOIN` devuelve las parejas de filas que cumplen la condición del `ON`; `LEFT JOIN`, además, las filas de la izquierda sin pareja, con vacíos.
+- Con una tabla intermedia, dos JOIN seguidos unen productos y categorías.
+- Un JOIN empareja filas: cada fila sale tantas veces como filas de la otra tabla encajen con ella. El resultado puede tener más filas que cualquiera de sus tablas.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Ana quiere cambiar el nombre «Sudadera» por «Sudadera con capucha». Con los datos de la tienda, ¿cuántas filas tiene que cambiar?"
+  review="Un pedido apunta a su producto: la clave foránea"
+>
+
+<QuizOption text="Nueve: la fila del producto y la de cada uno de sus ocho pedidos.">
+
+Los pedidos no guardan el nombre: solo `producto_id`. Por eso no hay que tocarlos, y esa es la razón de separar las tablas.
+
+</QuizOption>
+
+<QuizOption text="Una: la del producto en productos." correct>
+
+El nombre vive en un solo sitio. Los ocho pedidos apuntan al producto 3 y, en el próximo JOIN, ya saldrán con el nombre nuevo.
+
+</QuizOption>
+
+<QuizOption text="Ninguna: la base de datos no deja cambiar una fila a la que apuntan otras tablas.">
+
+La clave foránea protege el `id`, que es lo que señalan los pedidos. El nombre se cambia sin problema.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un programa con un fallo intenta guardar un pedido con producto_id 7, y en productos solo hay del 1 al 4. ¿Qué pasa?"
+  review="Un pedido apunta a su producto: la clave foránea"
+>
+
+<QuizOption text="Se guarda, y el pedido no saldrá en un INNER JOIN con productos.">
+
+Eso pasaría sin `REFERENCES`. Con la clave foránea, el pedido ni siquiera llega a guardarse.
+
+</QuizOption>
+
+<QuizOption text="PostgreSQL crea un producto 7 vacío para que el pedido tenga a quién apuntar.">
+
+PostgreSQL nunca inventa filas: sin un producto 7, rechaza el pedido.
+
+</QuizOption>
+
+<QuizOption text="PostgreSQL lo rechaza con un error: el 7 no está en productos." correct>
+
+`REFERENCES productos (id)` exige que el valor exista. El error dice `Key (producto_id)=(7) is not present in table "productos"`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Pides cada categoría con sus productos: categorias JOIN productos_categorias JOIN productos. Hay 3 categorías y 4 productos. ¿Cuántas filas salen?"
+  review="Un JOIN empareja filas, no cruza conjuntos"
+>
+
+<QuizOption text="Seis: una por cada fila de productos_categorias." correct>
+
+Cada fila de la tabla intermedia es una pareja producto-categoría, y encaja con una sola categoría y un solo producto. El orden de las tablas no cambia las parejas.
+
+</QuizOption>
+
+<QuizOption text="Tres como mucho: un JOIN no devuelve más filas que la tabla más pequeña.">
+
+Es la idea que da el diagrama de Venn, y es falsa: un JOIN empareja filas, y cada fila sale tantas veces como parejas tenga.
+
+</QuizOption>
+
+<QuizOption text="Doce: cada categoría con cada producto, 3 por 4.">
+
+Eso sería emparejarlo todo con todo, sin condición. El `ON` deja solo las parejas que existen en `productos_categorias`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Haces un informe con cada producto y su número de pedidos, y la Gorra no aparece. ¿Qué ha pasado?"
+  review="LEFT JOIN conserva también las filas sin pareja"
+>
+
+<QuizOption text="Que un JOIN se salta siempre las filas que tienen algún NULL.">
+
+No es por los `NULL`: la Gorra no tiene ninguno. Desaparece porque ningún pedido encaja con ella.
+
+</QuizOption>
+
+<QuizOption text="Que has usado INNER JOIN, y la Gorra no tiene pedidos." correct>
+
+Con `productos LEFT JOIN pedidos`, la Gorra sale una vez, con el pedido vacío: el informe dirá que vende cero.
+
+</QuizOption>
+
+<QuizOption text="Que la Gorra no tiene clave primaria, y sin ella un JOIN no la encuentra.">
+
+Todos los productos tienen su `id`: la clave primaria no puede faltar. Lo que le falta a la Gorra son pedidos.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Escribes productos LEFT JOIN pedidos … WHERE ped.estado = 'pagado' para ver cada producto con sus pedidos pagados, si los tiene. ¿Sale la Gorra?"
+  review="LEFT JOIN conserva también las filas sin pareja"
+>
+
+<QuizOption text="Sí: LEFT JOIN conserva siempre todas las filas de la izquierda, pongas el WHERE que pongas.">
+
+El `LEFT JOIN` la conserva, pero el `WHERE` filtra después. La fila de la Gorra tiene `estado` vacío, y vacío no es `'pagado'`.
+
+</QuizOption>
+
+<QuizOption text="Sí, con su estado puesto a 'pagado' para cumplir la condición.">
+
+PostgreSQL no rellena valores para que una fila pase un filtro: las columnas de la derecha quedan vacías.
+
+</QuizOption>
+
+<QuizOption text="No: el WHERE quita la fila con vacíos. La condición tiene que ir en el ON." correct>
+
+Con `ON ped.producto_id = p.id AND ped.estado = 'pagado'`, la Gorra se queda, con el pedido vacío.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question='En SELECT id, nombre FROM pedidos JOIN productos ON productos.id = pedidos.producto_id, PostgreSQL contesta column reference "id" is ambiguous. ¿Qué arreglas?'
+  review="Los alias acortan los nombres de las tablas"
+>
+
+<QuizOption text="Cambias JOIN por LEFT JOIN, que sabe de qué tabla sacar cada columna.">
+
+El tipo de JOIN no cambia de dónde sale cada columna: `id` sigue estando en las dos tablas.
+
+</QuizOption>
+
+<QuizOption text="Escribes de qué tabla es el id: pedidos.id, o el alias si lo tienes." correct>
+
+Las dos tablas tienen `id`, y PostgreSQL no adivina. `nombre` no da error porque solo está en `productos`.
+
+</QuizOption>
+
+<QuizOption text="Quitas id del SELECT: en una consulta con JOIN no se puede pedir el id.">
+
+Se puede pedir el id de cualquiera de las tablas, o de las dos: solo hay que decir de cuál.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Joins Between Tables](https://www.postgresql.org/docs/current/tutorial-join.html) (PostgreSQL, en inglés): el tutorial oficial de JOIN.
+- [Joined Tables](https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN) (PostgreSQL, en inglés): todos los tipos de JOIN, con ejemplos de `ON` frente a `WHERE`.
+- [Foreign Keys](https://www.postgresql.org/docs/current/ddl-constraints.html#DDL-CONSTRAINTS-FK) (PostgreSQL, en inglés): las claves foráneas y qué hacer al borrar.
+- [Say NO to Venn Diagrams When Explaining JOINs](https://blog.jooq.org/say-no-to-venn-diagrams-when-explaining-joins/) (Lukas Eder, en inglés): por qué los círculos engañan, con otros dibujos que sí funcionan.

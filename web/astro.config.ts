@@ -22,6 +22,12 @@ const fallbacks = new Set(
 export default defineConfig({
   // With `site`, Starlight generates each page's canonical URL, hreflang and og:url.
   site: siteUrl,
+  vite: {
+    // The SQL playground's worker loads PGlite, which splits itself into several files: only the
+    // ES module format allows that in a worker. PGlite also asks not to be pre-bundled in dev.
+    worker: { format: 'es' },
+    optimizeDeps: { exclude: ['@electric-sql/pglite'] },
+  },
   integrations: [
     // Before Starlight: deletes the fallback copies before Pagefind indexes the build.
     dropFallbacks(fallbacks),
