@@ -25,3 +25,23 @@ describe('acronyms in the glossary', () => {
     expect(text).not.toMatch(/^ {2}translation:/m);
   });
 });
+
+// Where a term leads (the lesson that explains it and its related terms) does not depend on the
+// language: an entry translated before its lesson existed keeps the old link otherwise.
+const links = (locale: string, name: string) =>
+  readFileSync(`${glossary}${locale}/${name}`, 'utf8')
+    .split('\n')
+    .filter((line) => /^(lesson|related):/.test(line));
+const translated = readdirSync(glossary + 'en').filter((name) =>
+  readdirSync(glossary + 'es').includes(name),
+);
+
+describe('a term and its translation', () => {
+  it('there are translated terms to compare', () => {
+    expect(translated.length).toBeGreaterThan(50);
+  });
+
+  it.each(translated)('%s points to the same lesson and related terms', (name) => {
+    expect(links('en', name)).toEqual(links('es', name));
+  });
+});

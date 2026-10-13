@@ -1,0 +1,529 @@
+---
+translationKey: http-messages
+title: "HTTP request and response: anatomy and examples"
+description: "What an HTTP request and response look like inside: the URL, the headers, the body, Content-Type and Content-Length, and a form versus JSON."
+sidebar:
+  label: Request and response
+  order: 1
+lesson:
+  oneLiner: "An HTTP request carries the path and the query string in its first line, then its headers and, if it sends data, a body after the empty line. Content-Type says what format that body is in and Content-Length how many bytes it takes up; a response is written the same way."
+  objectives:
+    - Split a URL into its parts and know which ones reach the server and which one never leaves the browser.
+    - Read a request with a body and understand its Content-Type and Content-Length headers.
+    - Tell a form from JSON, and decide whether some data goes in the query string or in the body.
+    - Play the server with nc and write by hand a response that curl accepts on its own.
+  prerequisites: [from-url-to-page, processes-and-signals]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+Imagine Ana and Luis launch their shop's new “Buy” button. Luis tries it with a mug: the server gets the order, but answers that it's empty, with no product and no quantity. Ana swears the button sends both pieces of data. Who's right? There's only one way to find out: **look at the request exactly as it reaches the server**, byte by byte.
+
+In Phase 0 you saw short requests, [a line, a few headers and an empty line](/en/phase-0/what-is-a-protocol/), that only asked for something. But a purchase, a search or a login send data, and whoever answers has to know where to look for it and how to read it.
+
+In this lesson you'll play the server by hand, as in [Phase 0](/en/phase-0/client-server-model/), but this time you'll read every header and write a response the client considers finished without you cutting the connection.
+
+## The analogy
+
+<Analogy>
+
+Think of a package you send by courier. On the outside it has the address and a label with what you need to know before opening it: what it contains (“documents,” “fragile”) and how many pieces there are. Inside the box goes what you're sending.
+
+An HTTP request is written the same way. The first line and the `Host` header are the address; the other headers, the label; and the body, what goes in the box. Whoever receives it reads the label before opening: if it says “three pieces” and two have arrived, they wait for the third.
+
+<div slot="limits">
+
+- Whoever receives a package can open it and see what's inside, whatever the label says. A server doesn't guess: if the label says “form” and there's something else inside, it reads it wrong.
+- HTTP's label doesn't count pieces, but exact bytes. One letter too many or too few, an Enter included, and it no longer adds up.
+- Many requests are like a letter without a box: the ones that only ask for something carry no body.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### The parts of a URL, and which ones travel
+
+This is an address in the shop, a <Term id="url">URL</Term> with all its parts:
+
+```
+https://shop.example/products?category=mugs&sort=price#reviews
+```
+
+| Part | In the example | What it's for | Does it reach the server? |
+|---|---|---|---|
+| Scheme | `https` | The protocol, and with it the default port, 443 | Not as text: it decides how the browser connects |
+| Server name | `shop.example` | Which server to go to (its IP comes from DNS) | Yes, in the `Host` header |
+| Port | Not there: it's 443 | Which program on the server answers | Only if it isn't the default one, inside `Host`, as in `localhost:8080` |
+| Path | `/products` | Which page or file you want | Yes, in the first line |
+| Query string | `?category=mugs&sort=price` | Extra data about what you're asking for | Yes, in the first line, stuck to the path |
+| Fragment | `#reviews` | A spot inside the page | **No: it stays in the browser** |
+
+When you press Enter with that URL, what goes out to the server starts like this:
+
+```http
+GET /products?category=mugs&sort=price HTTP/1.1
+Host: shop.example
+```
+
+The browser uses the fragment once it already has the page, to scroll down to the `reviews` section. The server never sees it: it can't save it in its <Term id="log">log</Term> or answer depending on what it says.
+
+### The query string: data in the URL itself
+
+The <Term id="query-string">query string</Term> starts at the `?` and carries `name=value` pairs separated by `&`. In `?category=mugs&sort=price` there are two: the category and the sort order. What each name means is up to the server; the protocol only says where they go.
+
+A URL can't carry spaces or letters like the é in café as they are, so they're encoded. In a query string, a space is written `+` (or `%20`), and an é, `%C3%A9`: its two bytes in hexadecimal, the base 16 from [Phase 0](/en/phase-0/what-is-a-protocol/), each with a `%` in front. Searching for “red mug” would give `/search?q=red+mug`.
+
+Since it goes in the URL, it gets written down in the server's logs: the `access.log` from [Phase 1](/en/phase-1/linux-file-commands/) is full of lines like `GET /api/products?page=3`.
+
+### The body: data after the empty line
+
+This is how an order sent as a form reaches the server, with the product and the quantity:
+
+```http
+POST /orders HTTP/1.1
+Host: localhost:8080
+User-Agent: curl/8.5.0
+Accept: */*
+Content-Length: 22
+Content-Type: application/x-www-form-urlencoded
+
+product=mug&quantity=2
+```
+
+Line by line:
+
+| Line | What it is |
+|---|---|
+| `POST /orders HTTP/1.1` | The first line. `POST` is the <Term id="http-method">method</Term> for sending data ([lesson 2](/en/phase-2/http-methods/)) |
+| `Host`, `User-Agent` and `Accept` | The usual headers: which server it's going to, which program sends it and which formats it accepts as a response (`*/*`, any) |
+| `Content-Length: 22` | How many bytes the body takes up |
+| `Content-Type: application/x-www-form-urlencoded` | What format the body is written in: here, a form |
+| *(empty line)* | The end of the headers |
+| `product=mug&quantity=2` | The <Term id="request-body">body</Term>: the data |
+
+`product=mug&quantity=2` has 22 characters, which is what `Content-Length` announces. The server reads the headers up to the empty line and then **reads exactly 22 bytes**, without waiting for the connection to close, which in HTTP/1.1 stays open for the next request.
+
+Watch out: it counts bytes, not letters (an é takes two), and the body doesn't end in a line break, but where the number says. Without `Content-Length` (and without sending it in chunks), the server understands there's no body.
+
+### Content-Type says what is in the body
+
+`Content-Type` carries a <Term id="mime-type">MIME type</Term>: two words in the form `type/subtype`. The ones you'll see the most:
+
+| MIME type | What's in the body |
+|---|---|
+| `text/html` | A web page |
+| `text/plain` | Plain text |
+| `application/json` | Data in JSON |
+| `application/x-www-form-urlencoded` | The fields of a form |
+| `multipart/form-data` | A form with files, like a photo |
+| `image/png`, `image/jpeg` | An image |
+
+Sometimes they carry a parameter after them, like `text/plain; charset=utf-8`, which says which character set the text is written in.
+
+It works in both directions: in a request it says what the client is sending, and in a response, what the server returns. The browser decides what to do with a response by its `Content-Type`, not by how the URL ends. And it isn't the same as `Accept`, what the client prefers to receive: you'll see it in [lesson 4](/en/phase-2/http-headers/).
+
+### A form or JSON: the same data, two formats
+
+The same order, written in the two most common ways:
+
+| | Form | JSON |
+|---|---|---|
+| `Content-Type` | `application/x-www-form-urlencoded` | `application/json` |
+| Body | `product=mug&quantity=2` | `{"product":"mug","quantity":2}` |
+| Who usually sends it | A form on a website, without programming anything | A website's JavaScript code, or a phone app |
+| What it can express | name=value pairs, and everything is text | Numbers, lists and data inside other data |
+
+The form format is the query string's, with the same encoding: hence its name, *urlencoded*, “encoded as in a URL.” A search form, which asks instead of sending, puts that text in the URL: that's where `?q=red+mug` comes from.
+
+<Term id="json">JSON</Term>, the format from [the first lesson of the course](/en/phase-0/what-is-the-backend/), tells the number `2` from the text `"2"` and allows lists, and that's why <Term id="api">APIs</Term> prefer it.
+
+The server chooses how to read the body **by the `Content-Type`**, not by what it looks like. That was the shop's bug: Ana's button sent correct JSON, but labeled as `text/plain`, and the server didn't read it. The order arrived whole; the label lied.
+
+### Query string or body?
+
+Both carry data to the server, but they aren't for the same thing:
+
+| | Query string | Body |
+|---|---|---|
+| Where it goes | In the URL, in the first line | After the empty line |
+| Where it stays | In the browser's address bar, the history, the bookmarks and the logs | Only in the request |
+| Size | Short: nginx, for example, rejects a first line over 8 KB | It can take up megabytes, like a photo |
+| What for | Saying what you want to see: search, filter, paginate | Sending something to be saved or changed: an order, a comment, a password |
+
+A rule that almost never fails: if it makes sense to share it as a link, it goes in the query string; if not, in the body. A password never goes in the URL. With <Term id="https">HTTPS</Term>, the path and the query string travel encrypted, as you saw in [the TLS lesson](/en/phase-0/tls-and-https/), but the history and the logs keep them in plain text.
+
+### A response, field by field
+
+This is the response you'll write yourself in “Try it”:
+
+```http
+HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: 13
+
+{"order":17}
+```
+
+| Line | What it is |
+|---|---|
+| `HTTP/1.1 200 OK` | The status line from Phase 0: version, <Term id="status-code">status code</Term> and a phrase for humans ([lesson 3](/en/phase-2/http-status-codes/)) |
+| `Content-Type: application/json` | The body is JSON |
+| `Content-Length: 13` | It takes up 13 bytes |
+| *(empty line)* | End of the headers |
+| `{"order":17}` | The body: the order number |
+
+Why 13, if `{"order":17}` has 12 characters? Because you're going to type it in the terminal and press Enter, and **the Enter travels too**: it's one more byte, the line break. With the exact number, the client knows the response is complete and doesn't wait for more.
+
+### Seeing the messages with `curl -v` and `curl -i`
+
+By default, `curl` only writes the body of the response. These options show the rest, or send data:
+
+- **`-i`** (for *include*) also writes the status line and the headers of the response.
+- **`-v`** (for *verbose*) shows everything: the lines with `*` are `curl`'s notes, the ones with `>` what it sends and the ones with `<` what it receives. The body has no mark.
+- **`-d`** (for *data*) sets a body, and with it `curl` uses `POST` and the form label.
+- **`-H`** (for *header*) adds or changes a header: `-H 'Content-Type: application/json'`.
+- **`--json`** sets a JSON body and, at the same time, the `Content-Type` and `Accept` headers.
+
+## Try it
+
+The goal: play the shop's server. You'll find out which part of a URL really arrives, receive an order in JSON and answer it by hand so well that `curl` considers the response finished without you cutting the connection.
+
+You need two terminal windows and nothing else. The `nc` and `curl` outputs are from an Ubuntu with curl 8.5.0: on your computer you'll see your version (on a Mac, something like `curl/8.7.1`) and maybe a different `*` line.
+
+First, a real response, to see what you're going to imitate:
+
+<TryIt
+  title="1. Read a real response"
+  cmd="curl -i https://backenddesdecero.com/robots.txt"
+  output={`HTTP/2 200
+date: Tue, 13 Oct 2026 08:06:10 GMT
+content-type: text/plain
+content-length: 80
+cf-cache-status: HIT
+cache-control: public, max-age=0, must-revalidate
+etag: "c0ddff9d554300baca1ac0bccc43ef2e"
+…
+server: cloudflare
+cf-ray: a49cd7e88acdde4a-MAD
+alt-svc: h3=":443"; ma=86400
+
+User-agent: *
+Allow: /
+
+Sitemap: https://backenddesdecero.com/sitemap-index.xml`}
+>
+
+It's the file this site leaves for search engines. Look for `content-type: text/plain` and `content-length: 80`: the four lines of the body, with their line breaks, add up to those 80 bytes.
+
+`HTTP/2 200`, without the `OK` and with the headers in lowercase, is HTTP/2: the same information in another format ([lesson 8](/en/phase-2/http2-vs-http3/)). If you get `HTTP/1.1 200 OK`, the rest is the same.
+
+We removed two long Cloudflare headers (`…`); your date and your `cf-ray` will be different.
+
+</TryIt>
+
+Now, you're the server. In the first window start `nc` listening on port 8080, as in [Phase 0](/en/phase-0/client-server-model/), and in the second ask for a search, fragment included:
+
+```sh
+curl 'http://localhost:8080/search?q=red+mug#results'
+```
+
+<TryIt
+  title="2. Which part of the URL arrives? (first window)"
+  cmd="nc -l 8080"
+  output={`GET /search?q=red+mug HTTP/1.1
+Host: localhost:8080
+User-Agent: curl/8.5.0
+Accept: */*
+`}
+>
+
+This shows up in the `nc` window as soon as you run the `curl`. Compare it with the URL: the path and the query string arrived in the first line, and the port, in `Host`. The `#results` is nowhere to be seen: `curl`, like the browser, doesn't send it.
+
+The quotes around the URL are needed: without them, the shell treats the `?` and the `&` as its own symbols. If on Linux `nc -l 8080` ends with an error, try `nc -l -p 8080`.
+
+`curl` keeps waiting for a response. Press <kbd>Ctrl</kbd> + <kbd>C</kbd> in the `nc` window: the connection closes and `curl` ends with `curl: (52) Empty reply from server`.
+
+</TryIt>
+
+Start `nc -l 8080` again in the first window. In the second, send an order in JSON, with `-v` to see the whole conversation:
+
+```sh
+curl -v -H 'Content-Type: application/json' -d '{"product":"mug","quantity":2}' http://localhost:8080/orders
+```
+
+<TryIt
+  title="3. Receive an order (first window)"
+  cmd="nc -l 8080"
+  output={`POST /orders HTTP/1.1
+Host: localhost:8080
+User-Agent: curl/8.5.0
+Accept: */*
+Content-Type: application/json
+Content-Length: 30
+
+{"product":"mug","quantity":2}`}
+>
+
+There's the whole order. Look at the two headers: you set `Content-Type: application/json` with `-H`, and `curl` worked out `Content-Length: 30`.
+
+The cursor stays stuck at the end of the JSON, without moving to a new line: the body ends at byte 30, not at an Enter. Don't stop anything: the order is waiting for a response.
+
+</TryIt>
+
+Now answer. Click on the `nc` window and type these lines, pressing Enter at the end of each one. **Start typing right away, even if the first line comes out stuck to the JSON**: an extra Enter at the start breaks the response.
+
+<TryIt
+  title="4. Answer with its size (what you type in the first window)"
+  lang="http"
+  cmd={`HTTP/1.1 200 OK
+Content-Type: application/json
+Content-Length: 13
+
+{"order":17}`}
+  output={`* Host localhost:8080 was resolved.
+* IPv6: ::1
+* IPv4: 127.0.0.1
+*   Trying [::1]:8080...
+* connect to ::1 port 8080 from ::1 port 37200 failed: Connection refused
+*   Trying 127.0.0.1:8080...
+* Connected to localhost (127.0.0.1) port 8080
+> POST /orders HTTP/1.1
+> Host: localhost:8080
+> User-Agent: curl/8.5.0
+> Accept: */*
+> Content-Type: application/json
+> Content-Length: 30
+>
+< HTTP/1.1 200 OK
+< Content-Type: application/json
+< Content-Length: 13
+<
+{"order":17}
+* Connection #0 to host localhost left intact`}
+>
+
+The output is the second window's, the `curl` one: with `>`, the request; with `<`, your response; and at the end, the body.
+
+**What matters is what you didn't do:** press <kbd>Ctrl</kbd> + <kbd>C</kbd>. `curl` received the 13 bytes announced and finished on its own; `left intact` says the connection was still healthy for another request. When it finishes, `curl` closes it, and `nc` ends too.
+
+If `curl` keeps waiting, the number is bigger than the body or you missed the last Enter. If it writes `Received HTTP/0.9 when not allowed`, you pressed Enter before the first line.
+
+</TryIt>
+
+<SelfCheck question="Challenge: repeat steps 3 and 4, but announce Content-Length: 20 with the same body. What does curl do? And what happens when you stop nc?">
+
+`curl` writes `{"order":17}` and keeps waiting: you promised it 20 bytes and only 13 have arrived. For `curl`, the response isn't over.
+
+When you press <kbd>Ctrl</kbd> + <kbd>C</kbd> in the `nc` window, the connection closes and `curl` complains:
+
+```
+* transfer closed with 7 bytes remaining to read
+* Closing connection
+curl: (18) transfer closed with 7 bytes remaining to read
+```
+
+The 7 bytes it was still waiting for are the 20 promised minus the 13 received.
+
+</SelfCheck>
+
+## You have already seen it
+
+- **The browser's address bar after searching on Google** has something like `?q=` and your words joined with `+`: it's a form that asks, and that's why it puts the data in the query string.
+- **Links that jump to a section,** like the ones in this page's outline or Wikipedia's, end in `#` and a name: a fragment the server never gets to see.
+- **When you upload a photo on a website,** the form usually sends it in the body with `multipart/form-data`.
+- **In DevTools** ([how to open them](/en/phase-2/#before-you-start-devtools)), in the **Network** tab, click on a request: **Payload** (in Firefox, **Request**) shows the query string and the body split into fields, and **Headers**, its `Content-Type` and its `Content-Length`.
+
+And if you code:
+
+- **`fetch(url, { method: 'POST', body: JSON.stringify(order) })`** sends `Content-Type: text/plain;charset=UTF-8`: the shop's bug. Add `headers: { 'Content-Type': 'application/json' }`.
+- **With a `FormData` as the body,** the browser sets `multipart/form-data` on its own, with the separator between fields. If you write that header yourself, the separator is lost.
+- **`new URL(location.href)`** splits out the parts from the table: `search` is the query string and `hash`, the fragment.
+
+## Common mistakes
+
+- **Typing the URL without quotes in the terminal.** zsh, the Mac's shell, takes the `?` as a file name wildcard and answers `zsh: no matches found:` without running anything. bash takes the `&` as “send this to the background” and cuts the URL there. Put the URL in single quotes.
+- **Pressing Enter before typing the response in `nc`.** That Enter travels: `curl` gets an empty line where it expected `HTTP/1.1 200 OK` and answers `curl: (1) Received HTTP/0.9 when not allowed`.
+- **Counting the `Content-Length` wrong.** If you announce more bytes than you send, the client waits, as in the challenge. If you announce fewer, it cuts the body: with `Content-Length: 9`, `curl` writes only `{"order":`.
+- **Labeling the body wrong,** like the shop's JSON with `text/plain`, or JSON sent with `curl -d` without `-H`, which goes out labeled as a form. The server doesn't guess the format.
+- **Trusting what the request says.** The `Content-Type` and the `Content-Length` are written by the client, and they can lie, as you lied in the challenge. A server checks that the body is what it claims to be before using it; you'll do that in Phase 3.
+
+## Summary
+
+- The path and the query string travel in the first line, and the server name in `Host`. The fragment (`#…`) never leaves the browser.
+- Data goes in the query string if it says what you want to see, and in the body, after the empty line, if you're sending something to be saved or changed.
+- `Content-Type` says what format the body is in and `Content-Length`, exactly how many bytes it takes up. The server reads the body according to both.
+- `curl -i` shows the response headers, `curl -v` the whole conversation and `nc -l`, the request as it arrives.
+- In Phase 3, a program of yours will do `nc`'s job: read the request, understand its body and write the response with its size.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="Someone shares the link https://shop.example/products?sort=price#reviews and another person opens it. Which path does the shop’s server read in the first line of the request?"
+  review="The parts of a URL, and which ones travel"
+>
+
+<QuizOption text="/products: the query string is only for the browser.">
+
+The query string does travel, stuck to the path. That's why the server can sort by price: it reads `sort=price`.
+
+</QuizOption>
+
+<QuizOption text="/products?sort=price" correct>
+
+The path and the query string arrive together. The fragment, `#reviews`, stays in the browser, which uses it to scroll down to that section.
+
+</QuizOption>
+
+<QuizOption text="/products?sort=price#reviews: the whole URL arrives.">
+
+The fragment never leaves the browser. You checked it in exercise 2: `#results` didn't show up in `nc`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Ana wants a search in the shop, like “red mugs,” to be something you can bookmark and share as a link. Where should the search words go?"
+  review="Query string or body?"
+>
+
+<QuizOption text="In the body: what the user types always goes in the body.">
+
+It doesn't depend on who types it, but on what it's for. In the body, the search wouldn't stay in the link.
+
+</QuizOption>
+
+<QuizOption text="In the fragment, after #: the server reads it just like the query string.">
+
+The server never sees the fragment, so it wouldn't know what to search for.
+
+</QuizOption>
+
+<QuizOption text="In the query string: /search?q=red+mugs." correct>
+
+The query string is part of the URL: it's saved in bookmarks and travels in the link. It's what Google does with its `?q=`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Your server gets a request with Content-Type: application/json and the body product=mug&quantity=2. What happens?"
+  review="A form or JSON: the same data, two formats"
+>
+
+<QuizOption text="The server tries to read it as JSON and fails: it isn’t JSON." correct>
+
+The server chooses how to read the body by the label, and `product=mug&quantity=2` isn't valid JSON: the data is there, but it doesn't get it out.
+
+</QuizOption>
+
+<QuizOption text="The server sees it’s a form and reads it as a form.">
+
+A server doesn't guess the format by looking at the body: it trusts `Content-Type`.
+
+</QuizOption>
+
+<QuizOption text="Nothing: Content-Type is only informative and the server doesn’t use it.">
+
+It's exactly what the server uses to decide how to read the body. A wrong label left the shop's order without data.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="In the nc window you type a response whose body is hello, and you press Enter at the end. What Content-Length do you have to announce?"
+  review="A response, field by field"
+>
+
+<QuizOption text="5: Content-Length counts the letters you see.">
+
+It counts bytes, and the Enter travels too. With 5, the client would stop before the line break.
+
+</QuizOption>
+
+<QuizOption text="6: the five letters and the Enter." correct>
+
+`hello` is 5 bytes, and the Enter adds one more. With 6, the client knows everything has arrived.
+
+</QuizOption>
+
+<QuizOption text="7: in the terminal, each Enter sends two bytes, \r\n.">
+
+`\r\n` is what `curl` writes, because HTTP asks for it. When you press Enter in `nc`, only `\n` is sent, one byte.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You test the shop with curl -d and an order in JSON, without -H, and the server answers that the order is empty. Why?"
+  review="Seeing the messages with curl -v and curl -i"
+>
+
+<QuizOption text="curl doesn’t send the body unless you tell it the method with -X POST.">
+
+With `-d`, `curl` already uses `POST` and sends the body. The problem is in the label.
+
+</QuizOption>
+
+<QuizOption text="curl sees the braces and labels it as JSON, so the server is at fault.">
+
+`curl` doesn't look at what you send: with `-d` it always sets the form label.
+
+</QuizOption>
+
+<QuizOption text="curl labeled it as a form, and the server doesn’t read it as JSON." correct>
+
+With `-d`, `curl` sets `Content-Type: application/x-www-form-urlencoded`, and the server trusts the label. Add `-H 'Content-Type: application/json'`, or use `--json`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A website’s login sends the user and the password in the URL: /login?user=ana&password=kitty7. The website uses HTTPS. Is that OK?"
+  review="Query string or body?"
+>
+
+<QuizOption text="No: even though it travels encrypted, the URL is saved in the history and in the logs." correct>
+
+HTTPS protects the URL along the way, but the browser saves it in the history and the server, in its log, in plain text. The password goes in the body.
+
+</QuizOption>
+
+<QuizOption text="Yes: with HTTPS, the password is as protected in the URL as in the body.">
+
+Along the way, both travel encrypted. But the URL ends up in the history and in the server's log, and the body doesn't.
+
+</QuizOption>
+
+<QuizOption text="No: with HTTPS, the query string travels unencrypted, in plain sight.">
+
+With HTTPS, the path and the query string travel encrypted. The problem is where the URL is saved afterward.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [HTTP messages](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Messages) (MDN): the structure of requests and responses, with more examples.
+- [What is a URL?](https://developer.mozilla.org/en-US/docs/Learn_web_development/Howto/Web_mechanics/What_is_a_URL) (MDN): every part of a URL, with drawings.
+- [Content-Type](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Content-Type) (MDN): the header and its most common values.
+- [Sending form data](https://developer.mozilla.org/en-US/docs/Learn_web_development/Extensions/Forms/Sending_and_retrieving_form_data) (MDN): what a form sends and how, with `GET` and with `POST`.
