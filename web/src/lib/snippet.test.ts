@@ -1,3 +1,6 @@
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { extractRegion, languageOf, readProjectFile } from './snippet';
 
@@ -67,5 +70,22 @@ describe('readProjectFile', () => {
     expect(() => readProjectFile('tienda-api/no-existe.ts')).toThrow('There is no project file');
     expect(() => readProjectFile('../package.json')).toThrow('There is no project file');
     expect(() => readProjectFile('../projects-old/x.ts')).toThrow('There is no project file');
+  });
+
+  it('refuses a symbolic link that leads out of projects/', () => {
+    const work = mkdtempSync(join(tmpdir(), 'snippet-'));
+    try {
+      const root = join(work, 'projects');
+      mkdirSync(join(root, 'tienda-api'), { recursive: true });
+      writeFileSync(join(work, 'secreto.txt'), 'no');
+      writeFileSync(join(root, 'tienda-api', 'bien.ts'), 'sí');
+      symlinkSync(join(work, 'secreto.txt'), join(root, 'tienda-api', 'enlace.ts'));
+      expect(readProjectFile('tienda-api/bien.ts', root)).toBe('sí');
+      expect(() => readProjectFile('tienda-api/enlace.ts', root)).toThrow(
+        'There is no project file',
+      );
+    } finally {
+      rmSync(work, { recursive: true, force: true });
+    }
   });
 });

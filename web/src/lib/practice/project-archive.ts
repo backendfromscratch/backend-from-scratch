@@ -3,7 +3,7 @@
  * macOS, Linux and WSL already have), so nobody gets stuck on a typo. A minimal ustar writer, with
  * a fixed date: the same files always give the same bytes.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { lstatSync, readdirSync, readFileSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { gzipSync } from 'node:zlib';
 
@@ -76,7 +76,11 @@ export function stepEntries(stepDir: string, name: string): ArchiveEntry[] {
       if (skipped.has(child) && !(child === '.env' && dir !== stepDir)) continue;
       const full = join(dir, child);
       const path = `${name}/${relative(stepDir, full).split(sep).join('/')}`;
-      if (statSync(full).isDirectory()) {
+      // lstat, not stat: a symbolic link is not followed, so a download only ever holds the step's
+      // own files. The projects have none, and a step with one fails the build.
+      const stats = lstatSync(full);
+      if (stats.isSymbolicLink()) throw new Error(`A symbolic link in a project step: ${path}`);
+      if (stats.isDirectory()) {
         entries.push({ path: `${path}/` });
         walk(full);
       } else {

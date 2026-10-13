@@ -3,7 +3,7 @@
  * a lesson never copies code by hand. A file is shown whole or one region of it, marked with
  * `// #region name` and `// #endregion name`. A region that does not exist fails the build.
  */
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 
 const marker = /^\s*\/\/ #(end)?region\b.*$/;
@@ -62,11 +62,15 @@ export function languageOf(file: string): string {
 /** The projects folder, from the site's folder (where Astro and Vitest run). */
 const projects = resolve(process.cwd(), '..', 'projects');
 
-/** A file of a project: `tienda-api/04-servidor-http/src/app.ts`. */
-export function readProjectFile(file: string): string {
-  const path = resolve(projects, file);
-  if (!path.startsWith(projects + sep) || !existsSync(path)) {
-    throw new Error(`There is no project file «${file}» in ${projects}`);
-  }
-  return readFileSync(path, 'utf8');
+/**
+ * A file of a project: `tienda-api/04-servidor-http/src/app.ts`. The real path is checked, not
+ * just the text: a symbolic link inside projects/ cannot make a lesson show a file from elsewhere.
+ */
+export function readProjectFile(file: string, root = projects): string {
+  const refuse = () => new Error(`There is no project file «${file}» in ${root}`);
+  const path = resolve(root, file);
+  if (!path.startsWith(root + sep) || !existsSync(path)) throw refuse();
+  const real = realpathSync(path);
+  if (!real.startsWith(realpathSync(root) + sep)) throw refuse();
+  return readFileSync(real, 'utf8');
 }

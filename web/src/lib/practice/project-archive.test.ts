@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
@@ -57,6 +57,13 @@ describe('project archives', () => {
 
   it('is reproducible: the same files give the same bytes', () => {
     expect(tarGz(stepEntries(step, 'x')).equals(tarGz(stepEntries(step, 'x')))).toBe(true);
+  });
+
+  it('refuses a step with a symbolic link, which could lead out of the project', () => {
+    const linked = join(work, 'enlazado');
+    mkdirSync(linked);
+    symlinkSync(join(step, 'package.json'), join(linked, 'enlace.json'));
+    expect(() => stepEntries(linked, 'x')).toThrow('symbolic link');
   });
 
   it('refuses a path too long for ustar', () => {
