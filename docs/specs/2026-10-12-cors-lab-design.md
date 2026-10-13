@@ -45,7 +45,7 @@ Every step comes with a sentence that explains what happened and why, and the ou
 | Credentials | `same-origin` (the default), `include` |
 | Destination | the API (another origin), the shop itself (same origin) |
 
-**The server** (what the API answers; the same answers for the preflight and for the real request):
+**The server** (what the API answers). As in the shop's nginx, `Access-Control-Allow-Origin` and `Access-Control-Allow-Credentials` go in both responses, the preflight's and the real one's, and `Access-Control-Allow-Methods` and `Access-Control-Allow-Headers` only in the preflight's, the only one where the browser reads them. The diagram shows each header only where it travels:
 
 | Control | Values |
 |---|---|
@@ -90,7 +90,7 @@ The decision is a pure function of the request and the server settings. It follo
 
 - No preflight cache (`Access-Control-Max-Age`): every non-simple request is asked about.
 - No `Access-Control-Expose-Headers`, redirects, `mode: 'no-cors'` (lesson 6 explains why it is not a fix) or private network access.
-- The server answers the same CORS headers to every request; a real server can answer each origin differently (`Vary: Origin`, lesson 6).
+- The server answers every origin the same; a real server can answer each origin differently (`Vary: Origin`, lesson 6).
 - Chrome's console messages are Chrome's; Firefox words them differently. The lesson says so.
 
 ## 3. Steps and narration
@@ -157,6 +157,7 @@ Example (es, `check-fails`, scenario 1): «La respuesta no trae `Access-Control-
 | Simple requests | `GET` and `POST` with `text/plain` or a form: no preflight; readable only with the right `Access-Control-Allow-Origin` |
 | Preflight triggers | `PUT`, `DELETE`, `POST` with JSON, `Authorization`: each one, alone, triggers a preflight, with the right `Access-Control-Request-*` headers |
 | Preflight failures | Non-2xx status (the `405`), CORS check, method not allowed, header not allowed: the real request is not sent |
+| Headers per response | `Access-Control-Allow-Methods` and `Access-Control-Allow-Headers` appear only in the preflight's answer; `Access-Control-Allow-Origin` and `Access-Control-Allow-Credentials`, in both |
 | Credentials | `*` with `include` fails; the exact origin without `Access-Control-Allow-Credentials: true` fails; with both, passes; the preflight never carries the cookie; the cookie travels to both hosts (its `Domain`) |
 | `server-acts` | In every run where the real request is sent, the server acts, whatever the check says |
 | Scenarios | The six scenarios give the outcomes of §2.2, with the Spanish and with the English names |
@@ -168,5 +169,5 @@ Example (es, `check-fails`, scenario 1): «La respuesta no trae `Access-Control-
 
 - `SameSite` and third-party cookie blocking (lesson 5), CSRF protection (Phase 6).
 - Preflight cache, exposed headers, redirects, `no-cors`, private network access.
-- Different answers per origin, and servers that answer the preflight and the real request differently.
+- Different answers per origin, and a different `Access-Control-Allow-Origin` or `Access-Control-Allow-Credentials` in the preflight and in the real response.
 - Firefox's and Safari's console messages.
