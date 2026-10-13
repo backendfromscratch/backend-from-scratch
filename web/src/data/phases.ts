@@ -55,7 +55,8 @@ export const phases: Phase[] = [
   },
   {
     number: 4,
-    status: 'coming-soon',
+    status: 'available',
+    lessonCount: 9,
     title: { es: 'Diseño de APIs', en: 'API design' },
     summary: {
       es: 'REST bien hecho, OpenAPI y cuándo usar GraphQL, gRPC, WebSockets, Server-Sent Events o webhooks.',

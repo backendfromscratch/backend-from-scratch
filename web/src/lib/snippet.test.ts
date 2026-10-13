@@ -56,6 +56,7 @@ describe('languageOf', () => {
     expect(languageOf('a/src/app.ts')).toBe('ts');
     expect(languageOf('a/package.json')).toBe('json');
     expect(languageOf('a/tsconfig.json')).toBe('jsonc');
+    expect(languageOf('a/ejemplos/pedido.proto')).toBe('proto');
     expect(languageOf('a/.npmrc')).toBe('ini');
     expect(() => languageOf('a/foto.png')).toThrow();
   });

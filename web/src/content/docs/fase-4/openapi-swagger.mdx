@@ -1,0 +1,628 @@
+---
+translationKey: openapi
+title: "Qué es OpenAPI y Swagger: documentar una API"
+description: "Qué es OpenAPI, en qué se diferencia de Swagger y cómo documentar tu API de Node.js como un contrato, generado desde los esquemas de Zod."
+sidebar:
+  label: "OpenAPI"
+  order: 5
+lesson:
+  oneLiner: "OpenAPI es un formato estándar para describir una API en un documento JSON o YAML: cada ruta, lo que recibe y lo que responde, también cuando falla. Swagger es su nombre antiguo, y hoy el de unas herramientas que lo leen. Si el documento sale de los mismos esquemas que validan, no se queda viejo."
+  objectives:
+    - Explicar qué es OpenAPI, qué es Swagger y por qué se confunden.
+    - Leer un documento OpenAPI y buscar en él con jq.
+    - Generar el contrato desde los esquemas de Zod con @hono/zod-openapi y publicarlo con su página en /docs.
+    - Distinguir code-first de contract-first, y saber qué comprueba el contrato y qué no.
+  prerequisites: [versioning]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+
+## El problema
+
+La empresa de reparto que va a usar la API de la tienda le escribe a Ana: «¿Qué campos lleva un pedido? ¿Qué respondéis si no existe? ¿El precio va en euros?». Ana contesta por correo. Una semana después, quien programa la app móvil pregunta lo mismo.
+
+Imagina que, para no repetirse, Ana escribe un README (el fichero de texto que explica un proyecto) con cada ruta, en la época de la versión 1, con `precio` en euros. En la lección 4, «Versionado», la versión 2 pasó a `precioCentimos`, y nadie tocó el README. Ahora miente, y nadie se entera: **nada comprueba que un texto escrito a mano diga lo mismo que el código.**
+
+Además, un README solo lo leen personas: ningún programa puede comprobar con él que la API cumple lo que promete. Hace falta una descripción que lean personas y programas, y que salga del propio código.
+
+## La analogía
+
+<Analogy>
+
+Piensa en los planos de un edificio. Usan símbolos que cualquier arquitecto, electricista o fontanero entiende, y con ellos el fontanero sabe por dónde van las tuberías sin llamar al arquitecto.
+
+Un documento OpenAPI es el plano de una API: en un formato que todos conocen, dice qué rutas hay, qué datos entran y qué sale. Como un plano, se puede dibujar antes de construir o sacar de lo ya construido.
+
+<div slot="limits">
+
+- Un plano dibujado a mano puede no coincidir con la obra. El de esta lección se genera desde el código: lo que dice de las peticiones siempre es verdad; de las respuestas, no del todo.
+- Con un plano no puedes abrir un grifo. Con la página de la documentación sí: envía peticiones de verdad a la API.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Un documento que describe cada ruta
+
+Esto dirá la API de la tienda, al final de la lección, sobre `GET /v2/productos/{id}`. `jq`, de la [lección 8 de la Fase 3](/fase-3/errores-y-logs-node/), saca esa parte del documento:
+
+```sh
+curl -s localhost:3000/v2/openapi.json | jq '.paths["/productos/{id}"].get'
+```
+
+```json
+{
+  "tags": [
+    "Productos"
+  ],
+  "summary": "Un producto",
+  "parameters": [
+    {
+      "schema": {
+        "type": "integer",
+        "example": 2
+      },
+      "required": true,
+      "name": "id",
+      "in": "path"
+    }
+  ],
+  "responses": {
+    "200": {
+      "description": "El producto",
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/Producto"
+          }
+        }
+      }
+    },
+    "404": {
+      "description": "No existe ese producto",
+      "content": {
+        "application/problem+json": {
+          "schema": {
+            "$ref": "#/components/schemas/Problema"
+          }
+        }
+      }
+    },
+    "422": {
+      "description": "Los datos no son válidos: «errores» dice qué falla",
+      "content": {
+        "application/problem+json": {
+          "schema": {
+            "$ref": "#/components/schemas/Problema"
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+Sin leer el código, sabes lo que preguntaba la empresa de reparto:
+
+- **`parameters`:** la ruta lleva un `id` (`"in": "path"`), entero y obligatorio.
+- **`responses`:** cada <Term id="status-code">código</Term> que puede salir: un `200` con un `Producto`, o un `404` y un `422` con un `Problema`, el formato de errores de la lección 2.
+- **`$ref`:** «la forma está en otra parte del documento». `Producto` se describe una vez, en `components`, y lo usan todas las rutas.
+
+Este documento sigue **<Term id="openapi">OpenAPI</Term>**, un formato estándar para describir APIs <Term id="http">HTTP</Term>. Se escribe en <Term id="json">JSON</Term> o en YAML (otro formato de texto, con sangrías en lugar de llaves). La versión que usa el proyecto es la 3.1, de 2021; en septiembre de 2025 salió la 3.2.
+
+Ese documento es el **<Term id="api-contract">contrato</Term>** de la API: lo que promete a quien la usa.
+
+### OpenAPI y Swagger: un formato con dos nombres
+
+Verás «Swagger» por todas partes, a veces como si fuera lo mismo que OpenAPI. Lo fue:
+
+1. **2010:** Tony Tam, en el diccionario en internet Wordnik, crea Swagger: un formato para describir su API y herramientas que lo leen.
+2. **2015:** SmartBear compra Swagger y regala el formato a la nueva OpenAPI Initiative, de la Linux Foundation.
+3. **2016:** el formato pasa a llamarse OpenAPI Specification. Swagger 2.0 fue la última versión con el nombre antiguo.
+
+Desde entonces, **OpenAPI es el formato y Swagger es una marca de herramientas** de SmartBear: Swagger UI (una página que enseña el documento), Swagger Editor y Swagger Codegen.
+
+| Si lees… | Quiere decir… |
+|---|---|
+| Un `swagger.json` con `"swagger": "2.0"` | Un documento con la versión antigua del formato |
+| Un `openapi.json` con `"openapi": "3.1.0"` | Un documento con el formato de hoy (3.0, 3.1 o 3.2) |
+| «Tenemos Swagger en `/swagger`» | Una página de Swagger UI, que lee un documento OpenAPI |
+
+### Code-first: el contrato sale de los esquemas
+
+El documento se puede escribir a mano o generar desde el código. La tienda lo genera, y eso se llama ***code-first*** («primero el código»): sale de los mismos <Term id="schema">esquemas</Term> de Zod que validan desde la [lección 7 de la Fase 3](/fase-3/validar-datos-zod/), gracias a `@hono/zod-openapi`. Así empieza `src/esquemas.ts`:
+
+<ProjectCode file="tienda-api/14-openapi/src/esquemas.ts" region="entrada" />
+
+- **`import { z } from '@hono/zod-openapi'`**, arriba del fichero: el `z` de Zod de siempre, con un método más, `.openapi()`.
+- **`.openapi({ example: 2 })`** añade algo que solo es para el documento: un valor de muestra.
+- **`.openapi('PedidoNuevo')`** le pone nombre al esquema, el que aparece en `components` y en los `$ref`.
+
+El esquema se llamaba `esquemaPedido`; ahora es `esquemaPedidoNuevo`, porque el contrato también describe **lo que sale**:
+
+<ProjectCode file="tienda-api/14-openapi/src/esquemas.ts" region="salida" />
+
+`z.enum([…])` es «uno de estos textos». Fíjate en el comentario: estos esquemas no comprueban nada al ejecutarse.
+
+### Cada ruta, con lo que recibe y lo que responde
+
+Cada ruta se describe en un fichero nuevo, `src/contrato.ts`. Esta es la de ver un producto:
+
+<ProjectCode file="tienda-api/14-openapi/src/contrato.ts" region="ver-producto" />
+
+- **`createRoute`** describe una ruta sin el código que la atiende: qué recibe (`request`) y qué responde (`responses`).
+- **`path: '/productos/{id}'`** escribe el parámetro con llaves, como OpenAPI, no con `:id`.
+- **`tags`** agrupa las rutas en la página de la documentación; **`summary`** es su nombre allí.
+- **`request: { params: esquemaId }`:** el `id` se valida con `esquemaId`, el de la Fase 3.
+
+`enJson` y `conProblema` son dos <Term id="function">funciones</Term> de ayuda, del principio del fichero:
+
+<ProjectCode file="tienda-api/14-openapi/src/contrato.ts" region="piezas" />
+
+`conProblema` dice que el error va como `application/problem+json`. `cuerpo` describe un <Term id="request-body">cuerpo</Term> JSON obligatorio. Así lo usa la ruta que crea un producto:
+
+<ProjectCode file="tienda-api/14-openapi/src/contrato.ts" region="crear-producto" />
+
+- **`security`** anuncia en el documento que la ruta pide un token. Lo comprueba `soloAdmin`, que **`middleware`** pone delante, antes de validar el cuerpo.
+- **`headers: conLocation`:** el `201` lleva la cabecera `Location`, y el contrato lo dice.
+
+### OpenAPIHono valida y apunta cada ruta
+
+En `src/v2.ts`, la versión 2 deja de ser un `Hono` y pasa a ser un `OpenAPIHono`:
+
+<ProjectCode file="tienda-api/14-openapi/src/v2.ts" region="crear-v2" />
+
+- **`OpenAPIHono`** es un `Hono` que además apunta cada ruta en el documento.
+- **`defaultHook`** es lo que responde si la petición no cumple el esquema. `siNoEsValido` es la función que antes iba dentro de `validar`, ahora con nombre, en `src/middleware/validar.ts`. Sin ella, `OpenAPIHono` respondería un `400` con el error de Zod entero; con ella, el `422` de siempre.
+- **`registerComponent(…)`** dice cómo se manda el token, `Authorization: Bearer <token>` ([lección 4 de la Fase 2](/fase-2/cabeceras-http/)): es el `Bearer` del `security` de antes.
+
+Y cada ruta pasa de `v2.get(…)` a `v2.openapi(…)`:
+
+<ProjectCode file="tienda-api/14-openapi/src/v2.ts" region="ver-producto" />
+
+`v2.openapi(contrato.verProducto, …)` registra la ruta, valida la petición con el contrato y la apunta en el documento. La función es la de antes, salvo que `c.json(producto, 200)` lleva el código. Hace falta para lo que viene.
+
+### TypeScript comprueba que el código cumple el contrato
+
+`@hono/zod-openapi` le da a TypeScript el contrato de cada ruta. Si la función devuelve un código que no está en `responses`, `npm run check` falla. Lo provocarás en «Pruébalo», quitando el `404` del contrato de `verProducto`. La última línea del error:
+
+```
+Type '404' is not assignable to type '422'.
+```
+
+TypeScript busca en el contrato un código que encaje con el `404` de `problemaHttp`, y no lo hay. Un `c.json(producto)` sin código también falla, y un producto sin `precioCentimos` no compila. **Lo que el contrato promete, el código no puede olvidarlo.**
+
+### Lo que el contrato no comprueba
+
+Hay dos agujeros:
+
+- **Zod no valida las respuestas,** solo lo que entra. Lo que sale solo lo revisa TypeScript, antes de ejecutar.
+- **A TypeScript no le importa un campo de más.** Un producto con un campo extra, como lo que le costó a la tienda, compila, y llega al <Term id="client">cliente</Term> sin que el contrato lo diga.
+
+Los cierran las pruebas que miran las respuestas de verdad, como las del proyecto, que comparan el producto entero.
+
+### El documento y su página: /v2/openapi.json y /docs
+
+El documento se publica en una ruta más, en `src/app.ts`:
+
+<ProjectCode file="tienda-api/14-openapi/src/app.ts" region="contrato-json" />
+
+- **`getOpenAPI31Document`** escribe el documento con las rutas de v2 cada vez que alguien lo pide: siempre es el del código en marcha.
+- **`info`** es la ficha de la API, y **`servers`** dice que sus rutas, como `/productos`, cuelgan de `/v2`.
+
+Para las personas, debajo, una página:
+
+<ProjectCode file="tienda-api/14-openapi/src/app.ts" region="pagina-docs" />
+
+`Scalar` responde en `/docs` una página HTML que, en el navegador, descarga `/v2/openapi.json` y lo enseña, con un botón para probar cada ruta. La alternativa clásica es Swagger UI.
+
+El código de la página lo descarga el navegador de jsDelivr, una <Term id="cdn">CDN</Term>. Por eso `cdn` lleva la versión exacta, como los paquetes de npm: sin ella, cada visita cargaría la última, código que nadie ha revisado. Además, jsDelivr sirve una versión exacta con `Cache-Control: immutable`, la [caché](/fase-2/cache-http/) que nunca pregunta.
+
+### Code-first o contract-first
+
+La otra manera es ***contract-first*** («primero el contrato»): se escribe el documento, se acuerda con quien va a usar la API y después se programa.
+
+| | Code-first | Contract-first |
+|---|---|---|
+| Qué se escribe primero | El código; el contrato sale de él | El contrato; el código lo cumple |
+| A favor | Una sola fuente: lo que entra no puede desviarse | Los clientes empiezan antes, y el diseño se discute sin código |
+| En contra | El diseño se decide programando | Contrato y código pueden separarse si nada los compara |
+| Encaja cuando | La API ya existe y la hace un solo equipo | Varios equipos empiezan a la vez |
+
+La tienda ya tenía su API: code-first encaja.
+
+### Lo que se genera con un contrato
+
+Como lo leen los programas, el contrato sirve para más que una página:
+
+- **Clientes:** `openapi-typescript` saca sus tipos de TypeScript, y OpenAPI Generator escribe clientes en decenas de lenguajes.
+- **Servidores de mentira** (*mocks*): Prism responde lo que dice el contrato antes de que exista la API.
+- **Pruebas de contrato:** Schemathesis envía cientos de peticiones generadas y avisa si una respuesta no cumple su esquema. Cierra el primero de los dos agujeros de antes.
+
+## Pruébalo
+
+El objetivo: que la empresa de reparto pueda usar la API sin escribirte. Publicarás el contrato y su página, harás un pedido desde ella y romperás el contrato para ver quién te avisa.
+
+### Pon el contrato en tu proyecto
+
+Sigues en `~/curso-backend/fase-3/tienda-api`, con la API de la lección 4. Esta lección toca casi todas las rutas de v2, así que descarga su carpeta junto a tu proyecto: desde `~/curso-backend/fase-3`, `curl -O https://backenddesdecero.com/practicas/tienda-api/14-openapi.tar.gz` y `tar -xzf 14-openapi.tar.gz`.
+
+<TryIt
+  title="1. Instala los dos paquetes"
+  cmd="npm install @hono/zod-openapi@1.6.3 @scalar/hono-api-reference@0.12.10"
+  output={`added 13 packages, and audited 35 packages in 5s
+
+6 packages are looking for funding
+  run \`npm fund\` for details
+
+found 0 vulnerabilities`}
+>
+
+Con versión exacta, como siempre. Las salidas de esta lección son de Node 26; tus tiempos, tus ids y tus fechas serán otros.
+
+</TryIt>
+
+Después, en tu proyecto:
+
+1. **Copia de la carpeta** `src/esquemas.ts`, `src/contrato.ts` y `src/problemas.ts`, y léelos: las rutas que no has visto siguen el mismo patrón. En `problemas.ts`, `problema` y `problemaHttp` reciben ahora el código exacto (`Codigo`), para que TypeScript pueda compararlo con el contrato.
+2. **`src/middleware/validar.ts`:** saca la función de `validar` a `siNoEsValido`, como en la carpeta.
+3. **`src/v2.ts`:** copia los `import` de la carpeta y cambia `new Hono()` por lo de arriba. Cada `v2.get(…)`, `v2.post(…)`… pasa a `v2.openapi(contrato.…, …)`, sin `validar` ni `soloAdmin`, y cada `c.json(…)` lleva su código.
+4. **`src/app.ts`:** importa `Scalar` de `@scalar/hono-api-reference` y añade las dos rutas, después de `app.route('/v2', v2)`.
+5. **`test/openapi.test.ts`:** cópialo; son las pruebas de esta lección.
+
+<TryIt
+  title="2. Comprueba los tipos y las pruebas"
+  cmd={`npm run check
+npm test | tail -8`}
+  output={`> tienda-api@1.0.0 check
+> tsc --noEmit
+
+ℹ tests 51
+ℹ suites 0
+ℹ pass 51
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 810.374958`}
+>
+
+`npm run check` no dice nada más que su nombre: sin errores. `tail -8` deja el resumen de `npm test`: 51 pruebas, ninguna falla. Si `npm run check` falla en `v2.ts`, busca un `c.json` sin su código o una ruta que aún usa `validar`.
+
+</TryIt>
+
+### Lee el contrato con jq
+
+Arranca el servidor en una terminal con `npm run dev` y abre otra.
+
+<TryIt
+  title="3. Las piezas del documento"
+  cmd={`curl -s localhost:3000/v2/openapi.json | jq 'keys'
+curl -s localhost:3000/v2/openapi.json | jq -c '{openapi, info, servers}'`}
+  output={`[
+  "components",
+  "info",
+  "openapi",
+  "paths",
+  "servers",
+  "webhooks"
+]
+{"openapi":"3.1.0","info":{"title":"API de la tienda de Ana y Luis","version":"2.0.0","description":"Productos y pedidos de la tienda. Los precios van en céntimos."},"servers":[{"url":"/v2"}]}`}
+>
+
+`keys` lista las piezas del documento, en orden alfabético:
+
+- **`openapi`, `info` y `servers`:** la versión del formato y lo que escribiste en `app.ts`.
+- **`paths`:** las rutas.
+- **`components`:** lo que usan los `$ref`.
+- **`webhooks`:** las peticiones que la API enviaría a otros, vacío hasta la lección 7.
+
+Si `curl` no saca nada, el servidor no está en marcha. Si `keys` da `"detail"`, `"status"`, `"title"` y `"type"`, has recibido un error, no el documento: seguramente un `404`, porque falta la ruta en `app.ts`.
+
+</TryIt>
+
+<TryIt
+  title="4. Las reglas de Zod, en el documento"
+  cmd={`curl -s localhost:3000/v2/openapi.json | jq '.components.schemas.PedidoNuevo'`}
+  output={`{
+  "type": "object",
+  "properties": {
+    "productoId": {
+      "type": "integer",
+      "example": 1
+    },
+    "cantidad": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "example": 2
+    }
+  },
+  "required": [
+    "productoId",
+    "cantidad"
+  ]
+}`}
+>
+
+Fíjate en `cantidad`: `integer`, `minimum: 1` y `maximum: 10` son tus `.int()`, `.min(1)` y `.max(10)`. Y `required` sale de que ningún campo es `.optional()`. Nadie lo ha escrito dos veces.
+
+</TryIt>
+
+<TryIt
+  title="5. La página, por dentro"
+  cmd={`curl -s localhost:3000/docs | tail -14`}
+  output={`  <body>
+    <div id="app"></div>
+    <!-- Load the Script -->
+    <script src="https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.73.0"></script>
+
+    <!-- Initialize the Scalar API Reference -->
+    <script type="text/javascript">
+      Scalar.createApiReference('#app', {
+        "_integration": "hono",
+        "url": "/v2/openapi.json"
+      })
+    </script>
+  </body>
+</html>`}
+>
+
+`tail -14` deja las últimas 14 líneas. La página está casi vacía: un `div` y dos `script`, uno que descarga Scalar y otro que le dice dónde está el contrato. Lo demás lo dibuja el navegador.
+
+</TryIt>
+
+### Abre la página y haz un pedido
+
+Abre `http://localhost:3000/docs` en el navegador. Necesita internet: descarga su código de jsDelivr y sus fuentes de Scalar. Esto es lo que se ve en Chrome con Scalar 1.73.0:
+
+- **A la izquierda**, un buscador y los grupos de tus `tags`, «Productos» y «Pedidos», con sus rutas. «Models» son tus esquemas con nombre.
+- **En el centro**, `v2.0.0`, `OpenAPI 3.1.0`, «API de la tienda de Ana y Luis» y tu descripción. «Download OpenAPI Document» descarga el contrato.
+- **A la derecha**, «Server» dice `http://localhost:3000/v2`, el `servers` del documento.
+
+Ve a «Pedidos» y a «Crea un pedido»: verás el cuerpo, «PedidoNuevo», con cada campo, su tipo y sus límites. Pulsa **Test Request**: se abre una ventana con el `POST`, la URL y el cuerpo relleno con tus `example`, `{"productoId": 1, "cantidad": 2}`. Pulsa **Send**: a la derecha, `201 Created` y el pedido nuevo.
+
+Cambia `cantidad` a `11` y envía otra vez: `422 Unprocessable Content` y tu Problem Details, con «Como máximo, 10 por pedido». La página envía peticiones reales.
+
+### Rompe el contrato a propósito
+
+En `src/contrato.ts`, en `verProducto`, borra la línea del `404` y guarda. La ruta, en `v2.ts`, sigue devolviendo un `404` cuando el producto no existe.
+
+<TryIt
+  title="6. Un código que el contrato no tiene"
+  cmd="npx tsc --noEmit"
+  output={`src/v2.ts:43:34 - error TS2345: Argument of type '(c: Context<any, "/productos/:id", { in: { param: { id: unknown; }; }; out: { param: { id: number; }; }; }>) => JSONRespondReturn<...> | JSONRespondReturn<...>' is not assignable to parameter of type 'Handler<any, "/productos/:id", { in: { param: { id: unknown; }; }; out: { param: { id: number; }; }; }, MaybePromise<RouteConfigToTypedResponse<{ method: "get"; path: "/productos/{id}"; tags: string[]; summary: string; request: { params: ZodObject<{ id: ZodCoercedNumber<unknown>; }, $strip>; }; responses: { ...; }; ...'.
+  Type 'JSONRespondReturn<Producto, 200> | JSONRespondReturn<...>' is not assignable to type 'MaybePromise<RouteConfigToTypedResponse<{ method: "get"; path: "/productos/{id}"; tags: string[]; summary: string; request: { params: ZodObject<{ id: ZodCoercedNumber<unknown>; }, $strip>; }; responses: { ...; }; } & { ...; }>>'.
+    Type 'JSONRespondReturn<Problema & { status: 404; }, 404>' is not assignable to type 'MaybePromise<RouteConfigToTypedResponse<{ method: "get"; path: "/productos/{id}"; tags: string[]; summary: string; request: { params: ZodObject<{ id: ZodCoercedNumber<unknown>; }, $strip>; }; responses: { ...; }; } & { ...; }>>'.
+      Type 'JSONRespondReturn<Problema & { status: 404; }, 404>' is not assignable to type 'TypedResponse<{ type: string; title: string; status: number; detail?: string | undefined; instance?: string | undefined; errores?: { campo: string; problema: string; }[] | undefined; }, 422, "json">'.
+        Types of property '_status' are incompatible.
+          Type '404' is not assignable to type '422'.
+
+43 v2.openapi(contrato.verProducto, (c) => {
+                                    ~~~~~~~~
+
+
+Found 1 error in src/v2.ts:43`}
+>
+
+Es largo, y se lee de abajo arriba. La última línea es la causa: la ruta devuelve un `404`, y el contrato solo admite el `200` y el `422`.
+
+`npx tsc --noEmit` es lo que hace `npm run check`. `43:34` es la línea y la columna en `src/v2.ts`; en tu fichero pueden ser otras. `npm run dev` no se habría quejado: Node no mira los tipos. Vuelve a poner el `404`.
+
+</TryIt>
+
+<SelfCheck question="Reto: la empresa de reparto quiere saber qué códigos puede responder la cancelación de un pedido, y qué significa cada uno. Averígualo sin abrir el código, solo con el contrato y jq.">
+
+Las respuestas de `POST /pedidos/{id}/cancelacion` están en `paths`, bajo `post`. `keys` da sus códigos, y `.description`, lo que significa uno:
+
+```sh
+curl -s localhost:3000/v2/openapi.json | jq '.paths["/pedidos/{id}/cancelacion"].post.responses | keys'
+curl -s localhost:3000/v2/openapi.json | jq -r '.paths["/pedidos/{id}/cancelacion"].post.responses["409"].description'
+```
+
+```
+[
+  "200",
+  "404",
+  "409",
+  "422"
+]
+El pedido ya está enviado
+```
+
+`200` si se cancela, `404` si el pedido no existe, `422` si el id no es un número y `409` si ya ha salido. `-r` saca el texto sin comillas.
+
+</SelfCheck>
+
+## Ya lo has visto
+
+- **Las APIs grandes publican su contrato.** GitHub, en [github/rest-api-description](https://github.com/github/rest-api-description), y Stripe, en [stripe/openapi](https://github.com/stripe/openapi).
+- **Una dirección `/swagger` o `/api-docs`** con una página llena de rutas de colores: Swagger UI leyendo un documento OpenAPI.
+- **Postman, Insomnia y Bruno**, programas para probar APIs, importan un documento OpenAPI y crean todas sus peticiones de una vez.
+
+## Errores comunes
+
+- **Escribir la documentación aparte del código.** Se queda vieja sin que nadie lo note, como el README del principio.
+- **Olvidar `required: true` en el cuerpo.** Sin él, una petición sin cuerpo no se valida: quitándolo de la tienda, un `PATCH /v2/pedidos/25` sin cuerpo responde `{"id":25,"productoId":2,"estado":"pendiente"}`. El pedido se ha quedado sin `cantidad`.
+- **Un parámetro con `z.coerce` sin su `.openapi()`.** `z.coerce` acepta cualquier cosa, y el documento no sabe de qué tipo es. Sin `.openapi({ type: 'integer', param: { required: true } })`, el `id` sale como `"type": ["integer", "null"]` y `"required": false`.
+- **Confundir las versiones.** Un `swagger.json` con `"swagger": "2.0"` es del formato antiguo: mira qué versión acepta una herramienta antes de dársela.
+
+## Resumen
+
+- OpenAPI es un formato estándar para describir una API: rutas, parámetros, cuerpos y respuestas, también las de error. Swagger fue su nombre hasta 2016, y hoy es una marca de herramientas.
+- El documento es el contrato de la API: lo leen personas, en páginas como `/docs`, y programas, que generan clientes, servidores de mentira y pruebas.
+- Code-first genera el contrato desde el código; contract-first lo escribe antes. La tienda lo genera desde los esquemas que validan, así que no se queda viejo.
+- `npm run check` falla si una ruta responde un código o una forma que su contrato no tiene. Lo que sale no se comprueba al ejecutar, ni un campo de más: para eso, las pruebas.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Un compañero te dice: «Nuestra API no usa OpenAPI, usa Swagger: mira, tenemos Swagger UI en /swagger». ¿Qué le contestas?"
+  review="OpenAPI y Swagger: un formato con dos nombres"
+>
+
+<QuizOption text="Que tiene razón: Swagger y OpenAPI son dos formatos que compiten, y cada API elige uno.">
+
+Son el mismo formato: Swagger pasó a llamarse OpenAPI Specification en 2016.
+
+</QuizOption>
+
+<QuizOption text="Que Swagger UI es una página que lee OpenAPI: usáis OpenAPI, con esa página." correct>
+
+Hoy, Swagger es una marca de herramientas: Swagger UI dibuja un documento OpenAPI, como Scalar en la tienda.
+
+</QuizOption>
+
+<QuizOption text="Que Swagger es la versión nueva de OpenAPI, la que trae la página incluida.">
+
+Es al revés: Swagger 2.0 es la versión antigua del formato, y la página es una herramienta aparte.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La app móvil quiere saber qué responde la API si cambia la cantidad de un pedido ya pagado. ¿Dónde lo mira sin preguntarte?"
+  review="Un documento que describe cada ruta"
+>
+
+<QuizOption text="En /v2/openapi.json: las responses del PATCH tienen el 409 y su descripción." correct>
+
+El contrato lista cada código de cada ruta, también los de error, con su descripción: «El pedido ya no está pendiente».
+
+</QuizOption>
+
+<QuizOption text="En el README del proyecto: es la documentación que se actualiza sola con cada cambio.">
+
+Un README se escribe a mano, y nada comprueba que siga diciendo lo mismo que el código.
+
+</QuizOption>
+
+<QuizOption text="En ninguna parte: OpenAPI solo describe las respuestas que salen bien.">
+
+OpenAPI describe todas las respuestas de la ruta, también las de error, con el esquema `Problema`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Cambias esquemaPedidoNuevo para que la cantidad admita hasta 20. ¿Qué tienes que hacer para que la documentación lo diga?"
+  review="Code-first: el contrato sale de los esquemas"
+>
+
+<QuizOption text="Cambiar a mano el maximum de cantidad en el documento OpenAPI.">
+
+El documento no se escribe a mano: `getOpenAPI31Document` lo genera desde los esquemas.
+
+</QuizOption>
+
+<QuizOption text="Ejecutar un comando que vuelva a generar el documento y subirlo a la web.">
+
+En la tienda, el documento se genera cada vez que alguien lo pide: no hay un fichero que regenerar.
+
+</QuizOption>
+
+<QuizOption text="Nada: al reiniciarse el servidor, /v2/openapi.json ya dice maximum 20." correct>
+
+Validación y documentación salen del mismo esquema. Por eso no pueden contradecirse en lo que entra.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="En la ruta de ver un producto, una compañera añade un return con un 403 que no está en las responses del contrato. ¿Qué pasa?"
+  review="TypeScript comprueba que el código cumple el contrato"
+>
+
+<QuizOption text="Nada: el contrato solo sirve para escribir la documentación.">
+
+Con `@hono/zod-openapi`, TypeScript conoce el contrato de cada ruta y compara con él los códigos que devuelve.
+
+</QuizOption>
+
+<QuizOption text="npm run check falla: el 403 no está en el contrato de esa ruta." correct>
+
+Es el error que provocaste en «Pruébalo». Si el 403 es correcto, se añade al contrato, y la documentación lo cuenta.
+
+</QuizOption>
+
+<QuizOption text="El servidor responde 500 cuando llega a ese return, porque el contrato lo prohíbe.">
+
+Al ejecutar no se comprueba lo que sale: Node ni mira los tipos. El aviso llega antes, en `npm run check`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Por un despiste, la ruta de ver un producto devuelve también lo que le costó a la tienda. El esquema de salida no tiene ese campo. ¿Quién lo para?"
+  review="Lo que el contrato no comprueba"
+>
+
+<QuizOption text="Zod, que quita de la respuesta los campos que no están en el esquema de salida.">
+
+Zod valida lo que entra. Los esquemas de salida solo sirven para el documento y para los tipos.
+
+</QuizOption>
+
+<QuizOption text="npm run check, porque el campo no está en el contrato.">
+
+TypeScript se queja si falta un campo, no si sobra.
+
+</QuizOption>
+
+<QuizOption text="Nadie, si no hay pruebas que lo miren: el campo llega al cliente." correct>
+
+Es uno de los dos agujeros del contrato. Lo cierran las pruebas que miran las respuestas.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Vas a hacer una API nueva para la app de otra empresa, y quieren empezar a programar ya, a la vez que tú. ¿Qué enfoque encaja mejor?"
+  review="Code-first o contract-first"
+>
+
+<QuizOption text="Contract-first: acordáis el contrato y cada uno programa su lado contra él." correct>
+
+Con el contrato acordado, ellos usan un servidor de mentira que lo cumple mientras tú escribes la API.
+
+</QuizOption>
+
+<QuizOption text="Code-first siempre: escribir el contrato antes es trabajo perdido, porque luego cambia.">
+
+Escribirlo antes es lo que deja a dos equipos trabajar a la vez, y se puede cambiar.
+
+</QuizOption>
+
+<QuizOption text="Ninguno: un documento OpenAPI solo puede existir cuando la API ya está terminada.">
+
+Un documento OpenAPI se puede escribir a mano, sin una línea de código. Eso es contract-first.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [OpenAPI Specification 3.1](https://spec.openapis.org/oas/v3.1.0) (en inglés): el formato entero, pieza a pieza.
+- [Learn OpenAPI](https://learn.openapis.org/) (OpenAPI Initiative, en inglés): una introducción oficial, con ejemplos.
+- [Zod OpenAPI](https://hono.dev/examples/zod-openapi) (Hono, en inglés): `createRoute`, `OpenAPIHono` y el documento.
+- [Scalar](https://github.com/scalar/scalar) (en inglés): la página de `/docs` y sus opciones.
+- [OpenAPI Specification](https://en.wikipedia.org/wiki/OpenAPI_Specification) (Wikipedia, en inglés): la historia de Swagger y OpenAPI, con fechas.
