@@ -45,7 +45,7 @@ A static site made with [Astro](https://astro.build) and [Starlight](https://sta
 web/            the site
   src/content/  lessons (Spanish at the root, English in en/), glossary and UI texts
   src/          components, playgrounds and the build's logic
-docs/           style guide, design specs and the to-do list
+docs/           the style guide for writing lessons
 ```
 
 ## License

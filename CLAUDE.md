@@ -25,14 +25,14 @@ A public, bilingual (Spanish and English) website with a backend course organise
 
 ## Docs (`docs/`)
 
-Only what is needed to keep working gets committed. Git history keeps the rest.
+**Only `style-guide.md` is committed** (decided on 2026-10-13): it is the rule CodeRabbit and anyone writing a lesson need. Everything else here is internal, between the author and Claude: it lives only on the author's machine, and `.gitignore` keeps it out of Git. Never commit or push it, and never put it in a PR; a PR only says in its description which design decision it follows.
 
 - `style-guide.md`: the rules for writing lessons and playgrounds.
 - `todo.md`: next steps and what the author has to review or decide.
 - `specs/`: the design decisions in force and their reasons. When a decision changes, update its spec. A spec for a one-off (a single lesson, say) is deleted once implemented, after moving any lasting rule into the style guide.
 - `research/`: analyses behind decisions that may be revisited.
 - `reviews/`: material for a pending author review. Delete it once reviewed.
-- **Plans are temporary.** An implementation plan lives only while it is being carried out: delete it in the PR that completes it. Before deleting it, move anything worth remembering (a decision, a rule, something pending) into its spec, the style guide or `todo.md`.
+- **Plans are temporary.** An implementation plan lives only while it is being carried out: delete it when the work is done. Before deleting it, move anything worth remembering (a decision, a rule, something pending) into its spec, the style guide or `todo.md`.
 
 ## Decisions already made
 
@@ -103,7 +103,7 @@ pnpm knip                    # unused files, exports and dependencies (knip.json
 - If you change something visible, look at it in the browser (`pnpm dev`) in dark and light mode, and at mobile width.
 - If you add, move or delete a module in `web/src/`, update the "Site architecture" map.
 - If you change a design decision, update its spec in `docs/specs/` and, if something is left for the author to review or decide, `docs/todo.md`.
-- If the work completes a plan, delete the plan in the same PR ("Docs").
+- If the work completes a plan, delete the plan ("Docs").
 
 ## Site architecture (`web/`)
 
