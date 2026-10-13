@@ -65,4 +65,18 @@ export const playgrounds: Playground[] = [
       en: 'Generate a key pair, encrypt with the public key and decrypt with the private one. Then sign a message and see what happens if someone changes it.',
     },
   },
+  {
+    id: 'cors-lab',
+    phase: 2,
+    level: 'lab',
+    lesson: 'cors',
+    title: {
+      es: 'CORS por dentro del navegador',
+      en: 'CORS inside the browser',
+    },
+    summary: {
+      es: 'Manda una petición a otro origen y sigue, paso a paso, qué hace el navegador: si pregunta antes, si llega al servidor, si viaja la cookie y si la página puede leer la respuesta.',
+      en: 'Send a request to another origin and follow, step by step, what the browser does: whether it asks first, whether it reaches the server, whether the cookie goes along and whether the page can read the response.',
+    },
+  },
 ];
