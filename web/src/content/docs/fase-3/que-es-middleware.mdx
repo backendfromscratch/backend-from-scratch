@@ -1,0 +1,550 @@
+---
+translationKey: middleware
+title: "Qué es un middleware en Node.js y cómo funciona"
+description: "Qué es un middleware y el ciclo de vida de una petición en Node.js: un registro con tiempos, CORS y un 401 con Hono, y por qué importa el orden."
+sidebar:
+  label: Middleware
+  order: 6
+lesson:
+  oneLiner: "Un middleware es una función por la que pasa cada petición antes de llegar a su ruta: puede contestar ella misma o pasarla a la siguiente capa, y ve la respuesta cuando vuelve. Sirve para escribir una sola vez lo que toca a muchas rutas, como anotar cada petición, dar permiso CORS o pedir un token."
+  objectives:
+    - Explicar el ciclo de vida de una petición en un servidor con middleware, a la ida y a la vuelta.
+    - Escribir un middleware que mide lo que tarda cada petición y otro que responde 401 si falta el token.
+    - Añadir CORS a la API con el middleware de Hono y comprobarlo con curl, petición previa incluida.
+    - Ordenar los middleware y reconocer lo que se rompe con un orden equivocado.
+  prerequisites: [frameworks, cors]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+La API de la tienda de la [lección 5](/fase-3/express-hono-fastify/) ya contesta a `curl`. Ahora Ana y Luis le piden tres cosas:
+
+- **Luis** quiere usarla desde la página de la tienda, `https://tienda.example`. Su `fetch` falla con el error de <Term id="cors">CORS</Term> de la [lección 6 de la Fase 2](/fase-2/que-es-cors/).
+- **Ana** quiere saber qué peticiones llegan y cuánto tarda cada una: una línea por petición, como el <Term id="log">log</Term> de nginx.
+- **Los dos** quieren que se puedan crear productos con `POST /productos`, pero solo Ana, con un token.
+
+Las dos primeras tocan a todas las <Term id="route">rutas</Term>, y la tercera, a una que puede tener hermanas mañana. Podrías copiar las mismas líneas al principio de cada ruta, pero ya son media docena, y basta con olvidar una para que se cuele una petición sin anotar o sin permiso. Los <Term id="framework">frameworks</Term> lo resuelven con una pieza que se escribe una vez y se pone delante de todas: el middleware.
+
+## La analogía
+
+<Analogy>
+
+Imagina que vas a una oficina de un edificio grande. En la puerta, el conserje apunta en su libro la hora a la que entras. Después, el guardia de seguridad te pide la tarjeta: si no la llevas, te dice «aquí no pasas» y te vuelves por donde has venido. Si la llevas, llegas a la oficina, que es donde de verdad te atienden.
+
+Al salir, haces el camino al revés: pasas otra vez por el guardia y por el conserje, que apunta la hora de salida. Así sabe cuánto rato has estado dentro, y si saliste con lo que venías a buscar.
+
+<div slot="limits">
+
+- En el servidor no hay nadie mirando: cada capa es una función que se ejecuta con cada petición, en milésimas de segundo.
+- El conserje solo mira. Un middleware puede además cambiar la respuesta cuando vuelve, por ejemplo añadiéndole una cabecera, como si te pusieran un sello en el papel que llevas.
+- En el edificio, el orden lo decide la arquitectura. En el servidor lo decides tú, con el orden de las líneas del código, y si lo cambias, cambia lo que pasa.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### La petición atraviesa las capas en orden
+
+Estas dos líneas van en `src/app.ts`, justo debajo de `export const app = new Hono();`:
+
+<ProjectCode file="tienda-api/06-middleware/src/app.ts" region="middleware" />
+
+`app.use(…)` añade una capa por la que pasan **todas** las peticiones, sea cual sea su ruta y su método. Aquí hay dos: `registro`, que escribirás tú, y `cors`, que viene con Hono. Se recorren en el orden de las líneas, y las rutas van después.
+
+Esto es lo que pasa con un `GET /productos` que llega desde la página de Luis:
+
+```mermaid
+sequenceDiagram
+    participant C as curl o el navegador
+    participant R as registro
+    participant O as cors
+    participant T as La ruta GET /productos
+    C->>R: GET /productos<br/>Origin: https://tienda.example
+    Note over R: apunta la hora de inicio
+    R->>O: next()
+    Note over O: el origen está permitido:<br/>prepara Access-Control-Allow-Origin
+    O->>T: next()
+    Note over T: la lista, en JSON
+    T-->>O: 200 OK
+    Note over O: añade Vary: Origin
+    O-->>R: 200 OK
+    Note over R: escribe «GET /productos 200 3 ms»
+    R-->>C: 200 OK
+```
+
+Ese recorrido es el **ciclo de vida de una petición**: entra, atraviesa cada <Term id="middleware">middleware</Term> en el orden en que los añadiste, llega a la función de su ruta y la respuesta vuelve por las mismas capas, en orden inverso. Por eso se suele dibujar como una cebolla: la ruta en el centro y cada middleware, una capa a su alrededor. (No son las capas de red de la Fase 0: aquí todo pasa dentro de tu programa.)
+
+### Un middleware es una función con next
+
+Este es el registro entero:
+
+<ProjectCode file="tienda-api/06-middleware/src/middleware/registro.ts" region="registro" />
+
+Pieza a pieza:
+
+- **`import type { MiddlewareHandler }`** trae solo un tipo de Hono, el de una función middleware ([lección 3](/fase-3/typescript-con-node/)). No ejecuta nada: sirve para que el editor sepa qué es `c` y qué es `next`.
+- **`export const registro: MiddlewareHandler = async (c, next) => { … }`** es la función, con ese tipo; `export` deja usarla desde `app.ts`. `c` es el mismo contexto de las rutas de la lección 5: con él lees la petición (`c.req`) y la respuesta (`c.res`). `next` es una función que pasa la petición a la siguiente capa.
+- **`performance.now()`** da los milisegundos, con decimales, que lleva el programa en marcha. No es la hora del reloj: sirve para restar dos y saber cuánto ha pasado.
+- **`await next()`** es la línea clave. Pasa la petición hacia dentro y **espera** a que vuelva la respuesta (el `await` de la [lección 2](/fase-3/javascript-para-backend/)). Lo que va antes se ejecuta a la ida; lo que va después, a la vuelta.
+- **`c.res.status`** es el código de estado que han decidido las capas de dentro. Por eso se lee después de `next()`: antes, la ruta aún no ha contestado.
+- **`Math.round(…)`** redondea la resta a milisegundos enteros.
+- **`console.log`** escribe en la terminal del servidor una línea con el método (`c.req.method`), el camino (`c.req.path`), el código y los milisegundos.
+
+Un middleware puede hacer tres cosas: **pasar** la petición (`await next()`), **contestar** él mismo (devolver una respuesta sin llamar a `next`), o hacer algo **antes y después**, como este. Las rutas de la lección 5 eran lo mismo, pero sin `next`: siempre contestan.
+
+### CORS, un middleware que ya viene hecho
+
+La segunda capa, `app.use(cors({ origin: 'https://tienda.example' }))`, viene con Hono (`hono/cors`). Hace lo que hacía el nginx de la tienda en la [Fase 2](/fase-2/que-es-cors/) con sus líneas `add_header`, pero desde el código:
+
+- **Una petición normal** con `Origin: https://tienda.example`: a la ida prepara `Access-Control-Allow-Origin`, llama a `next()` y, a la vuelta, añade `Vary: Origin`, que avisa a las cachés de que la respuesta depende de esa cabecera.
+- **Un origen que no está en la lista:** no añade el permiso, pero deja pasar la petición, y la ruta contesta. Quien esconde la respuesta es el navegador, como viste en la Fase 2.
+- **Una <Term id="preflight">petición previa</Term>** (`OPTIONS`): contesta él mismo, con un `204` y los permisos, **sin llamar a `next()`**. La ruta ni se entera.
+
+Sin indicarle otra cosa, Hono da permiso para siete métodos (`GET,HEAD,PUT,POST,DELETE,PATCH,QUERY`), aunque la API solo atienda algunos. `QUERY` es el más nuevo: una búsqueda que lleva sus condiciones en el cuerpo. No pasa nada: el permiso CORS no crea rutas, y un `PUT` seguiría recibiendo su `405`. Si quieres afinarlo, la opción `allowMethods` acepta la lista exacta.
+
+### Un guardia que responde 401
+
+Para crear productos hace falta un token, la cadena secreta que viaja en la cabecera `Authorization: Bearer …` ([lección 4 de la Fase 2](/fase-2/cabeceras-http/)). Este middleware la comprueba:
+
+<ProjectCode file="tienda-api/06-middleware/src/middleware/solo-admin.ts" region="solo-admin" />
+
+- **`c.req.header('Authorization')`** lee esa cabecera de la petición; si no viene, da `undefined`.
+- **`!==`** significa «distinto de». Se compara con `Bearer ` seguido del token, con una plantilla de texto (lección 2).
+- **`return c.json(…, 401, { … })`** contesta y, con `return`, termina la función. `next()` no llega a ejecutarse, así que la ruta tampoco.
+- **`'WWW-Authenticate': 'Bearer'`** es la cabecera que el estándar exige en todo `401`: dice cómo identificarse, aquí con un token en `Authorization`. Es al `401` («no sé quién eres», [lección 3 de la Fase 2](/fase-2/codigos-de-estado-http/)) lo que `Allow` al `405` ([lección 2 de la Fase 2](/fase-2/metodos-http/)).
+- **`await next()`**, al final, solo se alcanza con el token bueno.
+
+El token, por ahora, está escrito en un fichero aparte:
+
+<ProjectCode file="tienda-api/06-middleware/src/config.ts" />
+
+Es una trampa a sabiendas. Un <Term id="secret">secreto</Term> nunca debe ir en el código, porque acaba en Git y en cualquier copia del proyecto. En la [lección 8](/fase-3/errores-y-logs-node/) lo leerás de una <Term id="environment-variable">variable de entorno</Term>, como en la [lección 7 de la Fase 1](/fase-1/variables-de-entorno/).
+
+A diferencia de los otros dos, este middleware no va con `app.use`. Va **en una sola ruta**, entre la dirección y la función:
+
+<ProjectCode file="tienda-api/06-middleware/src/app.ts" region="nuevo-producto" />
+
+`app.post('/productos', soloAdmin, async (c) => …)`: Hono pasa por `soloAdmin` y, si llama a `next()`, por la función. `GET /productos` no tiene guardia y sigue abierto. La función lee el <Term id="json">JSON</Term> del cuerpo, crea el producto y contesta `201` con `Location`, como `POST /pedidos`. Todavía se cree lo que llega: un precio negativo pasaría, y un cuerpo que no sea JSON acabaría en un `500`. Eso lo arreglará la [lección 7](/fase-3/validar-datos-zod/), «Validación».
+
+### El orden importa
+
+Imagina que Luis monta un panel de administración en `https://tienda.example` y decide que **toda** la API pida el token. Pone el guardia para todas las rutas, pero delante de CORS:
+
+```ts
+// Así no: el guardia, antes que CORS
+app.use(registro);
+app.use(soloAdmin);
+app.use(cors({ origin: 'https://tienda.example' }));
+```
+
+Con `curl` y el token, todo funciona. Desde el panel, no. Su `fetch` lleva `Authorization`, así que el navegador pregunta antes con una petición previa, y **la petición previa nunca lleva `Authorization`**: el navegador no envía credenciales para preguntar. El guardia la para:
+
+```mermaid
+sequenceDiagram
+    participant N as El navegador
+    participant R as registro
+    participant G as soloAdmin
+    participant O as cors
+    N->>R: OPTIONS /pedidos<br/>(sin Authorization)
+    R->>G: next()
+    Note over G: no hay token
+    G-->>R: 401 Unauthorized
+    Note over O: no llega a ejecutarse
+    R-->>N: 401, sin Access-Control-Allow-Origin
+    Note over N: error de CORS:<br/>el GET de verdad no sale
+```
+
+Esta es la petición previa, enviada con `curl`, y su respuesta real con el orden equivocado:
+
+```sh
+curl -i -X OPTIONS -H 'Origin: https://tienda.example' -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: Authorization' localhost:3000/pedidos
+```
+
+```text
+HTTP/1.1 401 Unauthorized
+content-type: application/json
+www-authenticate: Bearer
+Content-Length: 39
+Date: Tue, 13 Oct 2026 10:30:25 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"Hace falta un token válido"}
+```
+
+Ninguna cabecera `access-control-*`: `cors` ni se ha ejecutado. Con `app.use(soloAdmin)` debajo de `cors`, la misma petición recibe un `204` con los permisos, porque `cors` contesta las peticiones previas antes de que lleguen al guardia, y el `GET` con el token sale después.
+
+Un orden que funciona casi siempre:
+
+1. Lo que tiene que ver **todas** las peticiones, como el registro.
+2. Lo que contesta a cualquiera, como las peticiones previas de CORS.
+3. Las comprobaciones que pueden rechazar, como el token.
+4. Las rutas.
+
+## Pruébalo
+
+El objetivo: que la API anote cada petición con lo que tarda, deje leer sus respuestas a la página de Luis y pida el token para crear productos. Después romperás el orden y descubrirás qué petición desaparece del registro.
+
+Trabajas en `~/curso-backend/fase-3/tienda-api`, con el código de la lección 5. Si te atascas, descarga la carpeta de esta lección desde `~/curso-backend/fase-3` con `curl -O https://backenddesdecero.com/practicas/tienda-api/06-middleware.tar.gz`, descomprímela con `tar -xzf 06-middleware.tar.gz`, ejecuta `npm install` dentro y compárala con la tuya. Si usas `npm test`, trae también su carpeta `test/`: la de la lección 5 aún espera `Allow: GET` en `/productos`.
+
+### Escribe los middleware
+
+Si quieres que tu carpeta quede como la de esta lección, empieza por quitar la comparación de la lección 5:
+
+<TryIt
+  title="1. Opcional: quita Express y Fastify"
+  cmd={`npm uninstall express fastify @types/express
+rm -r comparar test/comparar.test.ts`}
+  output={`removed 125 packages, and audited 7 packages in 1s
+
+found 0 vulnerabilities`}
+>
+
+`npm uninstall` borra los paquetes de `node_modules` y de `package.json`, y `rm -r` borra la carpeta y su test. Si `rm` dice `No such file or directory`, ya no los tenías.
+
+</TryIt>
+
+Ahora, el código. Crea la carpeta con `mkdir src/middleware` y, dentro, `registro.ts` y `solo-admin.ts`, con el código de «Cómo funciona de verdad». Crea también `src/config.ts`. En `src/datos.ts`, añade la función que guarda un producto nuevo, hermana de `crearPedido`:
+
+<ProjectCode file="tienda-api/06-middleware/src/datos.ts" region="crear-producto" />
+
+Le da el siguiente número, lo añade a la lista y lo devuelve. En `src/app.ts`, las importaciones quedan así:
+
+<ProjectCode file="tienda-api/06-middleware/src/app.ts" region="importaciones" />
+
+Debajo de `export const app = new Hono();`, las dos líneas de `app.use`. Después de la ruta `GET /pedidos/:id`, la de `POST /productos`. Y como `/productos` ya acepta `POST`, su `405` tiene que decirlo:
+
+<ProjectCode file="tienda-api/06-middleware/src/app.ts" region="no-permitido" mark={3} />
+
+### Llama a la API y mira el registro
+
+Necesitas dos terminales: una para el servidor y otra para `curl`. Las salidas son de Node 26 en Linux; tus fechas y tus milisegundos serán otros.
+
+<TryIt
+  title="2. Arranca el servidor (primera terminal)"
+  cmd="npm run dev"
+  output={`> tienda-api@1.0.0 dev
+> node --watch src/servidor.ts
+
+La tienda escucha en http://localhost:3000`}
+>
+
+`npm run dev` arranca `node --watch`, que reinicia el servidor cada vez que guardas un fichero ([lección 4](/fase-3/servidor-http-node/)). Déjala abierta: aquí irán saliendo las líneas del registro. Si sale un error con `Cannot find module`, mira el fichero que nombra: o no existe, o el `import` no lleva su `.ts` al final.
+
+</TryIt>
+
+<TryIt
+  title="3. La lista, desde la página de Luis (segunda terminal)"
+  cmd="curl -i -H 'Origin: https://tienda.example' localhost:3000/productos"
+  output={`HTTP/1.1 200 OK
+access-control-allow-origin: https://tienda.example
+content-type: application/json
+vary: Origin
+content-length: 121
+Date: Tue, 13 Oct 2026 10:32:54 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+[{"id":1,"nombre":"Camiseta","precio":20},{"id":2,"nombre":"Taza","precio":8.5},{"id":3,"nombre":"Sudadera","precio":35}]`}
+>
+
+`-H` añade la cabecera `Origin` que pondría el navegador en la página de Luis. Fíjate en `access-control-allow-origin`, el permiso, y en `vary: Origin`, que `cors` añadió a la vuelta. En la primera terminal ha salido una línea nueva:
+
+```text
+GET /productos 200 3 ms
+```
+
+Si no sale, comprueba que `app.use(registro)` está en `app.ts` y que has guardado.
+
+</TryIt>
+
+<TryIt
+  title="4. Desde otro origen"
+  cmd="curl -i -H 'Origin: https://otra.example' localhost:3000/productos"
+  output={`HTTP/1.1 200 OK
+content-type: application/json
+vary: Origin
+content-length: 121
+Date: Tue, 13 Oct 2026 10:32:54 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+[{"id":1,"nombre":"Camiseta","precio":20},{"id":2,"nombre":"Taza","precio":8.5},{"id":3,"nombre":"Sudadera","precio":35}]`}
+>
+
+La lista llega entera, pero sin `access-control-allow-origin`: un navegador en `https://otra.example` la escondería. El nginx de la Fase 2 enviaba el permiso siempre, con el origen de la tienda; el middleware de Hono solo lo envía si el origen coincide. El registro anota `GET /productos 200 0 ms`.
+
+</TryIt>
+
+<TryIt
+  title="5. La petición previa de un POST con JSON"
+  cmd="curl -i -X OPTIONS -H 'Origin: https://tienda.example' -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: Content-Type' localhost:3000/pedidos"
+  output={`HTTP/1.1 204 No Content
+access-control-allow-headers: Content-Type
+access-control-allow-methods: GET,HEAD,PUT,POST,DELETE,PATCH,QUERY
+access-control-allow-origin: https://tienda.example
+vary: Origin, Access-Control-Request-Headers
+Date: Tue, 13 Oct 2026 10:32:54 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5`}
+>
+
+La misma pregunta que le hiciste al nginx de la Fase 2: «desde la tienda, ¿puedo enviar un `POST` con `Content-Type`?». Contesta `cors`, con un `204` y los permisos; la ruta `POST /pedidos` no se ejecuta. En el registro: `OPTIONS /pedidos 204 0 ms`.
+
+</TryIt>
+
+<TryIt
+  title="6. Crea un producto sin token"
+  cmd={`curl -i -X POST -H 'Content-Type: application/json' -d '{"nombre":"Gorra","precio":15}' localhost:3000/productos`}
+  output={`HTTP/1.1 401 Unauthorized
+content-type: application/json
+vary: Origin
+www-authenticate: Bearer
+content-length: 39
+Date: Tue, 13 Oct 2026 10:32:55 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"Hace falta un token válido"}`}
+>
+
+El guardia ha contestado `401` con `www-authenticate: Bearer`, y la gorra no se ha creado. El registro también ve esta petición, porque está fuera del guardia: `POST /productos 401 1 ms`. Si te sale un `405`, falta la ruta `POST /productos` o está debajo de los `app.all`.
+
+</TryIt>
+
+<TryIt
+  title="7. Ahora, con el token"
+  cmd={`curl -i -X POST -H 'Authorization: Bearer token-de-prueba-cambialo' -H 'Content-Type: application/json' -d '{"nombre":"Gorra","precio":15}' localhost:3000/productos`}
+  output={`HTTP/1.1 201 Created
+content-type: application/json
+location: /productos/4
+vary: Origin
+content-length: 37
+Date: Tue, 13 Oct 2026 10:32:55 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":4,"nombre":"Gorra","precio":15}`}
+>
+
+`201 Created` y `location: /productos/4`: la gorra es el producto 4, y `curl localhost:3000/productos/4` la devuelve. En el registro: `POST /productos 201 2 ms`. Con un solo carácter distinto en el token, vuelve el `401`.
+
+</TryIt>
+
+### Rompe el orden
+
+Cambia el orden de las capas: en `app.ts`, pon `app.use(cors(…))` encima de `app.use(registro)` y guarda. En la primera terminal, `node --watch` borra la pantalla y reinicia:
+
+```text
+Change detected in '/Users/ana/curso-backend/fase-3/tienda-api/src/app.ts'
+Restarting 'src/servidor.ts'
+La tienda escucha en http://localhost:3000
+```
+
+(En Linux y WSL, la ruta empieza por `/home/ana`.) Al reiniciar, la gorra desaparece: los datos viven en memoria hasta la Fase 5. Repite la petición previa del paso 5 y mira la primera terminal.
+
+<SelfCheck question="Reto: la respuesta del paso 5 sale igual, con su 204 y sus permisos, pero en el registro no aparece ninguna línea nueva. Un GET /pedidos, en cambio, sí sale. ¿Por qué?">
+
+Ahora `cors` es la capa de fuera. Una petición previa la contesta él mismo, sin llamar a `next()`, así que nunca llega a `registro`: ni la ve entrar ni la ve salir. El `GET` sí pasa, porque con él `cors` llama a `next()`.
+
+Con este orden, tu registro dejaría de contar las peticiones previas, y si un día fallan, no verías nada. El registro va el primero para ver todas. Vuelve a ponerlo encima y guarda.
+
+</SelfCheck>
+
+## Ya lo has visto
+
+- **En el nginx de la Fase 2.** Las líneas `add_header Access-Control-Allow-Origin` y el bloque `if ($request_method = OPTIONS)` de la configuración de la tienda hacían el trabajo de `cors`, y la línea de `access.log` por petición, el de `registro`.
+- **En cualquier tutorial de Express.** Las líneas `app.use(cors())` y `app.use(express.json())` del principio son middleware. Su forma es `(req, res, next)`, y `next()` no espera a la respuesta: por eso un registro como `morgan` usa otro mecanismo para ver la respuesta terminada.
+- **En DevTools** ([cómo abrirlo](/fase-2/#antes-de-empezar-devtools)). En la pestaña **Red** (*Network*), la fila `preflight` de un `fetch` con JSON es la que contesta `cors` sin llegar a tu ruta.
+- **En las webs con «inicia sesión para continuar».** Detrás suele haber un middleware como `soloAdmin` delante de todas las rutas privadas.
+
+## Errores comunes
+
+- **Olvidar el `await` de `next()`.** El registro lee el código antes de que la ruta conteste: escribe `GET /nada 200 2 ms` para una ruta que responde `404`. Y si la ruta espera algo, Hono responde `500` y escribe en la terminal ``Context is not finalized. Did you forget to return a Response object or `await next()`?``.
+- **No llamar a `next()` ni devolver nada.** La petición no tiene quien la conteste: el mismo `500` y el mismo error.
+- **El guardia antes que CORS.** Las peticiones previas no llevan `Authorization`, y reciben un `401` sin permisos: «en `curl` funciona y en el navegador no».
+- **Un `401` sin `WWW-Authenticate`.** El estándar la exige: dice cómo identificarse. Y si quien llama ya se ha identificado y no tiene permiso, no es un `401`, es un `403`.
+- **Copiar la comprobación en cada ruta.** Funciona hasta que alguien añade una ruta y la olvida. Con `app.use`, la capa vale también para las rutas de mañana.
+- **Dejar el token en el código.** Vale para aprender hoy; en la lección 8 sale de ahí. No uses nunca este token en nada real: está publicado en esta página.
+
+## Resumen
+
+- Un middleware es una función que recibe la petición y `next`: puede contestar él mismo, pasarla con `await next()` o hacer algo antes y después.
+- El ciclo de vida de una petición: entra por las capas en el orden de `app.use`, llega a su ruta y la respuesta vuelve por las mismas capas, al revés.
+- `app.use(…)` pone una capa para todas las peticiones; `app.post(ruta, middleware, función)`, solo para una ruta.
+- CORS es un middleware: añade los permisos y contesta las peticiones previas sin llegar a la ruta. Un guardia que responde `401` lleva `WWW-Authenticate`.
+- El orden importa: el registro, primero; CORS, antes de cualquier comprobación que pueda rechazar; las rutas, al final.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Tu registro escribe «GET /productos/99 200 0 ms», aunque curl recibe un 404. ¿Qué le pasa a tu middleware?"
+  review="Un middleware es una función con next"
+>
+
+<QuizOption text="Que console.log tiene que ir antes de next(): después, la respuesta ya se ha enviado.">
+
+Al revés: después de `await next()` es donde hay que leer el código, porque la ruta ya ha contestado, y la respuesta aún no ha salido: el registro todavía forma parte del camino de vuelta.
+
+</QuizOption>
+
+<QuizOption text="Que falta el await de next(): lee el código antes de que la ruta conteste." correct>
+
+Sin `await`, la función no espera a las capas de dentro: lee `c.res.status` cuando aún vale `200`, el valor de partida, y mide casi cero.
+
+</QuizOption>
+
+<QuizOption text="Que un middleware nunca puede ver el código de la respuesta: el 200 es lo que Hono pone siempre.">
+
+Sí puede: a la vuelta de `await next()`, `c.res.status` es el código que ha decidido la ruta. Es lo que hace el registro de la lección.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La página de Luis envía un fetch con un POST y JSON a /pedidos. ¿Quién contesta la petición previa que el navegador envía antes?"
+  review="CORS, un middleware que ya viene hecho"
+>
+
+<QuizOption text="La ruta POST /pedidos, que es la que sabe qué acepta.">
+
+La petición previa usa `OPTIONS`, no `POST`, y no llega a esa ruta: la contesta una capa anterior.
+
+</QuizOption>
+
+<QuizOption text="Nadie: el navegador la resuelve sin enviarla al servidor.">
+
+La petición previa es una petición HTTP de verdad, con `OPTIONS`, que llega a tu servidor: la enviaste con `curl` en el paso 5, y el registro la anotó.
+
+</QuizOption>
+
+<QuizOption text="El middleware cors, con un 204, sin llamar a next()." correct>
+
+`cors` reconoce el `OPTIONS` y contesta él mismo, con los permisos. Por eso la función de la ruta no se ejecuta hasta el `POST` de verdad.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Luis pone app.use(soloAdmin) antes de app.use(cors(…)). Con curl y el token, la API responde bien; desde su panel, con el mismo token, sale un error de CORS. ¿Por qué?"
+  review="El orden importa"
+>
+
+<QuizOption text="La petición previa no lleva el token: el guardia la para antes de cors." correct>
+
+El navegador pregunta sin credenciales. Con el guardia delante, la respuesta es un `401` sin `Access-Control-Allow-Origin`, y el navegador no envía la petición de verdad.
+
+</QuizOption>
+
+<QuizOption text="El servidor reconoce al navegador por su User-Agent y solo a él le aplica CORS.">
+
+El servidor contesta igual a los dos. La diferencia es que el navegador hace una petición previa y comprueba los permisos; `curl` no hace ninguna de las dos cosas.
+
+</QuizOption>
+
+<QuizOption text="El token del panel es distinto del de curl: el 401 lo demuestra.">
+
+El token del panel ni se envía: la petición que recibe el `401` es la previa, que nunca lleva `Authorization`. La de verdad no llega a salir.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Tu guardia responde 401 con un JSON que explica el error, y ninguna cabecera más. ¿Qué le falta?"
+  review="Un guardia que responde 401"
+>
+
+<QuizOption text="Una cabecera Location que lleve al cliente a la página de iniciar sesión.">
+
+`Location` acompaña a las redirecciones y al `201`. Un `401` no manda a ningún sitio: dice que hace falta identificarse.
+
+</QuizOption>
+
+<QuizOption text="La cabecera WWW-Authenticate, que dice cómo identificarse." correct>
+
+El estándar la exige en todo `401`. Con `Bearer`, el cliente sabe que tiene que enviar un token en `Authorization`.
+
+</QuizOption>
+
+<QuizOption text="Nada: con el código basta, y las cabeceras de un 401 son opcionales.">
+
+Como `Allow` en un `405`, `WWW-Authenticate` es obligatoria en un `401`, aunque muchos servidores la olviden.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Ana va a añadir DELETE /pedidos/:id para borrar pedidos. Quiere que pida el token, y que la lista de productos siga abierta. ¿Dónde pone soloAdmin?"
+  review="Un guardia que responde 401"
+>
+
+<QuizOption text="Con app.use(soloAdmin) al principio: Hono solo lo aplica a los métodos que cambian algo.">
+
+`app.use` pone la capa delante de todas las peticiones, `GET` incluidos. Hono no mira si un método cambia algo: la lista dejaría de estar abierta.
+
+</QuizOption>
+
+<QuizOption text="En la función de datos.ts que borra el pedido, que también ve la cabecera Authorization.">
+
+Las funciones de `datos.ts` no reciben la petición: no pueden leer la cabecera `Authorization`. La comprobación va donde llega la petición.
+
+</QuizOption>
+
+<QuizOption text="En la propia ruta: app.delete('/pedidos/:id', soloAdmin, …)." correct>
+
+Un middleware entre la dirección y la función solo vale para esa ruta, como en `POST /productos`. El resto sigue igual.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Alguien pide GET /ofertas, una ruta que no existe. ¿Qué escribe tu registro?"
+  review="La petición atraviesa las capas en orden"
+>
+
+<QuizOption text="Una línea con el 404, como «GET /ofertas 404 1 ms»." correct>
+
+`app.use` pone el registro delante de todas las peticiones, existan o no sus rutas. A la vuelta ve el `404` que contesta Hono.
+
+</QuizOption>
+
+<QuizOption text="Nada: si la ruta no existe, la petición no pasa por los middleware.">
+
+Los middleware de `app.use` van antes que las rutas, y se recorren igual: Hono busca la ruta después.
+
+</QuizOption>
+
+<QuizOption text="Una línea con un 200: el registro anota la petición al llegar, antes de saber cómo acaba.">
+
+El registro escribe después de `await next()`, cuando la respuesta ya ha vuelto con su código, aquí `404`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Middleware](https://hono.dev/docs/guides/middleware) (Hono, en inglés): el orden de ejecución, con el dibujo de la cebolla.
+- [CORS Middleware](https://hono.dev/docs/middleware/builtin/cors) (Hono, en inglés): todas las opciones de `cors`, como `allowMethods` o `credentials`.
+- [WWW-Authenticate](https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Headers/WWW-Authenticate) (MDN): la cabecera del `401` y sus esquemas.
+- [Using middleware](https://expressjs.com/en/guide/using-middleware.html) (Express, en inglés): el mismo concepto en Express, con `(req, res, next)`.

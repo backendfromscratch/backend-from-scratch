@@ -1,0 +1,614 @@
+---
+translationKey: errors-logging
+title: "Manejo de errores y logs en Node.js"
+description: "Errores en Node.js con throw, try/catch y async, un 500 sin la traza, logs en JSON con pino y sus niveles, y la configuración validada al arrancar."
+sidebar:
+  label: Errores y logs
+  order: 8
+lesson:
+  oneLiner: "Un error que nadie captura termina el programa. Un servidor los captura todos: al cliente le responde un 500 sin detalles, con un id, y en su log apunta la traza con ese mismo id. El log va en JSON, una línea por suceso, para que lo lea una persona y también un programa."
+  objectives:
+    - Lanzar y capturar errores con throw y try/catch, también en código async.
+    - Responder un 500 que no enseña la traza, con un id para encontrar el error en el log.
+    - Escribir logs en JSON con pino, elegir su nivel y buscar en ellos con grep y jq.
+    - Leer la configuración de las variables de entorno y negarte a arrancar si falta algo.
+  prerequisites: [validation, environment-variables]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Imagina que la API de la tienda ya está publicada. Un sábado, un cliente escribe a Luis: «al pagar me ha salido una pantalla de líneas raras, algo como `at file:///Users/ana/curso-backend/…`». Ese cliente ha visto las tripas del servidor: sus carpetas, sus librerías y la línea que ha fallado. A él no le sirven de nada; a quien busca cómo atacar la tienda, sí.
+
+Y Ana no sabe qué ha pasado: en su terminal hay cientos de líneas de texto libre, y ninguna dice cuál era la de ese cliente.
+
+El servidor tiene que fallar bien: al cliente, un mensaje corto y un número de referencia; a Ana, todos los detalles en el <Term id="log">log</Term>, con ese mismo número.
+
+## La analogía
+
+<Analogy>
+
+Piensa en un restaurante. A un cocinero se le quema una salsa. El camarero no saca la sartén a la mesa: dice «ha habido un problema con su plato; su comanda es la 41». En la cocina, el jefe apunta en su libreta: «comanda 41, 21:14, salsa quemada en el fuego 3».
+
+Si el cliente reclama, da el número de comanda, y con él se encuentra la nota. Y el problema que un cocinero no sabe resolver acaba en el jefe, que no deja que una salsa cierre el restaurante.
+
+<div slot="limits">
+
+- En un restaurante sin jefe, una salsa quemada solo estropea una mesa. En Node, un error que nadie captura cierra el programa entero, y deja sin servicio a todos los clientes a la vez.
+- La libreta la lee una persona. Un log lo leen también programas, y por eso cada línea sigue un formato fijo.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+Los ejemplos que no son del proyecto van en `~/curso-backend/fase-3`, fuera de `tienda-api`. Las salidas son de Node 26; las rutas, las de un Mac (en Linux y WSL empiezan por `/home/ana`).
+
+### Un error que nadie captura termina el programa
+
+Este programa lee un pedido que ha llegado cortado. `JSON.parse` convierte un texto <Term id="json">JSON</Term> en datos (lo viste en [«JavaScript»](/fase-3/javascript-para-backend/)):
+
+```ts title="fallo.ts"
+const pedido = JSON.parse('{"productoId": 1, "cantidad": ');
+console.log('Pedido leído:', pedido);
+```
+
+<TryIt
+  title="Ejecútalo y mira su código de salida"
+  cmd={`node fallo.ts\necho $?`}
+  output={`<anonymous_script>:1
+{"productoId": 1, "cantidad": 
+
+SyntaxError: Unexpected end of JSON input
+    at JSON.parse (<anonymous>)
+    at Object.<anonymous> (file:///Users/ana/curso-backend/fase-3/fallo.ts:1:21)
+    at Module._compile (node:internal/modules/cjs/loader:1968:14)
+    at Object..js (node:internal/modules/cjs/loader:2108:10)
+    at Module.load (node:internal/modules/cjs/loader:1690:32)
+    at Module._load (node:internal/modules/cjs/loader:1480:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+    at node:internal/main/run_main_module:33:47
+
+Node.js v26.11.1
+1`}
+>
+
+`JSON.parse` no puede seguir con un texto incompleto, así que lanza una <Term id="exception">excepción</Term>: un error que sube por el código buscando quién lo capture. Aquí nadie lo captura, y Node escribe el error y termina.
+
+</TryIt>
+
+- **`Pedido leído` no sale nunca:** el programa se ha parado en la línea 1.
+- **La <Term id="stack-trace">traza</Term>** (*stack trace*) son las líneas que empiezan por `at`. La primera que es de tu código dice dónde saltó el error: `fallo.ts:1:21`, línea 1, columna 21. Las de `node:internal` son del propio Node.
+- **El `1` del final** es el <Term id="exit-code">código de salida</Term> de la [lección 3 de la Fase 1](/fase-1/pipes-y-redirecciones/): algo ha fallado.
+
+### throw lanza, try y catch capturan
+
+Un error también se lanza a propósito, como en esta <Term id="route">ruta</Term> nueva de la tienda:
+
+<ProjectCode file="tienda-api/08-errores-y-logs/src/app.ts" region="ruta-error" />
+
+- `new Error('…')` crea un error con su mensaje. Node le añade la traza en el momento de crearlo.
+- `throw` lo lanza: la función se para ahí, y el error sube a quien la llamó, y así hacia arriba, hasta que alguien lo captura.
+
+Para capturarlo, el código que puede fallar va dentro de un `try` («intenta»), y lo que hacer si falla, en un `catch` («captura»):
+
+```ts title="captura.ts"
+try {
+  const pedido = JSON.parse('{"productoId": 1, "cantidad": ');
+  console.log('Pedido leído:', pedido);
+} catch (error) {
+  if (error instanceof Error) console.log('No se ha podido leer:', error.message);
+}
+console.log('El programa sigue');
+```
+
+`node captura.ts` escribe `No se ha podido leer: Unexpected end of JSON input` y después `El programa sigue`: el error saltó en el `try`, el programa pasó al `catch` y siguió.
+
+`error` es lo que se lanzó, y `throw` puede lanzar cualquier cosa. Por eso su <Term id="type">tipo</Term> es `unknown` ([«TypeScript»](/fase-3/typescript-con-node/)), y `error instanceof Error` comprueba que es un `Error` antes de leer su `message`.
+
+### Con async, el error llega en el await
+
+Una función `async` devuelve una <Term id="promise">promesa</Term>, un valor que llegará más tarde. Si la función falla, no lanza el error en el momento: la promesa llega con el error en lugar del valor. `await` espera esa promesa y, si trae un error, lo lanza en esa línea, donde el `catch` lo ve:
+
+```ts title="asincrono.ts"
+async function buscarPedido(id: number) {
+  throw new Error(`No existe el pedido ${id}`);
+}
+
+try {
+  await buscarPedido(7);
+} catch (error) {
+  if (error instanceof Error) console.log('No se ha podido buscar:', error.message);
+}
+console.log('El programa sigue');
+```
+
+`node asincrono.ts` escribe `No se ha podido buscar: No existe el pedido 7` y `El programa sigue`. Ahora borra el `await` de la línea 6 y ejecútalo otra vez:
+
+<TryIt
+  title="Sin el await"
+  cmd="node asincrono.ts"
+  output={`El programa sigue
+file:///Users/ana/curso-backend/fase-3/asincrono.ts:2
+  throw new Error(\`No existe el pedido \${id}\`);
+        ^
+
+Error: No existe el pedido 7
+    at buscarPedido (file:///Users/ana/curso-backend/fase-3/asincrono.ts:2:9)
+    at Object.<anonymous> (file:///Users/ana/curso-backend/fase-3/asincrono.ts:6:3)
+    at Module._compile (node:internal/modules/cjs/loader:1968:14)
+    at Object..js (node:internal/modules/cjs/loader:2108:10)
+    at Module.load (node:internal/modules/cjs/loader:1690:32)
+    at Module._load (node:internal/modules/cjs/loader:1480:12)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:261:19)
+    at Module.executeUserEntryPoint [as runMain] (node:internal/modules/run_main:171:5)
+    at node:internal/main/run_main_module:33:47
+
+Node.js v26.11.1`}
+>
+
+Sale `El programa sigue` **antes** que el error: sin `await`, el `try` no esperó a la promesa, y cuando llegó el error ya no había ningún `catch`. Node termina con código 1.
+
+</TryIt>
+
+### Por qué un servidor no se cae con cada error
+
+En la [lección 4](/fase-3/servidor-http-node/), sin <Term id="framework">framework</Term>, el `.catch` de `crearServidor` respondía `500` si algo fallaba. Sin él, un `throw` en una ruta tumba el proceso entero, y la petición siguiente, sea de quien sea, recibe `Couldn't connect to server`.
+
+Hono, como Express o Fastify, envuelve cada petición en su propio `try`/`catch`. Si una ruta lanza un error, Hono lo captura, responde `500` con el texto `Internal Server Error`, escribe la traza en la terminal y sigue atendiendo a los demás.
+
+Que un programa muera no siempre es malo: si falla al arrancar (el puerto ocupado, la configuración incompleta), mejor que termine y diga por qué. En producción se vuelve a arrancar solo: lo hace `Restart=always` en systemd ([lección 6 de la Fase 1](/fase-1/servicios-systemd-apt/)), y lo hará Docker en la Fase 7.
+
+### Un 500 que no cuenta nada
+
+Ese `500` no es JSON, como el resto de la API, y la traza que Hono escribe en la terminal no dice de qué petición es. Esto lo cambia:
+
+<ProjectCode file="tienda-api/08-errores-y-logs/src/app.ts" region="errores" />
+
+- **`app.notFound`** responde cuando ninguna ruta coincide: un `404` en JSON.
+- **`app.onError`** recibe cualquier error que se escape de una ruta o de un <Term id="middleware">middleware</Term>, y `c`, el contexto de la petición ([lección 5](/fase-3/express-hono-fastify/)).
+- **`HTTPException`** es el error que lanza Hono cuando ya sabe qué código toca, como el `400` de un cuerpo que no es JSON. En la [lección 7](/fase-3/validar-datos-zod/) llegaba en texto suelto; ahora sale en JSON, con su código (`error.status`) y el texto de Hono, pensado para el cliente, en `detalle`.
+- **`log.error(…)`** apunta el error entero, con su traza, y el id de la petición.
+- **`c.json(…, 500)`** le da al cliente solo `Error interno del servidor` y el id.
+
+Ni el mensaje ni la traza de un error inesperado salen hacia el cliente: enseñarían a cualquiera tus carpetas, librerías y versiones. Le basta el `500`, «he fallado yo» ([códigos de estado](/fase-2/codigos-de-estado-http/)), y un número para reclamar.
+
+### Un id para cada petición
+
+El id lo pone un middleware de Hono, `requestId`, que va el primero:
+
+<ProjectCode file="tienda-api/08-errores-y-logs/src/app.ts" region="capas" />
+
+`requestId()` da a cada petición un texto aleatorio que no se repite, como `7b5504de-e795-455e-a61d-86f77cc4714f`. Lo guarda en el contexto, de donde lo saca `c.get('requestId')`, y lo devuelve en la <Term id="header">cabecera</Term> `X-Request-Id`.
+
+Va antes que `registro` para que el registro ya tenga el id: el orden importa ([lección 6](/fase-3/que-es-middleware/)).
+
+### Logs estructurados: una línea JSON por suceso
+
+En la [Fase 1](/fase-1/pipes-y-redirecciones/) buscaste los `500` del log de prácticas con `grep '" 500 '`, sabiendo que el código era el campo 9. Un <Term id="structured-log">log estructurado</Term> pone nombre a cada dato. Así es ahora una línea del log de la tienda:
+
+```json
+{"level":30,"time":1791889050212,"pid":739,"hostname":"portatil","requestId":"7b5504de-e795-455e-a61d-86f77cc4714f","metodo":"GET","ruta":"/error","estado":500,"ms":2,"msg":"petición"}
+```
+
+La escribe pino, un <Term id="package">paquete</Term> que solo hace esto. El proyecto crea un único `log` con `pino(…)` y lo usa en todas partes:
+
+<ProjectCode file="tienda-api/08-errores-y-logs/src/log.ts" />
+
+El registro de la lección 6 escribía una frase con `console.log`; ahora escribe datos:
+
+<ProjectCode file="tienda-api/08-errores-y-logs/src/middleware/registro.ts" region="registro" />
+
+- `log.info(datos, mensaje)` escribe una línea de nivel `info` con los datos del objeto y el mensaje en `msg`.
+- pino añade `level`, el nivel en número; `time`, los milisegundos desde 1970; `pid`, el número del proceso ([lección 5 de la Fase 1](/fase-1/procesos-y-senales/)), y `hostname`, el ordenador.
+- Un error, como el de `log.error({ err: error })`, lo escribe con su tipo, su mensaje y su traza: `type`, `message` y `stack`.
+
+### Los niveles: cuánto cuenta el log
+
+Cada línea tiene un <Term id="log-level">nivel</Term>, y el log tiene un mínimo: solo escribe las líneas de ese nivel o de uno superior.
+
+| Nivel | Número | Para qué |
+|---|---|---|
+| `fatal` | 60 | El programa no puede seguir |
+| `error` | 50 | Algo ha fallado, como el `500` de `/error` |
+| `warn` | 40 | Raro, pero no un fallo: un aviso |
+| `info` | 30 | Lo normal: arranques, peticiones |
+| `debug` | 20 | Detalles para buscar un fallo mientras programas |
+| `trace` | 10 | Todavía más detalle |
+
+`silent` no escribe nada. El mínimo sale de la <Term id="environment-variable">variable de entorno</Term> `LOG_LEVEL`, que `log.ts` le pasa a pino como `level`: `info` en el día a día, `debug` cuando buscas un fallo y `silent` en los tests.
+
+### La configuración se comprueba al arrancar
+
+Hasta ahora, el token de administración estaba escrito en el código, y un <Term id="secret">secreto</Term> no puede estar ahí ([variables de entorno](/fase-1/variables-de-entorno/)). Ahora llega del entorno, como el puerto y el nivel del log:
+
+<ProjectCode file="tienda-api/08-errores-y-logs/src/config.ts" region="config" />
+
+- **`esquemaConfig`** es un <Term id="schema">esquema</Term> de Zod, como los de la lección 7, para las variables de entorno.
+- **`z.coerce.number()`** convierte `PORT` en número, porque una variable de entorno siempre llega como texto; `.default(3000)`, si no la hay. `z.enum` solo acepta uno de los niveles.
+- **`ADMIN_TOKEN`** no tiene valor por defecto y mide al menos 16 caracteres.
+- **`safeParse(process.env)`** lo comprueba todo a la vez. Si algo falla, escribe cada problema con `console.error`, que va a <Term id="stderr">stderr</Term>, y `process.exit(1)` termina con código 1.
+
+Con `parse`, que lanza una excepción en lugar de devolver el resultado, también terminaría, pero con una traza en lugar de una frase clara. Y mejor negarse a arrancar que fallar de madrugada, con la primera petición que necesite el token.
+
+Los valores van en un `.env`, que nunca va a Git; lo que sí va es este ejemplo:
+
+<ProjectCode file="tienda-api/08-errores-y-logs/.env.ejemplo" />
+
+Los scripts `start` y `dev` del `package.json` arrancan ahora con `node --env-file-if-exists=.env`: Node lee el `.env` si existe, y si no, sigue con las variables que tenga, como en un servidor, donde las pone systemd. `npm test` usa `--env-file=test/.env`, con un token de prueba y `LOG_LEVEL=silent`.
+
+En `servidor.ts`, el puerto sale de `config` y el aviso de arranque pasa por el log:
+
+<ProjectCode file="tienda-api/08-errores-y-logs/src/servidor.ts" />
+
+`solo-admin.ts` cambia una línea: compara con `config.ADMIN_TOKEN`.
+
+## Pruébalo
+
+El objetivo: provocar un error, encontrarlo en el log con el id que recibe el cliente y averiguar en qué línea de tu código está.
+
+Trabajas en tu `tienda-api`, tal y como la dejaste en la lección 7. Primero, instala pino con su versión exacta:
+
+<TryIt
+  title="0. Instala pino"
+  cmd="npm install pino@10.4.0"
+  output={`added 13 packages, and audited 22 packages in 2s
+
+2 packages are looking for funding
+  run \`npm fund\` for details
+
+found 0 vulnerabilities`}
+>
+
+Después, escribe los cambios de arriba: `log.ts`, `.env.ejemplo` y `test/.env` son nuevos, y cambian `app.ts`, `config.ts`, `registro.ts`, `solo-admin.ts`, `servidor.ts` y los scripts del `package.json`. Las salidas son de Node 26.11.1; tus tiempos, ids y fechas serán otros.
+
+</TryIt>
+
+Si te atascas, descarga la carpeta de esta lección y compárala con la tuya (trae también los tests nuevos): desde `~/curso-backend/fase-3`, `curl -O https://backenddesdecero.com/practicas/tienda-api/08-errores-y-logs.tar.gz` y `tar -xzf 08-errores-y-logs.tar.gz`.
+
+<TryIt
+  title="1. Arranca sin configuración"
+  cmd="npm start"
+  output={`> tienda-api@1.0.0 start
+> node --env-file-if-exists=.env src/servidor.ts
+
+.env not found. Continuing without it.
+Configuración: ADMIN_TOKEN: Falta ADMIN_TOKEN`}
+>
+
+Node avisa de que no hay `.env`, y `config.ts` encuentra que falta el token. El servidor no llega a escuchar: `echo $?` diría `1`.
+
+</TryIt>
+
+<TryIt
+  title="2. Crea tu .env y un token"
+  cmd={`cp .env.ejemplo .env
+openssl rand -hex 24`}
+  output={`6bb3a19879dcf82e36c2e623dff47255dfb115160d44ae38`}
+>
+
+`openssl rand -hex 24` escribe 24 bytes al azar en hexadecimal: 48 caracteres que nadie va a adivinar. El tuyo será otro. Abre `.env` en VS Code (o con `nano .env`) y ponlo detrás de `ADMIN_TOKEN=`, en lugar de `cambia-esto-por-un-token-largo`.
+
+</TryIt>
+
+<TryIt
+  title="3. Arranca y guarda el log"
+  cmd="npm start --silent | tee tienda.log"
+  output={`{"level":30,"time":1791889048401,"pid":739,"hostname":"portatil","msg":"La tienda escucha en http://localhost:3000"}`}
+>
+
+`--silent` quita las dos líneas de npm, así que en el fichero solo habrá JSON. `tee` copia lo que le llega por la pipe a la pantalla y a `tienda.log` ([lección 4 de la Fase 1](/fase-1/usuarios-y-permisos-linux/)). En `hostname` saldrá el nombre de tu ordenador.
+
+Si sale `EADDRINUSE`, ya tienes otro servidor en el puerto 3000: páralo con <kbd>Ctrl</kbd> + <kbd>C</kbd> en su terminal.
+
+</TryIt>
+
+Abre otra terminal en la misma carpeta y provoca el error:
+
+<TryIt
+  title="4. Pide la ruta que falla"
+  cmd="curl -i localhost:3000/error"
+  output={`HTTP/1.1 500 Internal Server Error
+content-type: application/json
+vary: Origin
+x-request-id: 7b5504de-e795-455e-a61d-86f77cc4714f
+content-length: 89
+Date: Tue, 13 Oct 2026 10:57:30 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"Error interno del servidor","requestId":"7b5504de-e795-455e-a61d-86f77cc4714f"}`}
+>
+
+Es todo lo que ve el cliente: el `500`, un mensaje y el id, también en `x-request-id`. Ni rastro de la traza. Con `curl -i localhost:3000/ofertas` verás el `404` de `notFound`.
+
+</TryIt>
+
+Y ahora, el pedido cortado del principio:
+
+<TryIt
+  title="5. Un cuerpo que no es JSON"
+  cmd={`curl -i localhost:3000/pedidos -H 'Content-Type: application/json' -d '{"productoId": 1, "cantidad": '`}
+  output={`HTTP/1.1 400 Bad Request
+content-type: application/json
+vary: Origin
+x-request-id: edb078d7-6423-4f1a-a19c-771b882956ce
+content-length: 84
+Date: Tue, 13 Oct 2026 10:57:30 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"La petición no se puede leer","detalle":"Malformed JSON in request body"}`}
+>
+
+El `400` de la lección 7, ahora en JSON: es una `HTTPException`. El fallo es del cliente, así que no deja traza en el log.
+
+</TryIt>
+
+En la primera terminal ha salido una línea por petición, y una más para el `500`. Busca las de `/error` por su id con el `grep` de la [lección 2 de la Fase 1](/fase-1/comandos-linux-archivos/) (con tu id, no el de aquí):
+
+<TryIt
+  title="6. Todo lo que pasó en esa petición"
+  cmd="grep 7b5504de tienda.log"
+  output={`{"level":50,"time":1791889050211,"pid":739,"hostname":"portatil","err":{"type":"Error","message":"Algo ha fallado a propósito","stack":"Error: Algo ha fallado a propósito\\n    at file:///Users/ana/curso-backend/fase-3/tienda-api/src/app.ts:57:9\\n    at dispatch (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:17)\\n    at file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:40\\n    at cors (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/middleware/cors/index.js:103:9)\\n    at async dispatch (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:11)\\n    at async registro (file:///Users/ana/curso-backend/fase-3/tienda-api/src/middleware/registro.ts:7:3)\\n    at async dispatch (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:11)\\n    at async requestId (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/middleware/request-id/request-id.js:30:3)\\n    at async dispatch (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:11)\\n    at async file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/hono-base.js:287:21"},"requestId":"7b5504de-e795-455e-a61d-86f77cc4714f","msg":"error sin capturar"}
+{"level":30,"time":1791889050212,"pid":739,"hostname":"portatil","requestId":"7b5504de-e795-455e-a61d-86f77cc4714f","metodo":"GET","ruta":"/error","estado":500,"ms":2,"msg":"petición"}`}
+>
+
+Dos líneas con el mismo id: la de `log.error`, nivel 50, con la traza en `err`, y la del registro, nivel 30, con el `500`.
+
+</TryIt>
+
+`grep` busca texto. Para preguntar por un dato, como «estado de 500 o más», hace falta un programa que entienda JSON: `jq`. Los Mac recientes lo traen; si `jq --version` dice `command not found`, instálalo (`brew install jq` en el Mac, `sudo apt install jq` en Linux y WSL).
+
+<TryIt
+  title="7. Pregúntale al log con jq"
+  cmd={`jq -c 'select(.estado >= 500)' tienda.log
+jq -r 'select(.level == 50) | .err.stack' tienda.log`}
+  output={`{"level":30,"time":1791889050212,"pid":739,"hostname":"portatil","requestId":"7b5504de-e795-455e-a61d-86f77cc4714f","metodo":"GET","ruta":"/error","estado":500,"ms":2,"msg":"petición"}
+Error: Algo ha fallado a propósito
+    at file:///Users/ana/curso-backend/fase-3/tienda-api/src/app.ts:57:9
+    at dispatch (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:17)
+    at file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:40
+    at cors (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/middleware/cors/index.js:103:9)
+    at async dispatch (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:11)
+    at async registro (file:///Users/ana/curso-backend/fase-3/tienda-api/src/middleware/registro.ts:7:3)
+    at async dispatch (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:11)
+    at async requestId (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/middleware/request-id/request-id.js:30:3)
+    at async dispatch (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:11)
+    at async file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/hono-base.js:287:21`}
+>
+
+`select(…)` deja pasar las líneas que cumplen la condición, y `-c` las escribe en una línea. La segunda orden se queda con las de nivel 50 y saca su traza (`.err.stack`); `-r` la escribe como texto, con sus saltos de línea.
+
+La primera línea de la traza responde al objetivo: `src/app.ts:57:9`, el `throw` de `/error` (en tu fichero, la línea puede ser otra). Las de `node_modules/hono` son las capas por las que pasó la petición, entre ellas tu `registro`.
+
+</TryIt>
+
+Ahora, baja el volumen. Para el servidor con <kbd>Ctrl</kbd> + <kbd>C</kbd>, arráncalo con otro nivel y repite en la segunda terminal `curl -s localhost:3000/productos/2` y `curl -s localhost:3000/error`:
+
+<TryIt
+  title="8. Solo avisos y errores"
+  cmd="LOG_LEVEL=warn npm start --silent"
+  output={`{"level":50,"time":1791889059856,"pid":780,"hostname":"portatil","err":{"type":"Error","message":"Algo ha fallado a propósito","stack":"Error: Algo ha fallado a propósito\\n    at file:///Users/ana/curso-backend/fase-3/tienda-api/src/app.ts:57:9\\n    at dispatch (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:17)\\n    at file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:40\\n    at cors (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/middleware/cors/index.js:103:9)\\n    at async dispatch (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:11)\\n    at async registro (file:///Users/ana/curso-backend/fase-3/tienda-api/src/middleware/registro.ts:7:3)\\n    at async dispatch (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:11)\\n    at async requestId (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/middleware/request-id/request-id.js:30:3)\\n    at async dispatch (file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/compose.js:35:11)\\n    at async file:///Users/ana/curso-backend/fase-3/tienda-api/node_modules/hono/dist/hono-base.js:287:21"},"requestId":"cc75bba9-c01c-4608-a0c8-b5dba143dff0","msg":"error sin capturar"}`}
+>
+
+Al arrancar no sale nada, porque «La tienda escucha» es `info`, como las líneas de las peticiones: solo queda la de `error`. `LOG_LEVEL=warn` delante de la orden pone la variable solo para ese programa, y gana a la del `.env`: Node no cambia una variable que ya existe.
+
+</TryIt>
+
+<SelfCheck question="Reto: el proyecto aún no escribe nada de nivel debug. Añade una línea debug en GET /productos, después de leer max, y averigua con qué LOG_LEVEL sale.">
+
+Añade esta línea debajo de `const { max } = c.req.valid('query');`:
+
+```ts
+log.debug({ max }, 'filtro de precio');
+```
+
+Arranca con `LOG_LEVEL=debug npm start --silent` y pide `curl -s 'localhost:3000/productos?max=10'`. En el log sale la línea de nivel 20 antes que la de la petición:
+
+```text
+{"level":30,"time":1791889061572,"pid":814,"hostname":"portatil","msg":"La tienda escucha en http://localhost:3000"}
+{"level":20,"time":1791889063388,"pid":814,"hostname":"portatil","max":10,"msg":"filtro de precio"}
+{"level":30,"time":1791889063389,"pid":814,"hostname":"portatil","requestId":"07501cab-0396-44ca-897b-f7bf3fccbb62","metodo":"GET","ruta":"/productos","estado":200,"ms":3,"msg":"petición"}
+```
+
+Con `npm start --silent`, que usa el `info` del `.env`, solo salen la primera y la última. La línea de `debug` se queda en el código sin molestar, para cuando la necesites. Al terminar, puedes borrarla. `tienda.log` puede quedarse: el `*.log` del `.gitignore` lo deja fuera de Git.
+
+</SelfCheck>
+
+## Ya lo has visto
+
+- **Las páginas de error con un código.** «Algo ha salido mal. Referencia: 7F3A…»: es el id de tu petición, el que soporte busca en su log.
+- **La cabecera `cf-ray`** de backenddesdecero.com, en la [lección 4 de la Fase 2](/fase-2/cabeceras-http/), es el id que Cloudflare da a cada petición; GitHub usa `x-github-request-id`. Están en [DevTools](/fase-2/#antes-de-empezar-devtools), en las cabeceras de la respuesta.
+- **La consola de DevTools** enseña los errores de una página con su traza, como la de `fallo.ts`.
+
+## Errores comunes
+
+- **Enviar al cliente el mensaje o la traza de un error inesperado.** Le enseñas tu código a cualquiera. Al cliente, un mensaje fijo y el id; el resto, al log.
+- **Un `catch` vacío.** `catch {}` hace desaparecer el error: nadie se entera. Si capturas un error, al menos apúntalo en el log.
+- **Olvidar el `await`.** El `try` termina antes de que llegue el error, y en un servidor ese error sin capturar puede tumbar el proceso.
+- **Escribir secretos en el log.** Un log se guarda, se copia y lo lee mucha gente: nunca la cabecera `Authorization`, un token o una contraseña.
+
+## Resumen
+
+- `throw` lanza un error y `try`/`catch` lo captura; con `async`, solo si lo esperas con `await`. Un error que nadie captura termina el programa con código 1.
+- Hono captura los errores de cada petición. Con `onError`, el cliente recibe un `500` sin traza y con un id (también en `X-Request-Id`), y el log, la traza con ese id.
+- Un log estructurado es una línea JSON por suceso: la lees tú, la filtras con `grep` y le preguntas con `jq`.
+- `LOG_LEVEL` fija el nivel mínimo: `info` en el día a día, `debug` para buscar un fallo y `silent` en los tests.
+- La configuración llega de variables de entorno y se comprueba con Zod al arrancar: si falta algo, el servidor no arranca y dice por qué.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Un cliente escribe: «al pagar me ha salido Error interno del servidor y el código 2ccc958e…». ¿Qué haces primero?"
+  review="Un id para cada petición"
+>
+
+<QuizOption text="Buscar 2ccc958e en el log: ahí están el error y su traza." correct>
+
+El id es el mismo en la respuesta y en el log: con `grep` encuentras su petición entre miles.
+
+</QuizOption>
+
+<QuizOption text="Pedirle la traza que vio: el 500 la incluye para poder depurar.">
+
+El `500` de la tienda no lleva la traza, a propósito: está en tu log.
+
+</QuizOption>
+
+<QuizOption text="Revisar el log por la hora: el id solo le sirve al cliente de justificante.">
+
+El id es lo que une la queja con el log. Por la hora saldrían decenas de peticiones; por el id, solo la suya.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="En un script, llamas a buscarPedido(7) dentro de un try, sin await. buscarPedido es async y lanza un error. ¿Qué pasa?"
+  review="Con async, el error llega en el await"
+>
+
+<QuizOption text="El catch lo captura igual: la llamada está dentro del try.">
+
+Sin `await`, el `try` termina antes de que llegue el error, y entonces ya no hay ningún `catch`.
+
+</QuizOption>
+
+<QuizOption text="Nada: un error dentro de una promesa se ignora si nadie la espera.">
+
+Node no ignora un error que nadie captura: escribe la traza y termina el programa, también cuando viene de una promesa.
+
+</QuizOption>
+
+<QuizOption text="El catch no se entera, y Node termina el programa con código 1." correct>
+
+El error llega cuando el `try` ya ha terminado, y nadie lo captura. Con `await buscarPedido(7)`, el `catch` lo habría visto.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un compañero propone que el 500 de la tienda incluya error.message y la traza, para depurar más rápido. ¿Qué le contestas?"
+  review="Un 500 que no cuenta nada"
+>
+
+<QuizOption text="Que no se puede: una respuesta 500 no admite cuerpo.">
+
+Un `500` puede llevar cuerpo: el de la tienda lleva un JSON. La cuestión es qué pones en él.
+
+</QuizOption>
+
+<QuizOption text="Que no: la traza enseña tu código, y ya la tienes en el log." correct>
+
+La traza da pistas a quien busca un hueco. Para depurar ya la tienes en el log, y la encuentras con el id de la respuesta.
+
+</QuizOption>
+
+<QuizOption text="Que sí: sin tu código fuente, la traza no le dice nada útil a nadie.">
+
+Dice qué carpetas, librerías y versiones usas, y eso basta para buscar fallos conocidos de esas versiones. Y cualquiera puede provocarla con un `curl`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La tienda arranca con LOG_LEVEL=warn. Una ruta escribe log.info y otra, log.error. ¿Qué líneas llegan al log?"
+  review="Los niveles: cuánto cuenta el log"
+>
+
+<QuizOption text="Solo la de error: warn deja pasar warn, error y fatal." correct>
+
+El nivel es un mínimo. `error` (50) está por encima de `warn` (40) y se escribe; `info` (30) está por debajo y no.
+
+</QuizOption>
+
+<QuizOption text="Ninguna: warn solo escribe las líneas de nivel warn.">
+
+El nivel es un mínimo, no un tipo de línea: se escriben las de ese nivel y las superiores.
+
+</QuizOption>
+
+<QuizOption text="Las dos: LOG_LEVEL cambia cómo se ven las líneas, no cuáles se escriben.">
+
+`LOG_LEVEL` decide qué líneas se escriben. Lo viste en el paso 8: con `warn`, las peticiones dejan de salir.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Publicas la API de esta lección en un servidor y olvidas poner ADMIN_TOKEN. ¿Qué pasa?"
+  review="La configuración se comprueba al arrancar"
+>
+
+<QuizOption text="Arranca, y el fallo aparece con el primer POST /productos.">
+
+Así sería si el token se leyera dentro de la ruta. Aquí se comprueba al arrancar, antes de escuchar en el puerto.
+
+</QuizOption>
+
+<QuizOption text="Arranca con el token de .env.ejemplo, que hace de valor por defecto.">
+
+Node solo lee el `.env`. El ejemplo dice qué variables hacen falta, pero nadie lo lee al arrancar.
+
+</QuizOption>
+
+<QuizOption text="No arranca: dice que falta ADMIN_TOKEN y termina con código 1." correct>
+
+`config.ts` comprueba el entorno antes de nada, escribe `Configuración: ADMIN_TOKEN: Falta ADMIN_TOKEN` y llama a `process.exit(1)`. Te enteras al publicar.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Quieres saber qué peticiones de ayer tardaron más de 500 ms. ¿Con qué log puedes preguntarlo en una sola orden?"
+  review="Logs estructurados: una línea JSON por suceso"
+>
+
+<QuizOption text="Con cualquiera: grep compara números igual en texto libre que en JSON.">
+
+`grep` busca texto, no compara números: no sabe que `612` es mayor que `500`.
+
+</QuizOption>
+
+<QuizOption text="Con el de JSON: jq 'select(.ms > 500)', porque cada dato tiene nombre." correct>
+
+En un log estructurado, `ms` es un número con nombre, y `jq` lo compara. En texto libre tendrías que saber en qué posición está.
+
+</QuizOption>
+
+<QuizOption text="Con ninguno: un log está para leerlo a mano, no para hacerle preguntas.">
+
+Un log también se consulta con programas: por eso se escribe en JSON, con un nombre para cada dato.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [try...catch](https://developer.mozilla.org/es/docs/Web/JavaScript/Reference/Statements/try...catch) y [throw](https://developer.mozilla.org/es/docs/Web/JavaScript/Reference/Statements/throw) (MDN), con ejemplos.
+- [Errors](https://nodejs.org/api/errors.html) (Node.js, en inglés): los errores de Node y su traza.
+- [Error handling](https://hono.dev/docs/api/hono#error-handling) y [Request ID](https://hono.dev/docs/middleware/builtin/request-id) (Hono, en inglés).
+- [pino](https://getpino.io/) (en inglés): niveles, errores y cómo ocultar campos con secretos.
+- [Manual de jq](https://jqlang.org/manual/) (en inglés).
+- [Environment variables](https://nodejs.org/api/environment_variables.html) (Node.js, en inglés): `--env-file` y `--env-file-if-exists`.
+- [Logging Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Logging_Cheat_Sheet.html) (OWASP, en inglés): qué apuntar en un log y qué no apuntar nunca.

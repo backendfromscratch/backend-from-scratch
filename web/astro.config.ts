@@ -12,6 +12,7 @@ import { fallbackUrls } from './src/lib/translations';
 import sitemap from '@astrojs/sitemap';
 import { siteTitle, siteUrl } from './src/data/site';
 import { markdownPlugins } from './src/integrations/markdown-plugins';
+import { projectDownloads } from './src/integrations/project-downloads';
 
 // The fallback copies Starlight would generate: they are deleted from the build and kept out of the sitemap.
 const fallbacks = new Set(
@@ -24,6 +25,8 @@ export default defineConfig({
   integrations: [
     // Before Starlight: deletes the fallback copies before Pagefind indexes the build.
     dropFallbacks(fallbacks),
+    // Each step of the guided projects (projects/) as a .tar.gz in /practicas/.
+    projectDownloads(),
     // Before Starlight: ```mermaid blocks are converted to HTML at build time (src/lib/diagrams/),
     // and a glossary term keeps the punctuation glued to it on its line (src/lib/term-punctuation.ts).
     markdownPlugins(),

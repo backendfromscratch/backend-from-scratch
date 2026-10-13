@@ -1,0 +1,609 @@
+---
+translationKey: http-server
+title: "Crear un servidor HTTP en Node.js sin framework"
+description: "Crea un servidor HTTP con Node.js y TypeScript sin framework: node:http, rutas con if, leer un cuerpo JSON, los códigos 404 y 405, y node --watch."
+sidebar:
+  label: Servidor HTTP
+  order: 4
+lesson:
+  oneLiner: "Un servidor HTTP es un programa que espera peticiones y llama a una función tuya con cada una. Con el módulo node:http de Node.js, la primera línea, las cabeceras y el cuerpo que viste en la Fase 2 llegan en variables, y la respuesta la escribes tú: código, cabeceras y cuerpo."
+  objectives:
+    - Arrancar un servidor con createServer y listen, y explicar qué son req y res.
+    - Leer el método, la ruta y las cabeceras de una petición, y su cuerpo, que llega en trozos.
+    - Decidir qué responder en cada ruta con if, y devolver 200, 201, 400, 404, 405 (con su cabecera Allow) o 422.
+    - Reiniciar el servidor al guardar con node --watch, y comprobar cada respuesta con curl.
+  prerequisites: [typescript, http-messages]
+---
+
+import { FileTree } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+El nginx de la tienda, en la [Fase 2](/fase-2/), tenía una dirección `/api/pedidos` que contestaba a todo lo mismo: un `200` y `{"pedidos":[]}`. Imagina que Luis envía por ahí un pedido de tres tazas. Recibe un `200` y cree que ha ido bien, pero el pedido no está en ningún sitio: nginx ni lo ha leído.
+
+Y no puede. Una configuración de nginx dice «en esta dirección, contesta esto». Recibir un pedido es leer el <Term id="request-body">cuerpo</Term>, comprobar que el producto existe, guardarlo y contestar `201` con su número: hace falta un programa que decida con cada <Term id="request">petición</Term>.
+
+En la [lección 1 de la Fase 2](/fase-2/peticion-y-respuesta-http/) hiciste ese trabajo a mano con `nc`. Ahora escribes el programa que lo hace por ti, solo con lo que trae <Term id="nodejs">Node.js</Term>, sin <Term id="framework">framework</Term> (el código ya hecho que usan casi todos los servidores). Y verás que no hay magia: son las mismas líneas de texto, ahora en <Term id="variable">variables</Term>.
+
+## La analogía
+
+<Analogy>
+
+Piensa en el correo de una empresa. En el cuarto de correo abren cada sobre y te dejan la carta en la mesa con una ficha: qué pide (el método), a qué departamento va (la ruta) y quién la manda (las cabeceras). Junto a ella, un impreso de respuesta en blanco.
+
+Tú lees, decides y rellenas el impreso: un código («hecho», «no existe», «aquí no se hace eso») y el contenido. El cuarto de correo lo envía. Node.js es el cuarto de correo, y tu código, la persona de la mesa: **cada respuesta la escribes tú.**
+
+<div slot="limits">
+
+- El contenido no llega dentro del sobre: llega en trozos, y tienes que juntarlos antes de leerlo.
+- El cuarto de correo no comprueba la carta. Si alguien pide −5 tazas, te la pasa igual.
+- Si olvidas enviar la respuesta, nadie te avisa: quien escribió se queda esperando.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Los ficheros de esta lección
+
+Sigues en el proyecto de la [lección 3](/fase-3/typescript-con-node/), en `~/curso-backend/fase-3/tienda-api`. Al terminar esta lección tendrá estos ficheros:
+
+<FileTree>
+
+- src/
+  - datos.ts los productos y los pedidos (antes, productos.ts)
+  - app.ts el servidor: las rutas y las respuestas
+  - servidor.ts lo pone a escuchar en el puerto 3000
+- test/
+  - servidor.test.ts las pruebas
+- package.json
+
+</FileTree>
+
+Escribe cada fichero a medida que lo lees. `src/datos.ts` es tu `src/productos.ts` con otro nombre (`mv src/productos.ts src/datos.ts`), sin la función `total` y con los pedidos de más abajo. `src/main.ts` ya no hace falta: bórralo.
+
+Las pruebas no las escribes tú: vienen en la carpeta de esta lección. Descárgala junto a tu proyecto y copia su carpeta `test/` en el tuyo; si te atascas, compara tu código con el suyo:
+
+```sh
+cd ~/curso-backend/fase-3
+curl -O https://backenddesdecero.com/practicas/tienda-api/04-servidor-http.tar.gz
+tar -xzf 04-servidor-http.tar.gz
+cp -r 04-servidor-http/test tienda-api/
+```
+
+`cp -r` copia una carpeta entera ([lección 2 de la Fase 1](/fase-1/comandos-linux-archivos/#copiar-mover-y-renombrar-cp-y-mv)).
+
+### Un servidor es una función que Node llama con cada petición
+
+<ProjectCode file="tienda-api/04-servidor-http/src/servidor.ts" />
+
+- **`import { crearServidor } from './app.ts'`** trae de `app.ts` la <Term id="function">función</Term> que crea el servidor.
+- **`servidor.listen(3000, '127.0.0.1', …)`** lo pone a escuchar en el <Term id="port">puerto</Term> 3000 de la dirección `127.0.0.1`, la de <Term id="localhost">localhost</Term>: solo tu ordenador puede llamarlo. Un servidor público escucha en todas las direcciones del equipo, `0.0.0.0`; lo harás en la Fase 8.
+- **La función del final** la llama Node cuando ya escucha. El programa no termina: espera peticiones hasta que lo paras con <kbd>Ctrl</kbd> + <kbd>C</kbd>, como cualquier <Term id="process">proceso</Term> de la [Fase 1](/fase-1/procesos-y-senales/).
+
+`app.ts` empieza así:
+
+<ProjectCode file="tienda-api/04-servidor-http/src/app.ts" region="importar" />
+
+`node:http` es un <Term id="module">módulo</Term> que viene con Node (eso dice el prefijo `node:`): no hay nada que instalar con <Term id="npm">npm</Term>. De él salen `createServer` y los <Term id="type">tipos</Term> de la petición y de la respuesta. La segunda línea trae lo de `datos.ts`. Al final del fichero está la función que usa `servidor.ts`:
+
+<ProjectCode file="tienda-api/04-servidor-http/src/app.ts" region="crear-servidor" />
+
+- **`createServer(…)`** crea el servidor y le da la función que atenderá cada petición. Node la llama una vez por petición con dos <Term id="object">objetos</Term>: **`req`** (*request*), la petición que ha llegado, y **`res`** (*response*), la respuesta que vas a escribir.
+- **`manejar(req, res)`** decide qué contestar. La verás enseguida.
+- **`.catch(…)`**: si `manejar` falla por algo inesperado, el cliente recibe un `500` en lugar de quedarse esperando. Los errores son la [lección 8](/fase-3/errores-y-logs-node/).
+- **`export`** deja usar `crearServidor` desde `servidor.ts` y desde las pruebas.
+
+### La petición de la Fase 2, en variables
+
+Node lee los bytes que llegan por la conexión, separa la primera línea y las cabeceras, y te lo da todo en `req`:
+
+| En el mensaje | En el código | Por ejemplo |
+|---|---|---|
+| El <Term id="http-method">método</Term>, en la primera línea | `req.method` | `'POST'` |
+| La ruta y la <Term id="query-string">query string</Term>, en la primera línea | `req.url` | `'/productos?orden=precio'` |
+| Las <Term id="header">cabeceras</Term> | `req.headers` | `{ host: 'localhost:3000', 'content-type': 'application/json', … }` |
+| El cuerpo, después de la línea vacía | El propio `req`, que se lee en trozos | `{"productoId":2,"cantidad":3}` |
+
+Fíjate en dos cosas:
+
+- **`req.url` no es una URL entera:** es lo que viaja en la primera línea, la ruta con su query string. El nombre del servidor va en la cabecera `Host`.
+- **Los nombres de las cabeceras llegan en minúsculas.** HTTP no distingue mayúsculas ([lección 4 de la Fase 2](/fase-2/cabeceras-http/)), así que Node las unifica: siempre buscas `req.headers['content-type']`.
+
+`node:http` solo separa la petición. Qué contestar lo decides tú.
+
+### Responder: código, cabeceras y cuerpo
+
+Todas las respuestas en JSON de la tienda pasan por esta función:
+
+<ProjectCode file="tienda-api/04-servidor-http/src/app.ts" region="responder" />
+
+- **`enviarJson`** es nuestra, no de Node. Recibe `res`, el <Term id="status-code">código de estado</Term>, los datos y, si hacen falta, más cabeceras (`= {}`: si no le pasan ninguna, ninguna).
+- **`res.writeHead(estado, {…})`** escribe la línea de estado y las cabeceras: el `HTTP/1.1 201 Created` y el `Content-Type`. La frase, `Created`, la pone Node según el número.
+- **`...cabeceras`** copia las cabeceras extra dentro del mismo objeto. Así se añaden `Location` o `Allow`.
+- **`JSON.stringify(datos)`** convierte los datos en texto <Term id="json">JSON</Term>, y **`res.end(…)`** lo escribe como cuerpo y da la respuesta por terminada. Sin `res.end`, el cliente espera para siempre.
+- **`metodoNoPermitido`** responde `405` con `Allow`, los métodos que sí se aceptan, como pide el estándar ([lección 2 de la Fase 2](/fase-2/metodos-http/)).
+
+### Elegir qué hacer: las rutas, con if
+
+`manejar` mira la <Term id="route">ruta</Term> y el método, y responde lo que toca. Su principio:
+
+<ProjectCode file="tienda-api/04-servidor-http/src/app.ts" region="rutas-principio" />
+
+- **`async`** deja que la función espere con `await` ([lección 2](/fase-3/javascript-para-backend/#esperar-lo-que-tarda-promesas-async-y-await)).
+- **`new URL(req.url ?? '/', 'http://localhost')`** construye una URL entera para separar sus partes; `'http://localhost'` es solo una base, porque `req.url` no trae el servidor. `??` significa «si no viene, usa `'/'`».
+- **`const { pathname } = …`** saca de esa URL su parte `pathname` y la guarda en una variable con el mismo nombre. Es la ruta sin la query string: `/productos?orden=precio` también entra en `/productos`.
+- **`if (pathname === '/')`**: `===` compara, y si son iguales se ejecuta el bloque.
+- **`return`** termina la función. Sin él, el código seguiría bajando e intentaría responder otra vez.
+- **En `/productos`,** primero el método: si no es `GET`, `405` con `Allow: GET`; si lo es, la lista con un `200`.
+
+Sigue un producto concreto, como `/productos/2`:
+
+<ProjectCode file="tienda-api/04-servidor-http/src/app.ts" region="rutas-producto" />
+
+- **`pathname.match(/^\/productos\/(\d+)$/)`** compara la ruta con un patrón, una expresión regular: «empieza por `/productos/`, sigue con una o más cifras (`\d+`) y termina». Los paréntesis guardan las cifras: `ruta[1]` es el texto `'2'`, y `Number(…)` lo convierte en el número 2. Si no encaja, `match` devuelve `null` y no se entra en el `if`.
+- **`if (!producto)`**: `!` significa «no». Si `buscarProducto` no ha encontrado nada, `404`.
+
+Y el final, con los pedidos:
+
+<ProjectCode file="tienda-api/04-servidor-http/src/app.ts" region="rutas-pedidos" />
+
+- **`/pedidos`** acepta `GET`, la lista, y `POST`, que crea un pedido con `nuevoPedido` (la verás enseguida). Con otro método, `405` y `Allow: GET, POST`.
+- **`/pedidos/1`** funciona como `/productos/2`, con su propio patrón y `buscarPedido`. Es la dirección que recibe cada pedido nuevo; si no existe, `404`.
+- **La última línea** solo se alcanza si ningún `if` ha respondido: `404`.
+
+**`404` es una ruta que no existe; `405`, una ruta que existe con un método que no acepta.** Funciona, pero cada ruta nueva es otro `if`. Un framework te ahorra esa parte: lo verás en la [lección 5](/fase-3/express-hono-fastify/).
+
+### El cuerpo llega en trozos
+
+El método y las cabeceras están en `req` desde el principio; el cuerpo, no. Puede ocupar megas, como una foto, y viaja en varios <Term id="segment">segmentos</Term> de TCP ([Fase 0](/fase-0/tcp-vs-udp/)). En lugar de esperar a tenerlo entero, Node te da cada trozo según llega: es un <Term id="stream">stream</Term>.
+
+<ProjectCode file="tienda-api/04-servidor-http/src/app.ts" region="leer-cuerpo" />
+
+- **`const trozos: Buffer[] = []`** crea un <Term id="array">array</Term> vacío, una lista donde guardar los trozos. Cada trozo es un `Buffer`: bytes, todavía no texto.
+- **`for await (const trozo of req)`** recorre los trozos según llegan, y `push` añade cada uno a la lista. `await` espera al siguiente sin parar el resto del servidor (por qué, en la [lección 9](/fase-3/event-loop-node/)).
+- **Cuando no quedan trozos,** `Buffer.concat` los junta y `toString('utf8')` convierte los bytes en texto.
+- **`Promise<string>`** dice qué devuelve: una <Term id="promise">promesa</Term> de un texto, que llega cuando el cuerpo está entero.
+
+Se juntan antes de convertirlos porque una ó ocupa dos bytes ([Fase 2](/fase-2/peticion-y-respuesta-http/)) y puede quedar partida entre dos trozos.
+
+### Un pedido nuevo: JSON que entra, JSON que sale
+
+<ProjectCode file="tienda-api/04-servidor-http/src/app.ts" region="nuevo-pedido" />
+
+- **`let datos: { … }`** crea la variable antes del `try`, con la forma que se espera, para poder usarla después. Es `let` porque recibe su valor más tarde.
+- **`JSON.parse(await leerCuerpo(req))`** espera al cuerpo entero y convierte el texto JSON en datos. Si no es JSON válido, lanza un error (una <Term id="exception">excepción</Term>).
+- **`try { … } catch { … }`** significa «intenta esto; si falla, haz esto otro»: aquí, un `400`, porque el servidor no ha podido ni leer los datos.
+- **Si el producto no existe,** `422`: el JSON se ha leído, pero pide algo que no existe. Es la regla de la [lección 3 de la Fase 2](/fase-2/codigos-de-estado-http/#los-códigos-que-importan): `400` si la petición no se puede leer, y `422` si se lee y los datos no valen.
+- **Si todo va bien,** `crearPedido` lo guarda y la respuesta es un `201 Created` con `Location`, la dirección del pedido nuevo. `` `/pedidos/${pedido.id}` `` es un texto con hueco ([lección 2](/fase-3/javascript-para-backend/#textos-con-huecos-las-comillas-invertidas)): con el pedido 1, `/pedidos/1`.
+
+**El `as` le miente a <Term id="typescript">TypeScript</Term>.** Le dice «fíate: los datos tienen esta forma», y nadie lo comprueba: `JSON.parse` devuelve lo que haya llegado, y los tipos se borran al ejecutar ([lección 3](/fase-3/typescript-con-node/#node-borra-los-tipos-al-ejecutar)). Si llega `"cantidad": -5`, pasa. Lo arregla la [lección 7](/fase-3/validar-datos-zod/).
+
+Los pedidos se guardan en `datos.ts`:
+
+<ProjectCode file="tienda-api/04-servidor-http/src/datos.ts" region="pedidos" />
+
+- **`pedidos`** es una lista en memoria: al parar el servidor, se pierde. La base de datos llega en la Fase 5.
+- **`buscarProducto`** ya lo tenías, y **`buscarPedido`** hace lo mismo con los pedidos: devuelve el que tiene ese `id`, o `undefined` si no hay ninguno.
+- **`crearPedido`** le da el número siguiente (`pedidos.length + 1`), lo marca `'pendiente'` y lo añade con `push`.
+
+### `node --watch`: el servidor se reinicia al guardar
+
+Tu `package.json` todavía arranca `main.ts`. Cambia `start` y añade `dev` con `npm pkg set`, como en la [lección 1](/fase-3/que-es-node-js/), desde `tienda-api`:
+
+```sh
+npm pkg set scripts.start="node src/servidor.ts" scripts.dev="node --watch src/servidor.ts"
+```
+
+No escribe nada si va bien. Queda así, con `dev` al final de `scripts` (el orden da igual):
+
+<ProjectCode file="tienda-api/04-servidor-http/package.json" />
+
+- **`npm start`** ejecuta `node src/servidor.ts`. Node lee tu código al arrancar: si cambias un fichero, el servidor en marcha no se entera.
+- **`npm run dev`** añade `--watch`: Node vigila `servidor.ts` y los ficheros que importa, y reinicia el servidor cada vez que guardas uno. Es para cuando programas.
+- **`npm test`** ejecuta las pruebas, y **`npm run check`** comprueba los tipos ([lección 3](/fase-3/typescript-con-node/)).
+
+Las pruebas que copiaste arrancan el servidor en un puerto libre y hacen las mismas peticiones que harás con `curl`, comprobando códigos, cabeceras y cuerpos. Aprenderás a escribirlas en la Fase 10.
+
+## Pruébalo
+
+El objetivo: poner en marcha la API de la tienda, hacerle un pedido y encontrar el pedido que acepta y no debería. Las salidas son de Node 26.11.1 y `curl` 8.14.1, en Linux; en un Mac salen igual, con otras fechas.
+
+<TryIt
+  title="1. Arranca el servidor"
+  cmd={`cd ~/curso-backend/fase-3/tienda-api\nnpm start`}
+  output={`> tienda-api@1.0.0 start
+> node src/servidor.ts
+
+La tienda escucha en http://localhost:3000`}
+>
+
+npm escribe primero qué script ejecuta. La terminal se queda ocupada: el servidor está esperando. **Abre otra terminal** para los pasos siguientes. Si sale `EADDRINUSE`, ya hay otro servidor en el puerto 3000, quizá el tuyo en otra terminal: páralo con <kbd>Ctrl</kbd> + <kbd>C</kbd>. Si sale `Cannot find module` con `src/main.ts`, te falta el `npm pkg set` de arriba.
+
+</TryIt>
+
+<TryIt
+  title="2. Pide la lista de productos"
+  cmd="curl -i localhost:3000/productos"
+  output={`HTTP/1.1 200 OK
+Content-Type: application/json; charset=utf-8
+Date: Tue, 13 Oct 2026 10:56:27 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+[{"id":1,"nombre":"Camiseta","precio":20},{"id":2,"nombre":"Taza","precio":8.5},{"id":3,"nombre":"Sudadera","precio":35}]`}
+>
+
+El `200` y el `Content-Type` los escribe `enviarJson`; el resto de cabeceras, Node. El JSON no termina en un salto de línea, así que el prompt sale pegado (zsh pone un `%`). Si sale `Couldn't connect to server`, el servidor no está en marcha: vuelve al paso 1.
+
+</TryIt>
+
+<TryIt
+  title="3. Un producto que existe"
+  cmd="curl localhost:3000/productos/2"
+  output={`{"id":2,"nombre":"Taza","precio":8.5}`}
+>
+
+La ruta ha encajado con el patrón, y `ruta[1]` era `'2'`. Sin `-i`, `curl` solo escribe el cuerpo.
+
+</TryIt>
+
+<TryIt
+  title="4. Un producto que no existe"
+  cmd="curl -i localhost:3000/productos/99"
+  output={`HTTP/1.1 404 Not Found
+Content-Type: application/json; charset=utf-8
+Date: Tue, 13 Oct 2026 10:56:27 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"error":"No existe ese producto"}`}
+>
+
+El patrón encaja, pero `buscarProducto(99)` no encuentra nada: `404`, con el mensaje en JSON para que un programa lo lea. Con `curl -i localhost:3000/ofertas` sale otro `404`: `No existe esa ruta`.
+
+</TryIt>
+
+<TryIt
+  title="5. Haz un pedido y búscalo"
+  cmd={`curl -i --json '{"productoId":2,"cantidad":3}' localhost:3000/pedidos\ncurl localhost:3000/pedidos/1`}
+  output={`HTTP/1.1 201 Created
+Content-Type: application/json; charset=utf-8
+Location: /pedidos/1
+Date: Tue, 13 Oct 2026 10:56:27 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"id":1,"productoId":2,"cantidad":3,"estado":"pendiente"}{"id":1,"productoId":2,"cantidad":3,"estado":"pendiente"}`}
+>
+
+`--json` envía un `POST` con ese cuerpo y `Content-Type: application/json` ([Fase 2](/fase-2/peticion-y-respuesta-http/)). Llega un `201` con `Location: /pedidos/1`, y la segunda orden pide esa dirección: el mismo pedido, ya guardado. Las dos respuestas salen pegadas. `curl localhost:3000/pedidos` enseña la lista entera, que se vacía si paras el servidor: está en memoria.
+
+</TryIt>
+
+<TryIt
+  title="6. Un cuerpo que no es JSON"
+  cmd={`curl -i --json 'quiero dos tazas' localhost:3000/pedidos`}
+  output={`HTTP/1.1 400 Bad Request
+Content-Type: application/json; charset=utf-8
+Date: Tue, 13 Oct 2026 10:56:27 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"error":"El cuerpo no es un JSON válido"}`}
+>
+
+`JSON.parse` ha fallado, el `catch` lo ha recogido y la respuesta es un `400`: el servidor no ha podido leer los datos. Y sigue en marcha.
+
+</TryIt>
+
+<TryIt
+  title="7. Un pedido de un producto que no existe"
+  cmd={`curl -i --json '{"productoId":99,"cantidad":1}' localhost:3000/pedidos`}
+  output={`HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/json; charset=utf-8
+Date: Tue, 13 Oct 2026 10:56:27 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"error":"No existe ese producto"}`}
+>
+
+El JSON se lee bien, pero el producto 99 no existe: `422`. En el paso 4 no existía la dirección (`404`); aquí `/pedidos` existe, y lo que no vale son los datos. Node escribe la frase antigua, `Unprocessable Entity` (hoy, `Unprocessable Content`), pero los programas [solo miran el número](/fase-2/codigos-de-estado-http/#la-frase-es-para-humanos).
+
+</TryIt>
+
+<TryIt
+  title="8. Un método que la ruta no acepta"
+  cmd="curl -i -X DELETE localhost:3000/productos"
+  output={`HTTP/1.1 405 Method Not Allowed
+Content-Type: application/json; charset=utf-8
+Allow: GET
+Date: Tue, 13 Oct 2026 10:56:27 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"error":"Método no permitido"}`}
+>
+
+`/productos` existe, pero solo para leer: `405` y `Allow: GET`, la regla que backenddesdecero.com no cumplía en la [lección 2 de la Fase 2](/fase-2/metodos-http/).
+
+</TryIt>
+
+<SelfCheck question={`Reto: envía curl -i --json '{"productoId":2,"cantidad":-5}' localhost:3000/pedidos. ¿Qué responde la tienda? ¿Por qué no lo rechaza?`}>
+
+Lo acepta:
+
+```
+HTTP/1.1 201 Created
+Content-Type: application/json; charset=utf-8
+Location: /pedidos/2
+Date: Tue, 13 Oct 2026 10:56:27 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Transfer-Encoding: chunked
+
+{"id":2,"productoId":2,"cantidad":-5,"estado":"pendiente"}
+```
+
+El código solo comprueba que el cuerpo sea JSON y que el producto exista. El `as` promete que `cantidad` es un número, y `-5` lo es, aunque no tenga sentido. En la [lección 7](/fase-3/validar-datos-zod/), esto será un `422`.
+
+</SelfCheck>
+
+### Mira lo que llega
+
+Para el servidor con <kbd>Ctrl</kbd> + <kbd>C</kbd> y arráncalo en modo desarrollo:
+
+<TryIt
+  title="9. Arranca con --watch"
+  cmd="npm run dev"
+  output={`> tienda-api@1.0.0 dev
+> node --watch src/servidor.ts
+
+La tienda escucha en http://localhost:3000`}
+/>
+
+Abre `src/app.ts` en tu editor y añade esta línea al principio de `manejar`, justo antes de `const { pathname }`:
+
+```ts
+console.log(req.method, req.url, req.headers);
+```
+
+`console.log` escribe en la terminal lo que le pases. Guarda, repite el paso 2 en la otra terminal y mira la del servidor:
+
+```
+Change detected in '/Users/ana/curso-backend/fase-3/tienda-api/src/app.ts'
+Restarting 'src/servidor.ts'
+La tienda escucha en http://localhost:3000
+GET /productos { host: 'localhost:3000', 'user-agent': 'curl/8.14.1', accept: '*/*' }
+```
+
+Node ha visto el cambio, ha limpiado la terminal y ha reiniciado el servidor solo. Después, tu línea: el método, la ruta y las cabeceras de `curl`, en minúsculas. (Hemos cambiado la ruta de Linux por la de un Mac; tu versión de `curl` será otra.) Si no sale `Restarting`, comprueba que has guardado y que arrancaste con `npm run dev`. Cuando acabes, borra la línea.
+
+<TryIt
+  title="10. Pasa las pruebas"
+  cmd="npm test"
+  output={`> tienda-api@1.0.0 test
+> node --test
+
+✔ GET / responde con texto (28.489385ms)
+✔ GET /productos devuelve los tres en JSON (6.871455ms)
+✔ GET /productos/2 devuelve la taza; /productos/99, un 404 (9.923832ms)
+✔ POST /pedidos crea un pedido: 201 con Location (13.470743ms)
+✔ la dirección de Location existe; un pedido que no existe, 404 (13.835256ms)
+✔ POST /pedidos con un cuerpo que no es JSON: 400 (5.448573ms)
+✔ POST /pedidos con un producto que no existe: 422 (5.589428ms)
+✔ un método que la ruta no acepta: 405 con Allow (1.143881ms)
+✔ una ruta que no existe: 404 (0.533622ms)
+ℹ tests 9
+ℹ suites 0
+ℹ pass 9
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 241.719253`}
+>
+
+Nueve pruebas, una por cada cosa que promete la lección, y `fail 0`. Usan otro puerto, así que no molestan al servidor en marcha; tus tiempos serán otros. Si una falla, sale con `✖` y lo que esperaba frente a lo que recibió: compara tu código con el de la lección. Si sale `tests 0`, no has copiado la carpeta `test/` de la descarga.
+
+</TryIt>
+
+## Ya lo has visto
+
+- **En la Fase 2, con `nc`.** Lo que tecleabas a mano, la línea de estado, las cabeceras y el cuerpo, lo escriben ahora `res.writeHead` y `res.end`.
+- **En el nginx de la tienda.** Cada `location` con su `return` era una ruta con una respuesta fija. Tus `if`, además, leen el cuerpo y deciden.
+- **En el navegador.** Abre `http://localhost:3000/productos`: el navegador hace un `GET` y te enseña el JSON. En la pestaña **Red** de DevTools ([cómo abrirlo](/fase-2/#antes-de-empezar-devtools)) verás las mismas cabeceras que con `curl -i`.
+
+## Errores comunes
+
+- **Olvidar el `return` después de responder.** El código llega a otra respuesta: el cliente recibe la primera, pero Node lanza `Error [ERR_HTTP_HEADERS_SENT]: Cannot write headers after they are sent to the client` y el servidor se cae.
+- **Olvidar `res.end`.** La respuesta nunca termina, y `curl` se queda esperando.
+- **Comparar `req.url` con la ruta.** `/productos?orden=precio` no es `/productos`, y respondes `404`. Compara el `pathname`.
+- **Arrancar dos veces.** El segundo falla con `Error: listen EADDRINUSE: address already in use 127.0.0.1:3000`: el puerto ya es del primero.
+
+## Resumen
+
+- `createServer` recibe una función que Node llama con cada petición: `req` es lo que llega y `res`, la respuesta que escribes. `listen` lo pone a escuchar en un puerto.
+- La petición está en variables: `req.method`, `req.url` (ruta y query string) y `req.headers` (en minúsculas). El cuerpo es un stream: llega en trozos.
+- Las rutas son `if` sobre el `pathname` y el método: `404` si la ruta no existe; `405` con `Allow` si no admite el método.
+- Si el cuerpo no es JSON, `try`/`catch` y un `400`; si lo es, pero pide un producto que no existe, `422`. El `as` no comprueba nada: lo hará la [lección 7](/fase-3/validar-datos-zod/).
+- `npm run dev` (`node --watch`) reinicia el servidor al guardar, y `npm test` comprueba que responde lo que promete.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Ana cambia en datos.ts el precio de la taza a 9 € y guarda. Arrancó el servidor con npm start, y curl localhost:3000/productos/2 sigue diciendo 8.5. ¿Por qué?"
+  review="node --watch: el servidor se reinicia al guardar"
+>
+
+<QuizOption text="Node leyó el código al arrancar: hay que reiniciarlo, o usar npm run dev." correct>
+
+El servidor en marcha usa el código que leyó al empezar. Con `--watch`, se reinicia solo al guardar.
+
+</QuizOption>
+
+<QuizOption text="curl guarda las respuestas y repite la anterior hasta que la borras.">
+
+`curl` no guarda nada entre una orden y otra: cada vez hace una petición nueva.
+
+</QuizOption>
+
+<QuizOption text="Node tarda unos minutos en compilar los ficheros .ts después de guardarlos.">
+
+Node no compila aparte: lee los `.ts` al arrancar, les quita los tipos y los ejecuta.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un cliente pide GET /productos?orden=precio a tu servidor. ¿Qué hay en req.url?"
+  review="La petición de la Fase 2, en variables"
+>
+
+<QuizOption text="http://localhost:3000/productos?orden=precio, la URL entera.">
+
+La URL entera no viaja: la primera línea solo lleva la ruta y la query string, y el servidor va en la cabecera `Host`.
+
+</QuizOption>
+
+<QuizOption text="/productos, porque Node quita la query string antes de dártela.">
+
+Node no quita nada. Por eso el código saca el `pathname` con `new URL`.
+
+</QuizOption>
+
+<QuizOption text="/productos?orden=precio, la ruta con su query string." correct>
+
+`req.url` es lo que viaja en la primera línea. Comparado con `'/productos'`, no es igual: hay que separar el `pathname`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="El servidor de esta lección recibe PUT /pedidos. ¿Qué responde?"
+  review="Elegir qué hacer: las rutas, con if"
+>
+
+<QuizOption text="404, porque no hay ninguna ruta para PUT /pedidos.">
+
+`404` es para una ruta que no existe, y `/pedidos` existe. Lo que no acepta es ese método.
+
+</QuizOption>
+
+<QuizOption text="405 con Allow: GET, POST." correct>
+
+La ruta existe y solo acepta `GET` y `POST`: con otro método, `metodoNoPermitido` responde `405` y dice cuáles sí.
+
+</QuizOption>
+
+<QuizOption text="200, porque Node acepta cualquier método en una ruta que existe.">
+
+Node no decide qué métodos acepta una ruta: lo deciden tus `if`, y aquí lo comprueban.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="¿Por qué el cuerpo se lee con un bucle (for await) y no está en req desde el principio, como req.method?"
+  review="El cuerpo llega en trozos"
+>
+
+<QuizOption text="Porque llega en trozos, y hay que juntarlos todos antes de convertirlos en texto." correct>
+
+El cuerpo es un stream: Node te da cada trozo según llega, y el bucle los junta.
+
+</QuizOption>
+
+<QuizOption text="Porque cada trozo es un campo del JSON: uno para productoId y otro para cantidad.">
+
+Los trozos se cortan según llegan los bytes, no según el significado: hasta una letra puede quedar partida entre dos.
+
+</QuizOption>
+
+<QuizOption text="Porque el servidor tiene que pedirle el cuerpo al cliente en una segunda petición.">
+
+El cuerpo viaja en la misma petición, después de la línea vacía; solo que no llega todo de golpe.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question={`Una app envía {"productoId":"2","cantidad":1}: el 2 va entre comillas, como texto. El código tiene el as { productoId: number; … }. ¿Qué pasa?`}
+  review="Un pedido nuevo: JSON que entra, JSON que sale"
+>
+
+<QuizOption text="TypeScript lo rechaza al llegar, porque productoId tiene que ser un número.">
+
+TypeScript no está cuando el servidor se ejecuta: los tipos se borran, y el `as` no comprueba nada.
+
+</QuizOption>
+
+<QuizOption text="Node convierte el texto en el número 2 y crea el pedido, porque el tipo dice number.">
+
+Nadie convierte nada: `JSON.parse` devuelve el texto `"2"` tal cual. El tipo es una promesa que nadie vigila.
+
+</QuizOption>
+
+<QuizOption text="Responde 422, «No existe ese producto»: el texto no es igual al número 2." correct>
+
+`JSON.parse` deja el texto `"2"` tal cual, y `buscarProducto` compara con `===`: el texto no es el número `2`. El mensaje engaña: la lección 7 dirá qué campo está mal.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Ejecutas npm start y sale Error: listen EADDRINUSE: address already in use 127.0.0.1:3000. ¿Qué haces?"
+  review="Errores comunes"
+>
+
+<QuizOption text="Ejecutar npm install, porque falta un paquete.">
+
+El error no habla de paquetes: dice que la dirección, el puerto 3000, ya está en uso.
+
+</QuizOption>
+
+<QuizOption text="Buscar el servidor que ya está en marcha y pararlo, o usar otro puerto." correct>
+
+Solo un proceso puede escuchar en un puerto, y suele ser tu propio servidor, olvidado en otra terminal: <kbd>Ctrl</kbd> + <kbd>C</kbd> en ella lo para.
+
+</QuizOption>
+
+<QuizOption text="Arrancarlo con sudo, porque escuchar en un puerto necesita permiso de administrador.">
+
+El 3000 no necesita permisos especiales. El problema es que otro proceso ya lo ocupa, y `sudo` no cambia eso.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Anatomy of an HTTP Transaction](https://nodejs.org/learn/http/anatomy-of-an-http-transaction) (Node.js, en inglés): una petición en `node:http`, del `createServer` al `res.end`, con el cuerpo como stream.
+- [HTTP](https://nodejs.org/api/http.html) (documentación de Node.js, en inglés): todo lo que tienen `req` y `res`.
+- [Expresiones regulares](https://developer.mozilla.org/es/docs/Web/JavaScript/Guide/Regular_expressions) (MDN): cómo se escriben patrones como el de `/productos/2`.
+- [JSON.parse()](https://developer.mozilla.org/es/docs/Web/JavaScript/Reference/Global_Objects/JSON/parse) (MDN): qué devuelve y cuándo lanza un error.

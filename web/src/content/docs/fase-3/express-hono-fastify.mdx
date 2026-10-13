@@ -1,0 +1,639 @@
+---
+translationKey: frameworks
+title: "Express, Fastify o Hono: frameworks para Node.js"
+description: "Qué añade un framework a un servidor de Node.js: rutas con parámetros, query strings y JSON con Hono, y la misma ruta en Express y en Fastify."
+sidebar:
+  label: Frameworks
+  order: 5
+lesson:
+  oneLiner: "Un framework es código ya escrito que hace lo que todo servidor repite: decidir qué función atiende cada petición, leer sus datos y responder en JSON. Express es el más usado, Fastify nació para ser rápido y Hono, el de este curso, usa los mismos Request y Response que fetch."
+  objectives:
+    - Explicar qué añade un framework a un servidor hecho con node:http, y qué no cambia.
+    - Pasar la API de la tienda a Hono, con parámetros de ruta y query strings.
+    - Responder 405 con Allow a un método que una ruta no acepta, porque el framework no lo hace por su cuenta.
+    - Comparar la misma ruta en Express y en Fastify, y saber qué mirar para elegir.
+  prerequisites: [http-server]
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+En la [lección 4](/fase-3/servidor-http-node/) escribiste la API de la tienda solo con `node:http`. Funciona, pero mira cómo averigua qué producto le piden: `pathname.match(/^\/productos\/(\d+)$/)`. Es una expresión regular, un patrón de texto que hay que leer con lupa, y solo sirve para sacar el `2` de `/productos/2`. Además, cada ruta repite su `if (req.method !== 'GET')`.
+
+Ahora Ana quiere filtrar por precio: `/productos?max=25`, «los productos de 25 € o menos». Después querrá crear productos. Cada idea nueva es otro `if`, otra expresión regular y otro sitio donde equivocarse.
+
+Y todos los servidores necesitan lo mismo: repartir las peticiones, leer los datos de la URL y del cuerpo, y responder en JSON. Para eso existen los frameworks: código que ya resuelve esa parte, para que tú escribas solo la tuya.
+
+## La analogía
+
+<Analogy>
+
+Piensa en la recepción de un edificio de oficinas. Quien llega no va despacho por despacho: dice a qué viene, y el recepcionista mira el directorio y le indica adónde ir. «¿Una factura? Contabilidad, segunda planta.» Si trae un número de expediente, lo apunta en la hoja que le entrega, y en el despacho ya no tienen que preguntarlo.
+
+Tú escribes el directorio, y el recepcionista lo aplica con cada visita. En la lección 4 hacías los dos trabajos. Quien llega es la petición; el directorio, tu lista de rutas; cada despacho, la función que responde, y el expediente, el `2` de `/productos/2`.
+
+<div slot="limits">
+
+- Un recepcionista entiende lo que quieres aunque lo digas a tu manera. El framework solo compara patrones: `/producto/2`, sin la «s», no coincide con nada y recibe un `404`.
+- Un recepcionista te diría «eso no se hace aquí; solo consultas». Hono, Express y Fastify responden `404` a un método equivocado: el `405` lo escribes tú.
+- Al recepcionista lo contrató el edificio. El framework lo escribieron otras personas: tu servidor depende de su código, de sus versiones y de sus fallos.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Lo que un framework hace por ti
+
+Esta es la misma API, en la lección 4 y en esta:
+
+| Lo que hace falta | En la lección 4, con `node:http` | Con Hono |
+|---|---|---|
+| Elegir qué código atiende la petición | Un `if` por ruta, y una expresión regular | `app.get('/productos/:id', …)` |
+| Leer el `2` de `/productos/2` | Lo que capturó la expresión regular, `ruta[1]` | `c.req.param('id')` |
+| Leer el `25` de `?max=25` | No lo hacía: habría que leer la URL a mano | `c.req.query('max')` |
+| Leer el cuerpo de un pedido | `leerCuerpo`, trozo a trozo, y `JSON.parse` | `await c.req.json()` |
+| Responder en JSON | `writeHead`, `JSON.stringify` y `end` | `c.json(datos)` |
+
+Un <Term id="framework">framework</Term> (en inglés, «marco de trabajo») es eso: código ya escrito que resuelve lo que todos los servidores repiten, y que llama a tus funciones cuando llega una petición. La diferencia con un <Term id="package">paquete</Term> cualquiera, como los de la [lección 1](/fase-3/que-es-node-js/), es quién llama a quién: a un paquete lo llamas tú; un framework te llama a ti.
+
+Lo que **no cambia es HTTP**. La petición sigue trayendo su método, sus cabeceras y su cuerpo, y un `404` sigue siendo un `404`, como en la [Fase 2](/fase-2/). El framework solo te ahorra código.
+
+### Por qué Hono en este curso
+
+De los tres frameworks más conocidos para Node.js, Express, Fastify y Hono, este curso usa Hono por tres razones:
+
+- **Habla como `fetch`.** Usa los <Term id="object">objetos</Term> `Request` y `Response` de `fetch`, la función con la que el navegador hace peticiones; la usaste en la consola en la [lección 6 de la Fase 2](/fase-2/que-es-cors/). Lo que aprendes aquí te sirve allí, y al revés.
+- **Funciona en muchos sitios.** El mismo código corre en Node.js y en Cloudflare Workers, los servidores donde se publica esta web, entre otros.
+- **Es pequeño y está escrito en <Term id="typescript">TypeScript</Term>.** Es un solo paquete, sin dependencias.
+
+### Instalar Hono con la versión exacta
+
+En la carpeta de tu proyecto, `~/curso-backend/fase-3/tienda-api`:
+
+<TryIt
+  title="Instala Hono y su adaptador para Node.js"
+  cmd="npm install hono@4.13.13 @hono/node-server@2.1.3"
+  output={`added 2 packages, and audited 7 packages in 3s
+
+found 0 vulnerabilities`}
+>
+
+`hono` es el framework, y `@hono/node-server`, el adaptador que lo conecta con `node:http`; el `@hono/` dice que lo publican los autores de Hono. La `@` y el número fijan la versión exacta, como en la [lección 1](/fase-3/que-es-node-js/). `added 2 packages`: ninguno de los dos trae dependencias.
+
+Las salidas son de Node 26.11 y npm 11.20, en Linux; en un Mac salen igual, con otros tiempos y fechas. Si sale `npm error code ETARGET`, esa versión no existe o tiene menos de siete días: revisa el número.
+
+</TryIt>
+
+### El arranque: servidor.ts
+
+Cambia `src/servidor.ts` por esto:
+
+<ProjectCode file="tienda-api/05-framework/src/servidor.ts" />
+
+- Los dos `import` traen `serve`, la función que arranca el servidor, y tu API, que escribirás ahora en `app.ts`.
+- `serve({ … }, (info) => …)` crea por debajo un servidor de `node:http`, el de la [lección 4](/fase-3/servidor-http-node/).
+- `fetch: app.fetch` le dice a quién entregar cada petición: a tu app.
+- `port: 3000, hostname: '127.0.0.1'`: el puerto 3000, y solo en este ordenador, como antes.
+- La función del final se ejecuta cuando el servidor ya escucha; `info.port` es su puerto.
+
+### Request y Response: los objetos de fetch
+
+`app.fetch` es una función que recibe un `Request` y devuelve un `Response`. Un `Request` lleva el método, la URL, las cabeceras y el cuerpo; un `Response`, el código, las cabeceras y el cuerpo. Es el mensaje HTTP de la Fase 2, en dos objetos.
+
+`node:http` no usa esos objetos: te da `req` y `res`, como viste en la lección 4. El adaptador traduce en los dos sentidos:
+
+```mermaid
+flowchart TB
+    A["curl<br/>GET /productos/2"] -->|los bytes llegan por TCP| B["node:http<br/>los lee en req"]
+    B -->|@hono/node-server lo traduce| C["Un Request<br/>como los de fetch"]
+    C -->|app.fetch busca la ruta| D["Tu función<br/>devuelve un Response"]
+    D -->|el adaptador lo escribe en res| E["curl<br/>recibe la respuesta"]
+```
+
+En Cloudflare Workers no hace falta el adaptador: la plataforma entrega a `app.fetch` un `Request` directamente. Por eso `app.ts` sirve igual allí, y lo único propio de Node.js es `servidor.ts`.
+
+### La app y sus rutas
+
+Ahora, `src/app.ts`. Empieza así:
+
+<ProjectCode file="tienda-api/05-framework/src/app.ts" region="crear-app" />
+
+- `import { Hono } from 'hono'` trae el framework.
+- La segunda línea trae los productos, los pedidos y sus funciones de `datos.ts`, que no cambia desde la lección 4.
+- `new Hono()` crea la app, y `export` deja que `servidor.ts` y los tests la usen.
+
+Debajo van las rutas. Una <Term id="route">ruta</Term> es un método, un camino y la función que responde:
+
+<ProjectCode file="tienda-api/05-framework/src/app.ts" region="rutas" />
+
+Pieza a pieza:
+
+- **`app.get('/', …)`** apunta en la lista de Hono una ruta para las peticiones `GET` a `/`.
+- **`(c) => …`** es una función flecha ([lección 2](/fase-3/javascript-para-backend/)) que recibe `c`, el contexto: la petición está en `c.req`, y `c` tiene los métodos para responder.
+- **`c.text('…')`** responde `200` con texto.
+- **`c.req.query('max')`** lee el `max` de la <Term id="query-string">query string</Term>. Si la URL no lo trae, da `undefined`.
+- **`c.json(productos)`** responde `200`, con `Content-Type: application/json` y la lista en JSON.
+- **`productos.filter(…)`** se queda con los que cuestan `max` o menos. `Number(max)` hace falta porque todo lo que viene en una URL es texto.
+- **`'/productos/:id'`**: los dos puntos convierten `id` en un <Term id="route-parameter">parámetro de ruta</Term>. La ruta coincide con `/productos/2` y con `/productos/7`, y `c.req.param('id')` da `'2'`, también como texto.
+- **`c.json({ error: … }, 404)`**: el segundo argumento es el <Term id="status-code">código de estado</Term>. Sin él, es `200`.
+- **Las dos rutas de `/pedidos`** repiten la idea: la lista entera, y un pedido por su número, o un `404` si no existe.
+
+Una regla para elegir: el parámetro de ruta dice **qué recurso** pides (el producto 2); la query string **filtra o busca** en una lista (los de 25 € o menos).
+
+### El cuerpo de un pedido
+
+<ProjectCode file="tienda-api/05-framework/src/app.ts" region="nuevo-pedido" />
+
+- **`app.post('/pedidos', …)`**: el mismo camino que `app.get('/pedidos')`, con otro método, es otra ruta.
+- **`await c.req.json()`** lee el cuerpo entero y lo convierte desde JSON: Hono junta los trozos que juntaba `leerCuerpo`. Por el `await`, la función lleva `async`.
+- **`try` y `catch`**: si el cuerpo no es JSON, `c.req.json()` falla y el `catch` responde `400`, como en la lección 4.
+- **`let datos: { productoId: number; cantidad: number }`** le asegura a TypeScript una forma que nadie comprueba: `c.req.json()` devuelve lo que haya llegado. Lo arreglarás en la [lección 7](/fase-3/validar-datos-zod/).
+- **`if (!buscarProducto(…))`**: el JSON se ha leído bien, pero pide un producto que no existe. Eso es un `422`, no un `400`: la petición se entiende, y lo que pide no tiene sentido ([lección de los códigos de estado](/fase-2/codigos-de-estado-http/)).
+- **`c.json(pedido, 201, { Location: … })`**: el tercer argumento son las cabeceras. Un `201` con `Location`, la dirección del pedido nuevo, que atiende la ruta `GET /pedidos/:id`.
+
+### Un método equivocado: Hono responde 404
+
+Con las rutas que llevas, esto es lo que responde Hono a un `DELETE /productos`:
+
+<TryIt
+  title="Un método que ninguna ruta acepta"
+  cmd="curl -i -X DELETE localhost:3000/productos"
+  output={`HTTP/1.1 404 Not Found
+Content-Type: text/plain; charset=UTF-8
+Date: Tue, 13 Oct 2026 10:29:29 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Content-Length: 13
+
+404 Not Found`}
+>
+
+Un `404` en texto. Hono busca una ruta para `DELETE /productos`, no la encuentra y responde lo mismo que a una ruta que no existe.
+
+</TryIt>
+
+Pero `/productos` existe; lo que no acepta es ese método. La [lección de los métodos](/fase-2/metodos-http/) lo dejó claro: eso es un `405`, con la cabecera `Allow`. Express y Fastify también responden `404`, así que en los tres lo escribes tú:
+
+<ProjectCode file="tienda-api/05-framework/src/app.ts" region="no-permitido" />
+
+- **`app.all`** crea una ruta para cualquier método, una por cada camino de la API.
+- **Van después de las demás.** Hono prueba las rutas en el orden en que las escribiste, así que a `app.all` solo llega lo que nadie ha atendido antes.
+- **El tercer argumento** pone la cabecera `Allow` con los métodos que sí valen.
+
+### La misma ruta en Express y en Fastify
+
+Así se escribe `GET /productos` con los otros dos. Van en una carpeta aparte, `comparar/`, porque no son parte de la API:
+
+<Tabs>
+<TabItem label="Express">
+
+<ProjectCode file="tienda-api/05-framework/comparar/express.ts" />
+
+</TabItem>
+<TabItem label="Fastify">
+
+<ProjectCode file="tienda-api/05-framework/comparar/fastify.ts" />
+
+</TabItem>
+</Tabs>
+
+- **Express** te da `req` y `res`: los mismos objetos de `node:http` de la lección 4, con más métodos. `res.json(productos)` envía la lista en JSON.
+- **Fastify** no te pide que respondas: la función devuelve los datos y Fastify los convierte en JSON.
+- **`import.meta.main`** es `true` solo cuando ejecutas ese fichero con `node`. Si lo importa un test, no abre ningún puerto.
+- **Los puertos 3001 y 3002** dejan que corran a la vez que Hono, en el 3000.
+
+### Cómo elegir
+
+| | Express | Fastify | Hono |
+|---|---|---|---|
+| Descargas semanales en npm (13-10-2026) | 145 millones | 15 millones | 74 millones |
+| Desde | 2010 | 2016 | 2021 |
+| Paquetes que instala | 68 | 48 | 1 |
+| Tus funciones reciben | `req` y `res` de `node:http` | La petición, y devuelven los datos | `c`, con un `Request` dentro |
+| TypeScript | Tipos aparte, de la comunidad (`@types/express`) | Tipos incluidos | Escrito en TypeScript |
+| Pensado para | Node.js | Node.js | Node.js, Cloudflare Workers, Deno, Bun… |
+
+Los paquetes los contamos instalando cada uno en una carpeta vacía. **Express** es lo que más vas a encontrar en ofertas de trabajo y tutoriales. **Fastify** nació para ser rápido, y valida los datos con <Term id="schema">esquemas</Term>, una descripción de su forma. **Hono** es el más reciente.
+
+Lo que aprendes con uno pasa a los otros: rutas, parámetros, códigos de estado y el <Term id="middleware">middleware</Term> de la [lección 6](/fase-3/que-es-middleware/). Cambiar de framework es aprender otros nombres para las mismas ideas.
+
+## Pruébalo
+
+El objetivo: comprobar que tu API con Hono filtra por precio, lee el `id` de la ruta y responde `405` y `422` cuando toca, y ver qué añade Express sin que se lo pidas.
+
+Antes, las pruebas. Las de la lección 4 usan `crearServidor`, que tu nuevo `app.ts` ya no tiene: `npm test` fallaría con `does not provide an export named 'crearServidor'`. Las nuevas vienen en la carpeta de esta lección. Descárgala en la de la fase, como en la [introducción](/fase-3/), y cambia una prueba por otra:
+
+```sh
+cd ~/curso-backend/fase-3
+curl -O https://backenddesdecero.com/practicas/tienda-api/05-framework.tar.gz
+tar -xzf 05-framework.tar.gz
+cd tienda-api
+rm test/servidor.test.ts
+cp ../05-framework/test/app.test.ts test/
+```
+
+`rm` borra la prueba vieja y `cp` copia la nueva. La otra, `comparar.test.ts`, necesita Express y Fastify: la copiarás al final. Si te atascas, compara tu código con el de `05-framework`.
+
+<TryIt
+  title="1. Arranca la API"
+  cmd="npm start"
+  output={`> tienda-api@1.0.0 start
+> node src/servidor.ts
+
+La tienda escucha en http://localhost:3000`}
+>
+
+Abre otra terminal para el resto. Si sale `EADDRINUSE`, el servidor de la lección 4 sigue en marcha: páralo con <kbd>Ctrl</kbd> + <kbd>C</kbd> en su terminal.
+
+</TryIt>
+
+<TryIt
+  title="2. Los productos de 25 € o menos"
+  cmd={`curl -i "localhost:3000/productos?max=25"`}
+  output={`HTTP/1.1 200 OK
+Content-Type: application/json
+Date: Tue, 13 Oct 2026 10:29:37 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Content-Length: 80
+
+[{"id":1,"nombre":"Camiseta","precio":20},{"id":2,"nombre":"Taza","precio":8.5}]`}
+>
+
+Dos productos: la sudadera, de 35 €, se ha quedado fuera. Las comillas hacen falta en zsh, la shell del Mac (mira «Errores comunes»).
+
+</TryIt>
+
+<TryIt
+  title="3. Un producto por su id"
+  cmd="curl -i localhost:3000/productos/2"
+  output={`HTTP/1.1 200 OK
+Content-Type: application/json
+Date: Tue, 13 Oct 2026 10:29:37 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Content-Length: 37
+
+{"id":2,"nombre":"Taza","precio":8.5}`}
+>
+
+La taza: Hono ha sacado el `2` de la ruta. Prueba con `/productos/99`: sale `{"error":"No existe ese producto"}`, con un `404`.
+
+</TryIt>
+
+<TryIt
+  title="4. Un método equivocado, ahora sí"
+  cmd="curl -i -X DELETE localhost:3000/productos"
+  output={`HTTP/1.1 405 Method Not Allowed
+allow: GET
+content-type: application/json
+Content-Length: 32
+Date: Tue, 13 Oct 2026 10:29:37 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"Método no permitido"}`}
+>
+
+El `405` con `allow: GET`. Si sale un `404`, comprueba que escribiste las rutas `app.all` después de las demás. Las minúsculas dan igual: cuando le pasas cabeceras, Hono escribe así los nombres, y [no distinguen mayúsculas](/fase-2/cabeceras-http/).
+
+</TryIt>
+
+<TryIt
+  title="5. Un pedido de un producto que no existe"
+  cmd={`curl -i --json '{"productoId":99,"cantidad":1}' localhost:3000/pedidos`}
+  output={`HTTP/1.1 422 Unprocessable Entity
+Content-Type: application/json
+Date: Tue, 13 Oct 2026 10:52:34 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+Content-Length: 34
+
+{"error":"No existe ese producto"}`}
+>
+
+El cuerpo es JSON, así que no es un `400`; pero el producto 99 no existe: `422`. Cambia el `99` por un `2` y sale un `201` con `location: /pedidos/1`, que `curl localhost:3000/pedidos/1` te devuelve.
+
+</TryIt>
+
+Ahora, Express. Para la API con <kbd>Ctrl</kbd> + <kbd>C</kbd>, como cualquier [proceso](/fase-1/procesos-y-senales/), y crea la carpeta `comparar/` con los dos ficheros de antes. Instala los dos frameworks y los tipos de Express, que van aparte:
+
+<TryIt
+  title="6. Instala Express y Fastify"
+  cmd="npm install express@5.2.1 fastify@5.12.5"
+  output={`added 116 packages, and audited 123 packages in 6s
+
+47 packages are looking for funding
+  run \`npm fund\` for details
+
+found 0 vulnerabilities`}
+>
+
+Hono instaló 2 paquetes; estos dos, 116, con sus dependencias. `looking for funding` avisa de que algunos aceptan donaciones. Express va en la 5.2.1 y no en la 5.3.0, la última: salió el 9 de octubre de 2026, y hasta que cumpla siete días el `.npmrc` responde `No matching version found for express@5.3.0`.
+
+</TryIt>
+
+<TryIt
+  title="7. Y los tipos de Express"
+  cmd="npm install --save-dev @types/express@5.0.6"
+  output={`added 9 packages, and audited 132 packages in 2s
+
+47 packages are looking for funding
+  run \`npm fund\` for details
+
+found 0 vulnerabilities`}
+>
+
+`--save-dev` los apunta en `devDependencies`, como en la [lección 3](/fase-3/typescript-con-node/): solo hacen falta para comprobar los tipos.
+
+</TryIt>
+
+<TryIt
+  title="8. Arranca la versión de Express"
+  cmd="node comparar/express.ts"
+  output="Express escucha en http://localhost:3001"
+/>
+
+<TryIt
+  title="9. La misma petición, al puerto 3001"
+  cmd="curl -i localhost:3001/productos"
+  output={`HTTP/1.1 200 OK
+X-Powered-By: Express
+Content-Type: application/json; charset=utf-8
+Content-Length: 121
+ETag: W/"79-gzhgIpTwpD2RM+eD389Ys0K4KDs"
+Date: Tue, 13 Oct 2026 10:30:22 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+[{"id":1,"nombre":"Camiseta","precio":20},{"id":2,"nombre":"Taza","precio":8.5},{"id":3,"nombre":"Sudadera","precio":35}]`}
+>
+
+El mismo JSON, 121 bytes, y dos cabeceras que no has escrito:
+
+- `X-Powered-By: Express` le cuenta a cualquiera con qué está hecho tu servidor, una pista útil para quien busca fallos conocidos. Se quita con `app.disable('x-powered-by')`.
+- `ETag` es la huella de la respuesta, la de la [lección de la caché](/fase-2/cache-http/). Express la calcula por su cuenta.
+
+</TryIt>
+
+<SelfCheck question="Reto: ¿qué responde Express a curl -i -X DELETE localhost:3001/productos? ¿Cumple lo que pide la Fase 2?">
+
+Tampoco cumple. Responde un `404`, y en HTML:
+
+```
+HTTP/1.1 404 Not Found
+X-Powered-By: Express
+Content-Security-Policy: default-src 'none'
+X-Content-Type-Options: nosniff
+Content-Type: text/html; charset=utf-8
+Content-Length: 151
+Date: Tue, 13 Oct 2026 10:30:22 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Error</title>
+</head>
+<body>
+<pre>Cannot DELETE /productos</pre>
+</body>
+</html>
+```
+
+Ni `405` ni `Allow`. La solución es la misma que en Hono: un `app.all('/productos', …)` después de la ruta `GET`, que responda `405` con su cabecera.
+
+</SelfCheck>
+
+Cuando acabes, para Express con <kbd>Ctrl</kbd> + <kbd>C</kbd>. Por último, copia la prueba que faltaba y pásalas todas:
+
+<TryIt
+  title="10. Pasa las pruebas"
+  cmd={`cp ../05-framework/test/comparar.test.ts test/\nnpm test`}
+  output={`> tienda-api@1.0.0 test
+> node --test
+
+✔ GET / responde con texto (15.89365ms)
+✔ GET /productos devuelve los tres; con ?max=25, dos (1.474933ms)
+✔ GET /productos/2 devuelve la taza; /productos/99, un 404 (0.579082ms)
+✔ POST /pedidos crea un pedido: 201 con Location (0.643295ms)
+✔ la dirección de Location existe; un pedido que no existe, 404 (0.771387ms)
+✔ POST /pedidos con un cuerpo que no es JSON: 400 (0.359633ms)
+✔ POST /pedidos con un producto que no existe: 422 (0.236545ms)
+✔ un método que la ruta no acepta: 405 con Allow (0.297296ms)
+✔ una ruta que no existe: 404 (0.468628ms)
+✔ Express devuelve los mismos productos (26.683264ms)
+✔ Fastify devuelve los mismos productos (7.861097ms)
+ℹ tests 11
+ℹ suites 0
+ℹ pass 11
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 208.92723`}
+>
+
+Once pruebas y `fail 0`: nueve para tu API con Hono y dos que piden `/productos` a Express y a Fastify. Tus tiempos serán otros. Si una falla, sale con `✖` y lo que esperaba frente a lo que recibió: compara ese trozo con el de la descarga.
+
+</TryIt>
+
+## Ya lo has visto
+
+- **Parámetros de ruta en las direcciones que visitas.** En `github.com/usuario/repositorio` cambian dos trozos según lo que mires, y en `youtube.com/watch?v=…` el vídeo va en la query string.
+- **`X-Powered-By` en DevTools.** En la pestaña **Red** (*Network*) de algunas webs verás `X-Powered-By: Express` o `X-Powered-By: Next.js` entre las cabeceras de respuesta: es la cabecera que acabas de ver en el 3001.
+- **`fetch` en la consola.** El `await fetch(…)` de la [lección de CORS](/fase-2/que-es-cors/) devuelve un `Response`, como tus rutas de Hono.
+
+## Errores comunes
+
+- **Una URL con `?` sin comillas en zsh.** `curl localhost:3000/productos?max=25` responde `zsh: no matches found: localhost:3000/productos?max=25`: para zsh, `?` es un comodín de nombres de fichero. Pon la URL entre comillas.
+- **Usar un parámetro como si fuera un número.** `c.req.param('id')` da `'2'`, texto, y `'2' === 2` es falso: la búsqueda nunca encuentra nada. Si pasas el texto a `buscarProducto`, `npm run check` lo avisa: `error TS2345: Argument of type 'string' is not assignable to parameter of type 'number'.`
+- **`app.all` antes que las demás rutas.** Hasta los `GET` reciben el `405`.
+- **Creer que el framework comprueba los datos.** `?max=barato` responde `200` con `[]`, sin un error: `Number('barato')` no es un número, y ningún precio pasa el filtro. Lo arreglarás en la [lección 7](/fase-3/validar-datos-zod/).
+- **Copiar un tutorial de otra versión.** Express 5 ya no acepta `app.get('*', …)`: falla al arrancar con `Missing parameter name at index 1: *`. El comodín ahora lleva nombre, `'/*resto'`. Mira siempre la versión del tutorial.
+
+## Resumen
+
+- Un framework hace lo que todos los servidores repiten: elegir la ruta, leer sus parámetros, la query string y el cuerpo, y responder en JSON. Tú escribes lo que es propio de tu tienda.
+- Una ruta es un método, un camino y la función que responde. `:id` marca un parámetro, que llega siempre como texto.
+- Hono trabaja con los `Request` y `Response` de `fetch`; `@hono/node-server` los traduce desde y hacia `node:http`.
+- HTTP no cambia: el `405` con `Allow` lo escribes tú, en Hono, en Express y en Fastify.
+- Express es el más usado, Fastify nació para ser rápido y Hono es el más pequeño. Las ideas sirven en los tres.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Ana quiere que la API devuelva solo los productos de la categoría «tazas». Ya tienes GET /productos/:id. ¿Qué URL encaja mejor?"
+  review="La app y sus rutas"
+>
+
+<QuizOption text="/productos?categoria=tazas, que filtra la lista." correct>
+
+Filtrar una lista es trabajo de la query string. El parámetro de ruta dice qué recurso concreto pides, como el producto 2.
+
+</QuizOption>
+
+<QuizOption text="/productos/tazas: la ruta /productos/:id devolverá las tazas sin cambiar nada.">
+
+La ruta coincide, pero su función busca un producto por su número: `Number('tazas')` no es un número, y la respuesta es un `404`.
+
+</QuizOption>
+
+<QuizOption text="/productos, con la categoría en una cabecera: una URL no puede llevar datos para filtrar.">
+
+Puede: para eso está la query string, la parte que va después de `?`, como `?max=25`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Luis escribe su ruta /pedidos/:id a su manera: pedidos.find((p) => p.id === c.req.param('id')). Existe el pedido 1, pero GET /pedidos/1 siempre da 404. ¿Por qué?"
+  review="La app y sus rutas"
+>
+
+<QuizOption text="Porque el :id se lee con c.req.query('id'), y c.req.param da undefined.">
+
+`c.req.query` lee la query string, lo que va después de `?`. El parámetro de ruta se lee con `c.req.param`, y aquí da `'1'`.
+
+</QuizOption>
+
+<QuizOption text="Porque el parámetro llega como texto, '1', y no es igual al número 1." correct>
+
+Todo lo que viene en una URL es texto. Convierte el parámetro con `Number()` antes de comparar, como hace la ruta de la lección. `npm run check` también lo avisa: `This comparison appears to be unintentional`.
+
+</QuizOption>
+
+<QuizOption text="Porque Hono no deja tener /pedidos y /pedidos/:id en la misma app.">
+
+Son dos rutas distintas, y Hono las admite a la vez: la tienda ya tiene `/productos` y `/productos/:id`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Escribes app.get('/carrito', …) y ninguna ruta más para /carrito. ¿Qué recibe quien envía DELETE /carrito?"
+  review="Un método equivocado: Hono responde 404"
+>
+
+<QuizOption text="Un 405 con Allow: GET, porque Hono sabe qué métodos tiene cada camino.">
+
+Hono, Express y Fastify no lo hacen por su cuenta: el `405` con `Allow` es una ruta más que escribes tú.
+
+</QuizOption>
+
+<QuizOption text="Un 200: Hono usa la función de GET para cualquier método.">
+
+`app.get` solo atiende peticiones `GET`. Para cualquier método está `app.all`.
+
+</QuizOption>
+
+<QuizOption text="Un 404, porque no hay ninguna ruta para ese método y ese camino." correct>
+
+Hono busca una ruta para `DELETE /carrito`, no la encuentra y responde igual que a una ruta que no existe.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Alguien mueve las rutas app.all del 405 al principio de app.ts, antes de las de GET y POST. ¿Qué recibe ahora un GET /pedidos?"
+  review="Un método equivocado: Hono responde 404"
+>
+
+<QuizOption text="Un 405: Hono usa la primera ruta que coincide, y app.all vale para todo." correct>
+
+El orden importa. Por eso las rutas del `405` van al final: solo les llega lo que nadie ha atendido antes.
+
+</QuizOption>
+
+<QuizOption text="La lista de pedidos: Hono prefiere la ruta de su método exacto a app.all.">
+
+Hono no ordena las rutas por lo exactas que son: las prueba en el orden en que las escribiste.
+
+</QuizOption>
+
+<QuizOption text="Nada: el servidor no arranca, porque Hono no admite dos rutas con el mismo camino.">
+
+Hono admite varias rutas con el mismo camino: `GET /pedidos` y `POST /pedidos` ya lo eran.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="En tu trabajo, el equipo pasa una API de node:http a Express. ¿Qué tienes que volver a aprender de HTTP?"
+  review="Lo que un framework hace por ti"
+>
+
+<QuizOption text="Los códigos de estado: cada framework define los suyos.">
+
+Los códigos son del estándar de HTTP: un `404` significa lo mismo en Express, en Hono y en nginx.
+
+</QuizOption>
+
+<QuizOption text="Nada: métodos, códigos y cabeceras siguen igual; cambia el código." correct>
+
+El framework solo te ahorra código. La petición y la respuesta que viajan son las de la Fase 2.
+
+</QuizOption>
+
+<QuizOption text="El formato de los mensajes: Express usa su propio protocolo encima de HTTP.">
+
+Express habla HTTP como cualquier servidor: `curl` le habla igual que a Hono, como viste en el puerto 3001.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Quieres llevar la API de Hono a Cloudflare Workers. ¿Qué parte del proyecto no te haría falta allí?"
+  review="Request y Response: los objetos de fetch"
+>
+
+<QuizOption text="package.json: Workers no usa paquetes de npm.">
+
+Workers usa paquetes de npm: Hono mismo es uno, y es lo que te llevarías.
+
+</QuizOption>
+
+<QuizOption text="app.ts: en Workers, las rutas se escriben con la herramienta de Cloudflare.">
+
+`app.ts` es justo lo que se lleva tal cual: las rutas de Hono no dependen de dónde corran.
+
+</QuizOption>
+
+<QuizOption text="servidor.ts: allí la plataforma ya entrega cada Request a app.fetch." correct>
+
+`servidor.ts` y `@hono/node-server` solo traducen entre `node:http` y los objetos de `fetch`. En Workers no hace falta: la plataforma ya habla en `Request` y `Response`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Hono con Node.js](https://hono.dev/docs/getting-started/nodejs) (en inglés): cómo se arranca con `@hono/node-server`.
+- [Rutas en Hono](https://hono.dev/docs/api/routing) (en inglés): parámetros, comodines y el orden en que se prueban.
+- [Rutas en Express](https://expressjs.com/es/guide/routing/): la guía de Express, en español.
+- [Migrar a Express 5](https://expressjs.com/en/guide/migrating-5/) (en inglés): qué cambió desde Express 4, el comodín incluido.
+- [Fastify: primeros pasos](https://fastify.dev/docs/latest/Guides/Getting-Started/) (en inglés).
+- [Response](https://developer.mozilla.org/es/docs/Web/API/Response) (MDN): el objeto que devuelven `fetch` y tus rutas de Hono.

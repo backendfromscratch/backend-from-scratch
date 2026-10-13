@@ -1,0 +1,627 @@
+---
+translationKey: validation
+title: "Validar los datos de entrada con Zod"
+description: "Valida con Zod los datos que llegan a tu API de Node.js: esquemas, safeParse, mensajes en español y un 422 que dice qué falla, también en la URL."
+sidebar:
+  label: "Validación"
+  order: 7
+lesson:
+  oneLiner: "Validar es comprobar, cada vez que llega una petición, que los datos tienen la forma que esperas antes de usarlos. Los tipos de TypeScript no lo hacen, porque desaparecen al ejecutarse; un esquema de Zod sí, y si algo no cumple, tu servidor responde 422 y dice qué falla."
+  objectives:
+    - Explicar por qué los tipos de TypeScript no protegen de los datos que llegan de fuera, y qué hace un esquema.
+    - Escribir un esquema con Zod, con mensajes propios, y leer lo que devuelve safeParse.
+    - Validar el cuerpo, los parámetros de la ruta y la query string con un middleware que responde 422, y distinguirlo del 400 de un cuerpo que no se puede leer.
+    - Distinguir lo que comprueba un esquema, la forma de los datos, de lo que comprueba la ruta, las reglas de la tienda.
+  prerequisites: [middleware]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+
+## El problema
+
+Imagina que alguien le manda pedidos raros a la API de la tienda con `curl`. Esto contesta la API de la [lección 6, «Middleware»](/fase-3/que-es-middleware/):
+
+```sh
+curl -w '\n' --json '{"productoId":1,"cantidad":-3}' localhost:3000/pedidos
+curl -w '\n' --json '{"productoId":1,"cantidad":"muchas"}' localhost:3000/pedidos
+curl -w '\n' --json '{"productoId":1}' localhost:3000/pedidos
+```
+
+```
+{"id":1,"productoId":1,"cantidad":-3,"estado":"pendiente"}
+{"id":2,"productoId":1,"cantidad":"muchas","estado":"pendiente"}
+{"id":3,"productoId":1,"estado":"pendiente"}
+```
+
+Tres pedidos guardados: menos tres camisetas, «muchas» camisetas y uno sin cantidad. Ninguno tiene sentido, y la API los ha aceptado todos.
+
+En la [Fase 0](/fase-0/que-es-el-backend/#por-qué-no-puede-hacerlo-todo-el-frontend) viste la regla de oro del backend: **nunca te fíes del <Term id="client">cliente</Term>**. El formulario de la web puede comprobar la cantidad, pero cualquiera puede saltárselo y escribir la petición a mano, como acabas de ver. En esta lección, tu servidor empieza a cumplir esa regla.
+
+## La analogía
+
+<Analogy>
+
+En la [lección 3](/fase-3/typescript-con-node/#la-analogía), el impreso lo rellenabas tú. Ahora estás al otro lado de la ventanilla, donde llegan los impresos de otros. Antes de tramitar uno, el empleado lo revisa con una lista: que estén las casillas obligatorias, que la fecha sea una fecha y que en «número de hijos» no ponga «muchos». Si algo falla, te lo devuelve con cada casilla mal rellenada marcada y el porqué.
+
+Esa lista es un esquema, y esa revisión, la validación. Y fíjate en que un impreso bien rellenado no es una solicitud concedida: si tienes derecho o no, lo decide después el departamento, con sus propios datos.
+
+<div slot="limits">
+
+- El empleado usa el sentido común: entiende «dos» escrito con letras. Un esquema solo comprueba lo que pone en él, ni más ni menos: si olvidas una regla, lo que la incumple pasa.
+- El empleado no te corrige el impreso. Un esquema puede arreglar algunas cosas por el camino, si se lo pides: quitar espacios de sobra o convertir el texto `"2"` en el número `2`.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Los tipos de TypeScript desaparecen al ejecutarse
+
+En la [lección 4](/fase-3/servidor-http-node/), al cuerpo de un pedido le añadiste `as { productoId: number; cantidad: number }`, y en las lecciones 5 y 6, la anotación `datos: { … }`. Las dos le prometen a TypeScript que el cuerpo tiene esa forma, y TypeScript te cree sin comprobarlo.
+
+Y Node [borra los tipos antes de ejecutar](/fase-3/typescript-con-node/#node-borra-los-tipos-al-ejecutar). Por eso `npm run check` no se queja de la API de la lección 6, que aun así guarda `"muchas"` como cantidad.
+
+| | TypeScript | Un esquema |
+|---|---|---|
+| Cuándo comprueba | Mientras escribes el código | Cada vez que llega una petición |
+| Qué comprueba | Que tu código use bien los datos | Que los datos que llegan sean como esperas |
+| Si algo falla | El editor lo marca en rojo | El servidor responde con un error |
+
+Los dos hacen falta. **TypeScript vigila tu código; el esquema vigila los datos de fuera.**
+
+### Un esquema describe la forma de los datos
+
+Un <Term id="schema">esquema</Term> es una descripción de cómo tienen que ser unos datos: qué campos llevan, si cada uno es un número o un texto, y qué valores se aceptan. Un programa compara con él lo que llega y te dice si cumple o qué falla. Eso es la <Term id="validation">validación</Term>.
+
+Una de las herramientas más usadas para esto en TypeScript es Zod. Instálala en la carpeta del proyecto, `~/curso-backend/fase-3/tienda-api`, junto con su conector para Hono, el <Term id="framework">framework</Term> de la [lección 5](/fase-3/express-hono-fastify/):
+
+<TryIt
+  title="Instala Zod"
+  cmd="npm install zod@4.6.5 @hono/zod-validator@0.9.1"
+  output={`added 2 packages, and audited 9 packages in 2s
+
+1 package is looking for funding
+  run \`npm fund\` for details
+
+found 0 vulnerabilities`}
+>
+
+Dos <Term id="package">paquetes</Term> con su versión exacta, como en la [lección 1, «Node.js»](/fase-3/que-es-node-js/). Las salidas de esta lección son de Node 26; tus tiempos y tus fechas serán otros.
+
+</TryIt>
+
+Antes de tocar el servidor, prueba Zod en el <Term id="repl">REPL</Term>. Abre la terminal en la carpeta del proyecto y escribe `node`. En el REPL, `import … from` no funciona: se usa `await import('zod')`, que hace lo mismo.
+
+<TryIt
+  title="En el REPL: un esquema y dos pedidos"
+  lang="js"
+  cmd={`const { z } = await import('zod')
+const esquemaPedido = z.object({ productoId: z.number(), cantidad: z.number().int().min(1) })
+esquemaPedido.safeParse({ productoId: 1, cantidad: 2 })
+esquemaPedido.safeParse({ productoId: 'uno', cantidad: -3 }).error.issues`}
+  output={`undefined
+undefined
+{ success: true, data: { productoId: 1, cantidad: 2 } }
+[
+  {
+    expected: 'number',
+    code: 'invalid_type',
+    path: [ 'productoId' ],
+    message: 'Invalid input: expected number, received string'
+  },
+  {
+    origin: 'number',
+    code: 'too_small',
+    minimum: 1,
+    inclusive: true,
+    path: [ 'cantidad' ],
+    message: 'Too small: expected number to be >=1'
+  }
+]`}
+>
+
+Palabra a palabra:
+
+- `const { z } = …` saca de Zod la pieza llamada `z` y la guarda con ese nombre. `z` es todo Zod: cada pieza de un esquema se pide con `z.algo`.
+- `z.object({ … })` describe un <Term id="object">objeto</Term> y sus campos. `z.number()` dice «un número», y cada punto añade una regla: `.int()`, entero, y `.min(1)`, como mínimo 1.
+- `safeParse` compara unos datos con el esquema. Si cumplen, devuelve `success: true` y los datos en `data`.
+- Si no cumplen, `success` es `false` y `error.issues` es la lista de problemas: uno por campo que falla.
+
+Cada problema dice qué ha pasado (`code`), un mensaje (`message`) y, sobre todo, **dónde**: `path`, el campo que falla.
+
+Zod también tiene `parse`, que devuelve los datos o, si no cumplen, lanza un error, una <Term id="exception">excepción</Term>: lo verás en la [lección 8](/fase-3/errores-y-logs-node/). En un servidor, `safeParse` te deja decidir qué responder.
+
+</TryIt>
+
+### Los mensajes, en español y escritos por ti
+
+Los mensajes de Zod están en inglés, y son para programadores: «expected number to be >=1». Zod trae traducciones, y la española se activa con `z.config`:
+
+<TryIt
+  title="En el REPL: los mensajes de Zod en español"
+  lang="js"
+  cmd={`z.config(z.locales.es())
+esquemaPedido.safeParse({ productoId: 'uno', cantidad: -3 }).error.issues.map((p) => p.message)
+esquemaPedido.safeParse({ cantidad: 2.5 }).error.issues.map((p) => p.message)`}
+  output={`{
+  localeError: [Function (anonymous)],
+  memoizer: {
+    alloc: [Function: alloc],
+    guard: [Function: guard],
+    attach: [Function: attach]
+  }
+}
+[
+  'Entrada inválida: se esperaba número, recibido texto',
+  'Demasiado pequeño: se esperaba que número fuera >=1'
+]
+[
+  'Entrada inválida: se esperaba número, recibido indefinido',
+  'Entrada inválida: se esperaba int, recibido número'
+]`}
+>
+
+La primera salida es la configuración de Zod: no hace falta leerla. Las otras son los mensajes, sacados con `map` ([lección 2](/fase-3/javascript-para-backend/#elegir-y-transformar-una-lista-filter-y-map)).
+
+Están en español, pero se entienden a medias: quien use la tienda no sabe qué es «int» ni «>=1».
+
+</TryIt>
+
+Por eso el proyecto escribe sus propios mensajes. Este es el esquema de un pedido, en un fichero nuevo, `src/esquemas.ts`:
+
+<ProjectCode file="tienda-api/07-validacion/src/esquemas.ts" region="pedido" />
+
+Palabra a palabra:
+
+- `export` deja usar el esquema desde otros ficheros, como en la [lección 3](/fase-3/typescript-con-node/).
+- `z.number({ error: '…' })` es «un número», con el mensaje para cuando no lo es. Un campo que falta tampoco es un número, así que recibe el mismo mensaje.
+- `.int('…')`, `.min(1, '…')` y `.max(10, '…')` son las reglas, cada una con su mensaje. El máximo de 10 lo decide la tienda: nadie pide cien sudaderas de una vez.
+- `z.infer<typeof esquemaPedido>` saca del esquema el tipo de TypeScript: `{ productoId: number; cantidad: number }`. Entre `<` y `>` va de dónde sale el tipo, y `typeof` significa aquí «el tipo de este valor».
+
+La última línea evita escribir la forma dos veces, una para TypeScript y otra para Zod. **El esquema es la única fuente**: si le añades un campo, el tipo lo tiene también.
+
+### Un middleware valida antes de que llegue la ruta
+
+En la [lección 6](/fase-3/que-es-middleware/) viste que un <Term id="middleware">middleware</Term> es una capa por la que pasa la petición antes de llegar a la ruta, y que puede responder sin dejarla seguir. Validar es justo eso. Este es el middleware del proyecto, en `src/middleware/validar.ts`:
+
+<ProjectCode file="tienda-api/07-validacion/src/middleware/validar.ts" region="validar" />
+
+Palabra a palabra:
+
+- `zValidator` es el conector de Hono con Zod. Lee la parte de la petición que le digas (`donde`), la compara con el esquema, como `safeParse`, y te da el resultado.
+- `donde` puede ser `'json'` (el <Term id="request-body">cuerpo</Term>), `'param'` (los <Term id="route-parameter">parámetros de la ruta</Term>, como el `:id`), `'query'` (la <Term id="query-string">query string</Term>), y también las cabeceras o las cookies.
+- Lo que va entre `<` y `>`, con los dos tipos del `import type`, le dice a TypeScript qué pueden ser `donde` y `esquema`: una parte de la petición y un esquema de Zod. Gracias a eso, la ruta sabrá después qué tipo tienen los datos. Puedes leerlo como `validar(donde, esquema)`.
+- La función del final recibe el `resultado`. Si no es un éxito, convierte cada problema en `{ campo, problema }`, con `path.join('.')` para que un campo dentro de otro, como `[ 'direccion', 'calle' ]`, se lea `direccion.calle`. Y responde `422`: ha podido leer la petición, pero los datos no valen.
+- Si todo cumple, no devuelve nada, y la petición sigue hacia la ruta.
+
+Sin esa función, `zValidator` respondería `400` con el error de Zod entero, `{"success":false,"error":{"name":"ZodError",…`, con los mensajes en inglés.
+
+### La ruta recibe los datos ya comprobados
+
+Con `validar`, la ruta de los pedidos queda así:
+
+<ProjectCode file="tienda-api/07-validacion/src/app.ts" region="nuevo-pedido" />
+
+- `validar('json', esquemaPedido)` va entre la ruta y su función, como `soloAdmin` en la lección 6. Si el cuerpo no cumple, la función de la ruta ni se ejecuta.
+- `c.req.valid('json')` devuelve los datos ya comprobados, y TypeScript conoce su tipo: ya no hace falta `as` ni anotación. Esta vez la promesa es verdad. `const { productoId, cantidad } = …` saca esos dos datos, como `const { z }` en el REPL.
+
+Fíjate en la comprobación que queda: `buscarProducto`. Un pedido del producto 99 tiene la forma perfecta y pasa el esquema. Pero la tienda no tiene producto 99, y la ruta responde `422`, como a un dato que no vale. No es un `404`: `/pedidos` existe, y lo que falla es un dato del cuerpo.
+
+Son dos preguntas distintas:
+
+- **¿Tienen los datos la forma correcta?** La responde el esquema, sin saber nada de la tienda.
+- **¿Tienen sentido para la tienda ahora?** Que el producto exista o que haya stock depende de los datos del momento. La responde la ruta.
+
+### Lo que llega en la ruta y en la query string siempre es texto
+
+En `/productos/2`, el `2` llega como el texto `"2"`, y en `?max=10`, el `10` también. Una URL es texto. Así que `z.number()` rechazaría siempre los parámetros. Para eso está `z.coerce`:
+
+<TryIt
+  title="En el REPL: el texto «2» y el número 2"
+  lang="js"
+  cmd={`z.number().safeParse('2').success
+z.coerce.number().safeParse('2')
+z.coerce.number().safeParse('abc').success`}
+  output={`false
+{ success: true, data: 2 }
+false`}
+>
+
+`z.coerce.number()` convierte el texto en número antes de comprobarlo: `'2'` pasa y llega como `2`. `'abc'` no es ningún número, y falla.
+
+</TryIt>
+
+Estos son los esquemas de los parámetros, al final de `src/esquemas.ts`:
+
+<ProjectCode file="tienda-api/07-validacion/src/esquemas.ts" region="parametros" />
+
+- `esquemaId` es para el `:id` de `/productos/:id`: un número entero. `c.req.valid('param').id` es ese id, ya convertido en número.
+- `esquemaFiltro` es para `?max=`: un número mayor que 0. `.optional()` dice que puede no venir: `/productos` a secas sigue funcionando.
+
+Y así los usan las rutas que leen productos:
+
+<ProjectCode file="tienda-api/07-validacion/src/app.ts" region="leer-productos" />
+
+Antes, `/productos/abc` respondía `404`, «No existe ese producto», y `?max=abc`, una lista vacía sin avisar. Ahora los dos responden `422` y dicen qué falla. `/productos/99` sigue siendo un `404`: es un id bien escrito, de un producto que no existe.
+
+### 422 si los datos no valen; 400 si ni se pueden leer
+
+Esta API sigue la regla de la [lección 3 de la Fase 2](/fase-2/codigos-de-estado-http/#los-códigos-que-importan): con un `400`, el servidor ni siquiera ha podido leer la petición; con un `422`, la ha leído, y lo que pide no tiene sentido.
+
+| Lo que llega a `POST /pedidos` | Código | Quién responde |
+|---|---|---|
+| Un cuerpo que no es JSON | `400` | Hono, antes de que el esquema lo vea |
+| `{"productoId":1,"cantidad":-3}` | `422` | `validar`, con `detalles` |
+| `{"productoId":99,"cantidad":1}` | `422` | La ruta, sin `detalles` |
+
+El `400` de un cuerpo roto lo escribe Hono por su cuenta, y en texto, no en JSON: `Malformed JSON in request body`. En la [lección 8](/fase-3/errores-y-logs-node/) lo convertirás en JSON, como el resto de la API.
+
+No todas las APIs distinguen: [Stripe](https://docs.stripe.com/api/errors), o el propio `zValidator` sin tu función, responden `400` a cualquier dato que no vale, porque el `400` es el error general del cliente. Lo que importa es seguir siempre el mismo criterio y que el cuerpo diga qué falla.
+
+## Pruébalo
+
+El objetivo: que la API de la tienda no acepte ni un pedido imposible, y comprobar qué responde a cada uno. Partes de tu proyecto de la [lección 6](/fase-3/que-es-middleware/). Si te atascas, descarga la carpeta de esta lección y compárala con la tuya: desde `~/curso-backend/fase-3`, `curl -O https://backenddesdecero.com/practicas/tienda-api/07-validacion.tar.gz`, `tar -xzf 07-validacion.tar.gz` y, dentro, `npm install`.
+
+### Escribe los esquemas y el middleware
+
+Si no instalaste Zod en «Cómo funciona de verdad», hazlo ahora. Después:
+
+1. Crea `src/esquemas.ts`. Empieza con la línea `import { z } from 'zod';` y pon debajo el esquema del pedido, el del producto (abajo) y los de los parámetros, en ese orden.
+2. Crea `src/middleware/validar.ts` con el middleware de arriba.
+
+Falta el esquema de un producto nuevo, el que crea el admin con `POST /productos`:
+
+<ProjectCode file="tienda-api/07-validacion/src/esquemas.ts" region="producto" />
+
+Una pieza nueva: `.trim()` quita los espacios del principio y del final antes de comprobar el resto. Así, `"   "` no pasa el `.min(1)`, y `"  Gorra "` llega a la ruta como `"Gorra"`.
+
+### Cambia las rutas
+
+En `src/app.ts`, añade arriba los dos `import` nuevos (las líneas marcadas):
+
+<ProjectCode file="tienda-api/07-validacion/src/app.ts" region="importar" mark={[11, 14]} />
+
+Cambia las rutas de leer productos y de crear un pedido por las que has visto arriba, y la de crear un producto por esta:
+
+<ProjectCode file="tienda-api/07-validacion/src/app.ts" region="nuevo-producto" />
+
+`soloAdmin` va antes que `validar`: sin token, la API responde `401` sin mirar el cuerpo. El orden de las capas, como en la [lección 6](/fase-3/que-es-middleware/#el-orden-importa).
+
+### Envía pedidos imposibles
+
+Arranca el servidor en una terminal con `npm run dev`. Verás `La tienda escucha en http://localhost:3000`, y con `--watch` se reinicia solo cada vez que guardas. Abre otra terminal para `curl`. `--json`, de la [lección 1 de la Fase 2](/fase-2/peticion-y-respuesta-http/), envía el cuerpo con `POST` y `Content-Type: application/json`.
+
+<TryIt
+  title="1. Un pedido correcto"
+  cmd={`curl -i --json '{"productoId":1,"cantidad":2}' localhost:3000/pedidos`}
+  output={`HTTP/1.1 201 Created
+content-type: application/json
+location: /pedidos/1
+vary: Origin
+content-length: 57
+Date: Tue, 13 Oct 2026 10:55:26 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":1,"productoId":1,"cantidad":2,"estado":"pendiente"}`}
+>
+
+`201` y el pedido creado: validar no estorba a quien envía bien los datos.
+
+Si sale `Couldn't connect to server`, el servidor no está en marcha: mira la otra terminal. Si allí ves `ReferenceError: esquemaFiltro is not defined` y `Failed running 'src/servidor.ts'`, te falta un `import` en `src/app.ts`.
+
+</TryIt>
+
+<TryIt
+  title="2. Un pedido sin cantidad"
+  cmd={`curl -i --json '{"productoId":1}' localhost:3000/pedidos`}
+  output={`HTTP/1.1 422 Unprocessable Entity
+content-type: application/json
+vary: Origin
+content-length: 109
+Date: Tue, 13 Oct 2026 10:55:26 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"Los datos no son válidos","detalles":[{"campo":"cantidad","problema":"Tiene que ser un número"}]}`}
+>
+
+Fíjate en el `422` de la primera línea y en `detalles`: el campo y el problema, con el mensaje que escribiste. La ruta no se ha ejecutado, así que no hay pedido nuevo. `Unprocessable Entity` es el nombre antiguo del mismo código, el que Node sigue escribiendo; la Fase 2 te enseñó el actual, `Unprocessable Content`. Los programas solo miran el número.
+
+</TryIt>
+
+<TryIt
+  title="3. Un tipo equivocado, una cantidad negativa y 50 camisetas"
+  cmd={`curl -w '\\n' --json '{"productoId":"uno","cantidad":2}' localhost:3000/pedidos
+curl -w '\\n' --json '{"productoId":1,"cantidad":-3}' localhost:3000/pedidos
+curl -w '\\n' --json '{"productoId":1,"cantidad":50}' localhost:3000/pedidos`}
+  output={`{"error":"Los datos no son válidos","detalles":[{"campo":"productoId","problema":"Tiene que ser un número"}]}
+{"error":"Los datos no son válidos","detalles":[{"campo":"cantidad","problema":"Como mínimo, 1"}]}
+{"error":"Los datos no son válidos","detalles":[{"campo":"cantidad","problema":"Como máximo, 10 por pedido"}]}`}
+>
+
+Sin `-i`, solo el cuerpo; `-w '\n'` añade un salto de línea al final de cada respuesta, para que no salgan pegadas. Cada pedido falla por una regla distinta, y cada mensaje lo dice.
+
+</TryIt>
+
+<TryIt
+  title="4. Un producto que no existe"
+  cmd={`curl -i --json '{"productoId":99,"cantidad":1}' localhost:3000/pedidos`}
+  output={`HTTP/1.1 422 Unprocessable Entity
+content-type: application/json
+vary: Origin
+content-length: 34
+Date: Tue, 13 Oct 2026 10:55:26 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"No existe ese producto"}`}
+>
+
+Otro `422`, pero sin `detalles`: no viene del esquema, sino de la comprobación de la ruta.
+
+</TryIt>
+
+<TryIt
+  title="5. La ruta y la query string"
+  cmd={`curl -w '\\n' localhost:3000/productos/abc
+curl -w '\\n' 'localhost:3000/productos?max=-5'
+curl -w '\\n' 'localhost:3000/productos?max=10'`}
+  output={`{"error":"Los datos no son válidos","detalles":[{"campo":"id","problema":"Tiene que ser un número"}]}
+{"error":"Los datos no son válidos","detalles":[{"campo":"max","problema":"Tiene que ser mayor que 0"}]}
+[{"id":2,"nombre":"Taza","precio":8.5}]`}
+>
+
+`abc` no es un id y `-5` no es un precio máximo: dos `422`. El tercero funciona: `z.coerce` ha convertido `"10"` en `10`, y solo la taza cuesta 10 € o menos.
+
+Las comillas de las dos últimas URL hacen falta: sin ellas, zsh trata el `?` como un comodín y responde `zsh: no matches found`.
+
+</TryIt>
+
+<TryIt
+  title="6. Un cuerpo cortado a la mitad"
+  cmd={`curl -i --json '{"productoId":1,"cant' localhost:3000/pedidos`}
+  output={`HTTP/1.1 400 Bad Request
+content-type: text/plain;charset=UTF-8
+vary: Origin
+content-length: 30
+Date: Tue, 13 Oct 2026 10:55:26 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+Malformed JSON in request body`}
+>
+
+Por fin un `400`: Hono no ha podido leer el cuerpo, y el esquema ni lo ha visto. Fíjate en `content-type: text/plain`: la respuesta es texto, no JSON.
+
+</TryIt>
+
+En la terminal del servidor, el registro de la lección 6 ha anotado cada petición:
+
+```
+POST /pedidos 201 8 ms
+POST /pedidos 422 1 ms
+POST /pedidos 422 0 ms
+POST /pedidos 422 0 ms
+POST /pedidos 422 1 ms
+POST /pedidos 422 0 ms
+GET /productos/abc 422 0 ms
+GET /productos 422 1 ms
+GET /productos 200 0 ms
+POST /pedidos 400 1 ms
+```
+
+Siete `422`, un `400` y un solo pedido guardado: el correcto.
+
+<SelfCheck question="Reto: GET /pedidos/abc todavía responde 404, «No existe ese pedido», como hacía /productos/abc. Haz que responda 422 con sus detalles, sin escribir ningún esquema nuevo. ¿Y qué responde GET /pedidos/7?">
+
+Sirve `esquemaId`: describe un `:id` cualquiera, de un producto o de un pedido. En `src/app.ts`, la ruta queda así:
+
+<ProjectCode file="tienda-api/07-validacion/src/app.ts" region="leer-pedido" />
+
+Al guardar, `--watch` reinicia el servidor:
+
+```sh
+curl -w '\n' localhost:3000/pedidos/abc
+curl -w '\n' localhost:3000/pedidos/7
+```
+
+```
+{"error":"Los datos no son válidos","detalles":[{"campo":"id","problema":"Tiene que ser un número"}]}
+{"error":"No existe ese pedido"}
+```
+
+`abc` no es un id: `422`. `7` sí lo es, pero ese pedido no existe: sigue siendo un `404`. La carpeta de esta lección ya trae este cambio.
+
+</SelfCheck>
+
+## Ya lo has visto
+
+- **Los formularios que marcan un campo en rojo** antes de enviar («Este campo es obligatorio») validan en el navegador. Es cómodo para quien escribe, pero el servidor lo repite, porque esa comprobación se puede saltar.
+- **Los errores que llegan después de enviar**, como «Ese código postal no existe», vienen del servidor. Si abres DevTools ([cómo abrirlo](/fase-2/#antes-de-empezar-devtools)), en la pestaña **Red** (*Network*) verás un `400` o un `422` con una lista de campos, como tus `detalles`, que la página usa para marcar cada uno.
+
+## Errores comunes
+
+- **Validar solo en el formulario.** Cualquiera puede enviar la petición con `curl`, sin pasar por la web.
+- **`z.number()` para un parámetro de la ruta o de la query string.** Siempre llegan como texto y fallarían siempre. Usa `z.coerce.number()`.
+- **Olvidar `Content-Type: application/json`.** Con `curl -d` y sin `-H`, Hono no lee el cuerpo como JSON y todos los campos fallan con «Tiene que ser un número». Usa `--json`.
+- **Usar `parse` en una ruta sin más.** Si los datos no cumplen, lanza un error, y el cliente recibe un `500` en vez de un `422`. En un servidor, `safeParse`, o un middleware como `validar`.
+
+## Resumen
+
+- Los tipos de TypeScript se borran al ejecutar: no protegen de lo que llega por la red. Un esquema sí, porque comprueba los datos cada vez que llegan.
+- Con Zod, `z.object` describe la forma, cada punto añade una regla y `safeParse` dice si cumple o qué falla, campo por campo. `z.infer` saca el tipo del mismo esquema.
+- El middleware `validar` comprueba el cuerpo, la ruta o la query string, y si algo no cumple responde `422` con cada problema, sin llegar a la ruta. Un cuerpo que no es JSON recibe un `400` de Hono: ni se ha podido leer.
+- Lo que viene en la URL siempre es texto: `z.coerce` lo convierte antes de comprobarlo.
+- El esquema comprueba la forma; las reglas que dependen de los datos de la tienda, como que el producto exista, las comprueba la ruta.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="El formulario de la tienda ya impide pedir más de 10 unidades. ¿Hace falta que la API también lo compruebe?"
+  review="El problema"
+>
+
+<QuizOption text="Sí: cualquiera puede enviar la petición sin pasar por el formulario." correct>
+
+Con `curl`, o copiando la petición desde DevTools, se envía lo que se quiera. La última palabra la tiene el backend.
+
+</QuizOption>
+
+<QuizOption text="No: si el formulario ya lo comprueba, comprobarlo otra vez es trabajo repetido.">
+
+La API recibe peticiones de cualquiera, y quien quiere colar un pedido imposible no usa el formulario.
+
+</QuizOption>
+
+<QuizOption text="Solo si la API es pública: una API que solo usa tu web no recibe peticiones de fuera.">
+
+Una API que tu web llama desde el navegador se puede llamar desde fuera: su dirección se ve en DevTools.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La API de la lección 6 dice en su código que la cantidad es un number, y alguien envía un pedido con la cantidad «muchas». ¿Qué pasa?"
+  review="Los tipos de TypeScript desaparecen al ejecutarse"
+>
+
+<QuizOption text="Node rechaza la petición, porque el tipo dice que cantidad es un número.">
+
+Node borra los tipos antes de ejecutar. Al ejecutarse, nadie sabe ya que `cantidad` debía ser un número.
+
+</QuizOption>
+
+<QuizOption text="El pedido se guarda con «muchas» como cantidad." correct>
+
+El tipo era una promesa sin comprobar, y desapareció al ejecutar. Es lo que viste en «El problema».
+
+</QuizOption>
+
+<QuizOption text="npm run check avisa del error la próxima vez que lo ejecutes.">
+
+`tsc` revisa tu código, no los datos que llegan cuando el servidor funciona. La API de la lección 6 pasa `npm run check` sin un solo error.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Escribes esquemaId con z.number().int() para la ruta /productos/:id, sin coerce. ¿Qué responde GET /productos/2?"
+  review="Lo que llega en la ruta y en la query string siempre es texto"
+>
+
+<QuizOption text="El producto 2: el 2 de la URL es un número.">
+
+En la URL todo es texto: llega `"2"`, entre comillas, y `z.number()` no acepta textos. Hace falta `z.coerce.number()`.
+
+</QuizOption>
+
+<QuizOption text="El producto 2: Hono convierte en número los parámetros que lo parecen.">
+
+Hono te da los parámetros tal como vienen en la URL, como texto. Convertirlos es cosa tuya, y `z.coerce` lo hace.
+
+</QuizOption>
+
+<QuizOption text="Un 422: el id llega como texto, y el esquema pide un número." correct>
+
+`/productos/2` y `/productos/abc` fallarían igual. Con `z.coerce.number()`, `"2"` se convierte en `2` antes de comprobarlo.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A POST /pedidos le llega un cuerpo cortado a la mitad, que no es JSON válido. ¿Qué responde la API de esta lección?"
+  review="422 si los datos no valen; 400 si ni se pueden leer"
+>
+
+<QuizOption text="Un 422 con detalles: el esquema ve que falta la cantidad.">
+
+El esquema nunca lo ve: antes hay que leer el JSON, y no se puede. El `422` es para datos leídos que no valen.
+
+</QuizOption>
+
+<QuizOption text="Un 400, de Hono: el esquema ni llega a mirarlo." correct>
+
+Hono no puede leer el cuerpo y responde `400` antes que `validar`, con `Malformed JSON in request body`: el servidor ni siquiera ha podido leer la petición.
+
+</QuizOption>
+
+<QuizOption text="Un 500: un JSON roto hace fallar al servidor entero.">
+
+Hono recoge ese fallo y responde `400`: el error es del cliente, y el servidor sigue en marcha. Un `500` diría «he fallado yo».
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Alguien pide 2 unidades del producto 99, que la tienda no tiene. ¿Quién lo detiene?"
+  review="La ruta recibe los datos ya comprobados"
+>
+
+<QuizOption text="Nadie: si el esquema lo deja pasar, los datos son válidos y se crea el pedido.">
+
+El esquema solo dice que los datos tienen la forma correcta. Por eso la ruta sigue comprobando que el producto exista.
+
+</QuizOption>
+
+<QuizOption text="El esquema: z.number() solo acepta números de productos que existen.">
+
+`z.number()` no sabe nada de la tienda: acepta cualquier número. Qué productos hay depende de los datos de cada momento.
+
+</QuizOption>
+
+<QuizOption text="La comprobación de la ruta, con buscarProducto." correct>
+
+El 99 pasa el esquema. Que el producto exista es una regla de la tienda: la comprueba la ruta, que responde `422` sin `detalles`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Añades al esquema del pedido un campo nota, un texto opcional. ¿Qué más tienes que cambiar para que TypeScript lo conozca?"
+  review="Los mensajes, en español y escritos por ti"
+>
+
+<QuizOption text="Nada: el tipo DatosPedido sale del esquema con z.infer." correct>
+
+`z.infer` saca el tipo del esquema cada vez que TypeScript lo mira. Un campo nuevo en el esquema está ya en el tipo.
+
+</QuizOption>
+
+<QuizOption text="El tipo DatosPedido, a mano: si no, el editor marcará un error.">
+
+Con `z.infer`, el tipo no se escribe a mano: no hay dos versiones que puedan dejar de coincidir.
+
+</QuizOption>
+
+<QuizOption text="El middleware validar, que tiene que nombrar cada campo que comprueba.">
+
+`validar` no sabe qué campos hay: recibe el esquema y se lo pasa a Zod. Sirve igual para pedidos, productos y parámetros.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Zod: Basic usage](https://zod.dev/basics) (en inglés): `parse`, `safeParse` y el tipo inferido.
+- [Validation](https://hono.dev/docs/guides/validation) (Hono, en inglés): qué partes de la petición se pueden validar, con Zod y sin él.
+- [400 Bad Request](https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Status/400) y [422 Unprocessable Content](https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Status/422) (MDN): los dos códigos de esta lección.
+- [Input Validation Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html) (OWASP, en inglés): por qué se valida en el servidor y qué conviene comprobar.
