@@ -1,0 +1,550 @@
+---
+translationKey: middleware
+title: "Node.js middleware: what it is and how it works"
+description: "What middleware is and the lifecycle of a request in Node.js: a log with timings, CORS and a 401 with Hono, and why the order matters."
+sidebar:
+  label: Middleware
+  order: 6
+lesson:
+  oneLiner: "A middleware is a function requests go through before they reach their route, on the routes where you register it: it can answer by itself or pass the request on to the next layer, and it sees the response on its way back. It lets you write once what affects many routes, like logging each request, giving CORS permission or asking for a token."
+  objectives:
+    - Explain the lifecycle of a request in a server with middleware, on the way in and on the way back.
+    - Write a middleware that measures how long each request takes and another that answers 401 if the token is missing.
+    - Add CORS to the API with Hono's middleware and check it with curl, preflight request included.
+    - Put the middleware in order and recognize what breaks with the wrong order.
+  prerequisites: [frameworks, cors]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+The shop's API from [lesson 5](/en/phase-3/express-hono-fastify/) already answers `curl`. Now Ana and Luis ask it for three things:
+
+- **Luis** wants to use it from the shop's page, `https://shop.example`. His `fetch` fails with the <Term id="cors">CORS</Term> error from [lesson 6 of Phase 2](/en/phase-2/what-is-cors/).
+- **Ana** wants to know which requests arrive and how long each one takes: one line per request, like nginx's <Term id="log">log</Term>.
+- **Both** want products to be created with `POST /products`, but only by Ana, with a token.
+
+The first two affect every <Term id="route">route</Term>, and the third affects one that may have siblings tomorrow. You could copy the same lines at the start of each route, but there are already half a dozen, and forgetting one is enough to let a request slip through unlogged or without permission. <Term id="framework">Frameworks</Term> solve it with a piece you write once and put in front of all of them: middleware.
+
+## The analogy
+
+<Analogy>
+
+Imagine you're going to an office in a big building. At the door, the receptionist writes down in a book the time you come in. Then the security guard asks for your card: if you don't have it, they tell you “you can't come in,” and you go back the way you came. If you have it, you reach the office, which is where they actually help you.
+
+On your way out, you walk the same path in reverse: you go past the guard and the receptionist again, who writes down the time you leave. That way they know how long you were inside, and whether you left with what you came for.
+
+<div slot="limits">
+
+- On the server nobody is watching: each layer is a function that runs with each request that reaches it.
+- The receptionist only watches. A middleware can also change the response on its way back, for example by adding a header, as if someone stamped the paper you carry.
+- In the building, the order is decided by the architecture. On the server you decide it, with the order of the lines of code, and if you change it, what happens changes.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### The request goes through the layers in order
+
+These two lines go in `src/app.ts`, right below `export const app = new Hono();`:
+
+<ProjectCode file="shop-api/06-middleware/src/app.ts" region="middleware" />
+
+`app.use(…)` adds a layer that **every** request goes through, whatever its route and its method. Here there are two: `requestLog`, which you'll write, and `cors`, which comes with Hono. They run in the order of the lines, and the routes come after.
+
+This is what happens with a `GET /products` that comes from Luis's page:
+
+```mermaid
+sequenceDiagram
+    participant C as curl or the browser
+    participant R as requestLog
+    participant O as cors
+    participant T as The route GET /products
+    C->>R: GET /products<br/>Origin: https://shop.example
+    Note over R: notes the start time
+    R->>O: next()
+    Note over O: the origin is allowed:<br/>prepares Access-Control-Allow-Origin
+    O->>T: next()
+    Note over T: the list, in JSON
+    T-->>O: 200 OK
+    Note over O: adds Vary: Origin
+    O-->>R: 200 OK
+    Note over R: writes “GET /products 200 3 ms”
+    R-->>C: 200 OK
+```
+
+That journey is the **lifecycle of a request**: it comes in, goes through each <Term id="middleware">middleware</Term> in the order you added them, reaches its route's function, and the response comes back through the same layers, in reverse order. That's why it's often drawn as an onion: the route in the center and each middleware a layer around it. (These aren't the network layers of Phase 0: here everything happens inside your program.)
+
+### A middleware is a function with next
+
+This is the whole request log:
+
+<ProjectCode file="shop-api/06-middleware/src/middleware/request-log.ts" region="request-log" />
+
+Piece by piece:
+
+- **`import type { MiddlewareHandler }`** brings in just a type from Hono, the type of a middleware function ([lesson 3](/en/phase-3/typescript-with-node/)). It runs nothing: it's there so the editor knows what `c` and `next` are.
+- **`export const requestLog: MiddlewareHandler = async (c, next) => { … }`** is the function, with that type; `export` lets you use it from `app.ts`. `c` is the same context as in the routes of lesson 5: with it you read the request (`c.req`) and the response (`c.res`). `next` is a function that passes the request on to the next layer.
+- **`performance.now()`** gives the milliseconds, with decimals, that the program has been running. It isn't the clock time: it's for subtracting two of them to know how much time went by.
+- **`await next()`** is the key line. It passes the request inward and **waits** for the response to come back (the `await` from [lesson 2](/en/phase-3/javascript-for-backend/)). What comes before it runs on the way in; what comes after, on the way back.
+- **`c.res.status`** is the status code the inner layers decided on. That's why it's read after `next()`: before it, the route hasn't answered yet.
+- **`Math.round(…)`** rounds the difference to whole milliseconds.
+- **`console.log`** writes a line in the server's terminal with the method (`c.req.method`), the path (`c.req.path`), the code and the milliseconds.
+
+A middleware can do three things: **pass** the request on (`await next()`), **answer** by itself (return a response without calling `next`), or do something **before and after**, like this one. The routes of lesson 5 were the same thing, but without `next`: they always answer.
+
+### CORS, a ready-made middleware
+
+The second layer, `app.use(cors({ origin: 'https://shop.example' }))`, comes with Hono (`hono/cors`). It does what the shop's nginx did in [Phase 2](/en/phase-2/what-is-cors/) with its `add_header` lines, but from the code:
+
+- **A normal request** with `Origin: https://shop.example`: on the way in it prepares `Access-Control-Allow-Origin`, calls `next()` and, on the way back, adds `Vary: Origin`, which tells caches that the response depends on that header.
+- **An origin that isn't on the list:** it doesn't add the permission, but it lets the request through, and the route answers. The one that hides the response is the browser, as you saw in Phase 2.
+- **A <Term id="preflight">preflight request</Term>** (`OPTIONS`): it answers by itself, with a `204` and the permissions, **without calling `next()`**. The route never even finds out.
+
+Unless you tell it otherwise, Hono gives permission for seven methods (`GET,HEAD,PUT,POST,DELETE,PATCH,QUERY`), even though the API only handles some of them. `QUERY` is the newest: a search that carries its conditions in the body. That's fine: the CORS permission doesn't create routes, and a `PUT` would still get its `405`. If you want to fine-tune it, the `allowMethods` option takes the exact list.
+
+### A guard that answers 401
+
+To create products you need a token, the secret string that travels in the `Authorization: Bearer …` header ([lesson 4 of Phase 2](/en/phase-2/http-headers/)). This middleware checks it:
+
+<ProjectCode file="shop-api/06-middleware/src/middleware/admin-only.ts" region="admin-only" />
+
+- **`c.req.header('Authorization')`** reads that header from the request; if it isn't there, it gives `undefined`.
+- **`!==`** means “not equal to.” It's compared with `Bearer ` followed by the token, using a template string (lesson 2).
+- **`return c.json(…, 401, { … })`** answers and, with `return`, ends the function. `next()` never gets to run, and so neither does the route.
+- **`'WWW-Authenticate': 'Bearer'`** is the header the standard requires in every `401`: it says how to identify yourself, here with a token in `Authorization`. It is to the `401` (“I don't know who you are,” [lesson 3 of Phase 2](/en/phase-2/http-status-codes/)) what `Allow` is to the `405` ([lesson 2 of Phase 2](/en/phase-2/http-methods/)).
+- **`await next()`**, at the end, is only reached with the right token.
+
+The token, for now, is written in a separate file:
+
+<ProjectCode file="shop-api/06-middleware/src/config.ts" />
+
+It's a deliberate shortcut. A <Term id="secret">secret</Term> should never be in the code, because it ends up in Git and in every copy of the project. In [lesson 8](/en/phase-3/node-errors-and-logging/) you'll read it from an <Term id="environment-variable">environment variable</Term>, as in [lesson 7 of Phase 1](/en/phase-1/environment-variables/).
+
+Unlike the other two, this middleware doesn't go with `app.use`. It goes **on a single route**, between the address and the function:
+
+<ProjectCode file="shop-api/06-middleware/src/app.ts" region="new-product" />
+
+`app.post('/products', adminOnly, async (c) => …)`: Hono goes through `adminOnly` and, if it calls `next()`, through the function. `GET /products` has no guard and stays open. The function reads the <Term id="json">JSON</Term> in the body, creates the product and answers `201` with `Location`, like `POST /orders`. It still trusts whatever arrives: a negative price would get through, and a body that isn't JSON would end in a `500`. [Lesson 7](/en/phase-3/zod-validation/), “Validation”, will fix that.
+
+### Order matters
+
+Imagine Luis builds an admin panel on `https://shop.example` and decides that the **whole** API should ask for the token. He puts the guard on every route, but in front of CORS:
+
+```ts
+// Not like this: the guard before CORS
+app.use(requestLog);
+app.use(adminOnly);
+app.use(cors({ origin: 'https://shop.example' }));
+```
+
+With `curl` and the token, everything works. From the panel, it doesn't. His `fetch` carries `Authorization`, so the browser asks first with a preflight request, and **the preflight request never carries `Authorization`**: the browser doesn't send credentials just to ask. The guard stops it:
+
+```mermaid
+sequenceDiagram
+    participant N as The browser
+    participant R as requestLog
+    participant G as adminOnly
+    participant O as cors
+    N->>R: OPTIONS /orders<br/>(no Authorization)
+    R->>G: next()
+    Note over G: no token
+    G-->>R: 401 Unauthorized
+    Note over O: never runs
+    R-->>N: 401, without Access-Control-Allow-Origin
+    Note over N: CORS error:<br/>the real GET isn't sent
+```
+
+This is the preflight request, sent with `curl`, and its real response with the wrong order:
+
+```sh
+curl -i -X OPTIONS -H 'Origin: https://shop.example' -H 'Access-Control-Request-Method: GET' -H 'Access-Control-Request-Headers: Authorization' localhost:3000/orders
+```
+
+```text
+HTTP/1.1 401 Unauthorized
+content-type: application/json
+www-authenticate: Bearer
+Content-Length: 37
+Date: Tue, 13 Oct 2026 11:19:08 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"A valid token is required"}
+```
+
+Not a single `access-control-*` header: `cors` never even ran. With `app.use(adminOnly)` below `cors`, the same request gets a `204` with the permissions, because `cors` answers preflight requests before they reach the guard, and the `GET` with the token goes out afterward.
+
+An order that works almost always:
+
+1. What has to see **every** request, like the request log.
+2. What answers anyone, like CORS preflight requests.
+3. The checks that may reject, like the token.
+4. The routes.
+
+## Try it
+
+The goal: get the API to log each request with how long it took, let Luis's page read its responses and ask for the token to create products. Then you'll break the order and find out which request disappears from the log.
+
+You work in `~/backend-course/phase-3/shop-api`, with the code from lesson 5. If you get stuck, download this lesson's folder from `~/backend-course/phase-3` with `curl -O https://backenddesdecero.com/practicas/shop-api/06-middleware.tar.gz`, unpack it with `tar -xzf 06-middleware.tar.gz`, run `npm install` inside it and compare it with yours. If you use `npm test`, bring its `test/` folder too: the one from lesson 5 still expects `Allow: GET` on `/products`.
+
+### Write the middleware
+
+If you want your folder to end up like this lesson's, start by removing the comparison from lesson 5:
+
+<TryIt
+  title="1. Optional: remove Express and Fastify"
+  cmd={`npm uninstall express fastify @types/express
+rm -r compare test/compare.test.ts`}
+  output={`removed 125 packages, and audited 7 packages in 654ms
+
+found 0 vulnerabilities`}
+>
+
+`npm uninstall` deletes the packages from `node_modules` and from `package.json`, and `rm -r` deletes the folder and its test. If `rm` says `No such file or directory`, you no longer had them.
+
+</TryIt>
+
+Now, the code. Create the folder with `mkdir src/middleware` and, inside it, `request-log.ts` and `admin-only.ts`, with the code from “How it really works”. Create `src/config.ts` too. In `src/data.ts`, add the function that saves a new product, a sibling of `createOrder`:
+
+<ProjectCode file="shop-api/06-middleware/src/data.ts" region="create-product" />
+
+It gives it the next number, adds it to the list and returns it. In `src/app.ts`, the imports end up like this:
+
+<ProjectCode file="shop-api/06-middleware/src/app.ts" region="imports" />
+
+Below `export const app = new Hono();`, the two `app.use` lines. After the `GET /orders/:id` route, the `POST /products` one. And since `/products` now accepts `POST`, its `405` has to say so:
+
+<ProjectCode file="shop-api/06-middleware/src/app.ts" region="not-allowed" mark={3} />
+
+### Call the API and look at the log
+
+You need two terminals: one for the server and another for `curl`. The outputs are from Node 26 on Linux; your dates and milliseconds will be different.
+
+<TryIt
+  title="2. Start the server (first terminal)"
+  cmd="npm run dev"
+  output={`> shop-api@1.0.0 dev
+> node --watch src/server.ts
+
+The shop is listening on http://localhost:3000`}
+>
+
+`npm run dev` starts `node --watch`, which restarts the server every time you save a file ([lesson 4](/en/phase-3/node-http-server/)). Leave it open: the request log's lines will show up here. If you get an error with `Cannot find module`, look at the file it names: either it doesn't exist, or the `import` is missing its `.ts` at the end.
+
+</TryIt>
+
+<TryIt
+  title="3. The list, from Luis's page (second terminal)"
+  cmd="curl -i -H 'Origin: https://shop.example' localhost:3000/products"
+  output={`HTTP/1.1 200 OK
+access-control-allow-origin: https://shop.example
+content-type: application/json
+vary: Origin
+content-length: 108
+Date: Tue, 13 Oct 2026 11:19:01 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+[{"id":1,"name":"T-shirt","price":20},{"id":2,"name":"Mug","price":8.5},{"id":3,"name":"Hoodie","price":35}]`}
+>
+
+`-H` adds the `Origin` header the browser would send from Luis's page. Notice `access-control-allow-origin`, the permission, and `vary: Origin`, which `cors` added on the way back. A new line has appeared in the first terminal:
+
+```text
+GET /products 200 3 ms
+```
+
+If it doesn't appear, check that `app.use(requestLog)` is in `app.ts` and that you saved it.
+
+</TryIt>
+
+<TryIt
+  title="4. From another origin"
+  cmd="curl -i -H 'Origin: https://other.example' localhost:3000/products"
+  output={`HTTP/1.1 200 OK
+content-type: application/json
+vary: Origin
+content-length: 108
+Date: Tue, 13 Oct 2026 11:19:01 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+[{"id":1,"name":"T-shirt","price":20},{"id":2,"name":"Mug","price":8.5},{"id":3,"name":"Hoodie","price":35}]`}
+>
+
+The whole list arrives, but without `access-control-allow-origin`: a browser on `https://other.example` would hide it. Phase 2's nginx always sent the permission, with the shop's origin; Hono's middleware only sends it if the origin matches. The request log notes `GET /products 200 0 ms`.
+
+</TryIt>
+
+<TryIt
+  title="5. The preflight request of a POST with JSON"
+  cmd="curl -i -X OPTIONS -H 'Origin: https://shop.example' -H 'Access-Control-Request-Method: POST' -H 'Access-Control-Request-Headers: Content-Type' localhost:3000/orders"
+  output={`HTTP/1.1 204 No Content
+access-control-allow-headers: Content-Type
+access-control-allow-methods: GET,HEAD,PUT,POST,DELETE,PATCH,QUERY
+access-control-allow-origin: https://shop.example
+vary: Origin, Access-Control-Request-Headers
+Date: Tue, 13 Oct 2026 11:19:01 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5`}
+>
+
+The same question you asked Phase 2's nginx: “from the shop, can I send a `POST` with `Content-Type`?” `cors` answers, with a `204` and the permissions; the `POST /orders` route doesn't run. In the request log: `OPTIONS /orders 204 0 ms`.
+
+</TryIt>
+
+<TryIt
+  title="6. Create a product without a token"
+  cmd={`curl -i -X POST -H 'Content-Type: application/json' -d '{"name":"Cap","price":15}' localhost:3000/products`}
+  output={`HTTP/1.1 401 Unauthorized
+content-type: application/json
+vary: Origin
+www-authenticate: Bearer
+content-length: 37
+Date: Tue, 13 Oct 2026 11:19:01 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"error":"A valid token is required"}`}
+>
+
+The guard answered `401` with `www-authenticate: Bearer`, and the cap wasn't created. The request log sees this request too, because it's outside the guard: `POST /products 401 1 ms`. If you get a `405`, the `POST /products` route is missing or it's below the `app.all` lines.
+
+</TryIt>
+
+<TryIt
+  title="7. Now, with the token"
+  cmd={`curl -i -X POST -H 'Authorization: Bearer test-token-change-it' -H 'Content-Type: application/json' -d '{"name":"Cap","price":15}' localhost:3000/products`}
+  output={`HTTP/1.1 201 Created
+content-type: application/json
+location: /products/4
+vary: Origin
+content-length: 32
+Date: Tue, 13 Oct 2026 11:19:01 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":4,"name":"Cap","price":15}`}
+>
+
+`201 Created` and `location: /products/4`: the cap is product 4, and `curl localhost:3000/products/4` returns it. In the request log: `POST /products 201 1 ms`. With a single different character in the token, the `401` comes back.
+
+</TryIt>
+
+### Break the order
+
+Change the order of the layers: in `app.ts`, put `app.use(cors(…))` above `app.use(requestLog)` and save. In the first terminal, `node --watch` clears the screen and restarts:
+
+```text
+Change detected in '/Users/ana/backend-course/phase-3/shop-api/src/app.ts'
+Restarting 'src/server.ts'
+The shop is listening on http://localhost:3000
+```
+
+(On Linux and WSL, the path starts with `/home/ana`.) When it restarts, the cap disappears: the data lives in memory until Phase 5. Repeat the preflight request from step 5 and look at the first terminal.
+
+<SelfCheck question="Challenge: the response to step 5 comes out the same, with its 204 and its permissions, but no new line appears in the request log. A GET /orders, on the other hand, does show up. Why?">
+
+Now `cors` is the outer layer. It answers a preflight request by itself, without calling `next()`, so the request never reaches `requestLog`: it doesn't see it come in or go out. The `GET` does go through, because with it `cors` calls `next()`.
+
+With this order, your request log would stop counting preflight requests, and if they failed one day, you wouldn't see anything. The request log goes first to see them all. Put it back on top and save.
+
+</SelfCheck>
+
+## You have already seen it
+
+- **In Phase 2's nginx.** The `add_header Access-Control-Allow-Origin` lines and the `if ($request_method = OPTIONS)` block of the shop's configuration did the work of `cors`, and the `access.log` line per request, the work of `requestLog`.
+- **In any Express tutorial.** The `app.use(cors())` and `app.use(express.json())` lines at the start are middleware. Their shape is `(req, res, next)`, and `next()` doesn't wait for the response: that's why a request log like `morgan` uses another mechanism to see the finished response.
+- **In DevTools** ([how to open them](/en/phase-2/#before-you-start-devtools)). In the **Network** tab, the `preflight` row of a `fetch` with JSON is the one `cors` answers without reaching your route.
+- **On websites with “log in to continue”.** Behind them there's usually a middleware like `adminOnly` in front of every private route.
+
+## Common mistakes
+
+- **Forgetting the `await` on `next()`.** The request log reads the code before the route answers: it writes `GET /nothing 200 0 ms` for a route that answers `404`. And if the route waits for something, Hono answers `500` and writes in the terminal ``Context is not finalized. Did you forget to return a Response object or `await next()`?``.
+- **Neither calling `next()` nor returning anything.** The request has nobody to answer it: the same `500` and the same error.
+- **The guard before CORS.** Preflight requests don't carry `Authorization`, and they get a `401` without permissions: “it works in `curl` and not in the browser.”
+- **A `401` without `WWW-Authenticate`.** The standard requires it: it says how to identify yourself. And if the caller has already identified themselves and doesn't have permission, it isn't a `401`, it's a `403`.
+- **Copying the check into every route.** It works until someone adds a route and forgets it. With `app.use`, the layer also covers tomorrow's routes.
+- **Leaving the token in the code.** It's fine for learning today; in lesson 8 it moves out of there. Never use this token for anything real: it's published on this page.
+
+## Summary
+
+- A middleware is a function that receives the request and `next`: it can answer by itself, pass it on with `await next()` or do something before and after.
+- The lifecycle of a request: it comes in through the layers in the order of `app.use`, reaches its route, and the response comes back through the same layers, in reverse.
+- `app.use(…)` puts a layer in front of every request; `app.post(route, middleware, function)`, in front of a single route.
+- CORS is a middleware: it adds the permissions and answers preflight requests without reaching the route. A guard that answers `401` carries `WWW-Authenticate`.
+- Order matters: the request log, first; CORS, before any check that may reject; the routes, last.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="Your request log writes “GET /products/99 200 0 ms”, even though curl gets a 404. What’s wrong with your middleware?"
+  review="A middleware is a function with next"
+>
+
+<QuizOption text="console.log has to go before next(): after it, the response has already been sent.">
+
+The other way around: after `await next()` is where you have to read the code, because the route has already answered, and the response hasn't gone out yet: the request log is still part of the way back.
+
+</QuizOption>
+
+<QuizOption text="The await on next() is missing: it reads the code before the route answers." correct>
+
+Without `await`, the function doesn't wait for the inner layers: it reads `c.res.status` while it's still `200`, the starting value, and measures almost zero.
+
+</QuizOption>
+
+<QuizOption text="A middleware can never see the response’s code: the 200 is what Hono always puts.">
+
+Yes, it can: on the way back from `await next()`, `c.res.status` is the code the route decided on. That's what the lesson's request log does.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Luis’s page sends a fetch with a POST and JSON to /orders. Who answers the preflight request the browser sends first?"
+  review="CORS, a ready-made middleware"
+>
+
+<QuizOption text="The POST /orders route, which is the one that knows what it accepts.">
+
+The preflight request uses `OPTIONS`, not `POST`, and it doesn't reach that route: an earlier layer answers it.
+
+</QuizOption>
+
+<QuizOption text="Nobody: the browser resolves it without sending it to the server.">
+
+The preflight request is a real HTTP request, with `OPTIONS`, that reaches your server: you sent it with `curl` in step 5, and the request log noted it.
+
+</QuizOption>
+
+<QuizOption text="The cors middleware, with a 204, without calling next()." correct>
+
+`cors` recognizes the `OPTIONS` and answers by itself, with the permissions. That's why the route's function doesn't run until the real `POST`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Luis puts app.use(adminOnly) before app.use(cors(…)). With curl and the token, the API answers fine; from his panel, with the same token, he gets a CORS error. Why?"
+  review="Order matters"
+>
+
+<QuizOption text="The preflight request doesn’t carry the token: the guard stops it before cors." correct>
+
+The browser asks without credentials. With the guard in front, the response is a `401` without `Access-Control-Allow-Origin`, and the browser doesn't send the real request.
+
+</QuizOption>
+
+<QuizOption text="The server recognizes the browser by its User-Agent and applies CORS only to it.">
+
+The server answers both the same way. The difference is that the browser makes a preflight request and checks the permissions; `curl` does neither.
+
+</QuizOption>
+
+<QuizOption text="The panel’s token is different from curl’s: the 401 proves it.">
+
+The panel's token isn't even sent: the request that gets the `401` is the preflight one, which never carries `Authorization`. The real one never goes out.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Your guard answers 401 with a JSON that explains the error, and no other header. What’s missing?"
+  review="A guard that answers 401"
+>
+
+<QuizOption text="A Location header that takes the client to the login page.">
+
+`Location` goes with redirects and with the `201`. A `401` doesn't send you anywhere: it says you need to identify yourself.
+
+</QuizOption>
+
+<QuizOption text="The WWW-Authenticate header, which says how to identify yourself." correct>
+
+The standard requires it in every `401`. With `Bearer`, the client knows it has to send a token in `Authorization`.
+
+</QuizOption>
+
+<QuizOption text="Nothing: the code is enough, and the headers of a 401 are optional.">
+
+Like `Allow` in a `405`, `WWW-Authenticate` is mandatory in a `401`, even though many servers forget it.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Ana is going to add DELETE /orders/:id to delete orders. She wants it to ask for the token, and the product list to stay open. Where does she put adminOnly?"
+  review="A guard that answers 401"
+>
+
+<QuizOption text="With app.use(adminOnly) at the start: Hono only applies it to methods that change something.">
+
+`app.use` puts the layer in front of every request, `GET` included. Hono doesn't check whether a method changes anything: the list would stop being open.
+
+</QuizOption>
+
+<QuizOption text="In the data.ts function that deletes the order, which also sees the Authorization header.">
+
+The functions in `data.ts` don't receive the request: they can't read the `Authorization` header. The check goes where the request arrives.
+
+</QuizOption>
+
+<QuizOption text="On the route itself: app.delete('/orders/:id', adminOnly, …)." correct>
+
+A middleware between the address and the function only applies to that route, as in `POST /products`. Everything else stays the same.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Someone asks for GET /offers, a route that doesn’t exist. What does your request log write?"
+  review="The request goes through the layers in order"
+>
+
+<QuizOption text="A line with the 404, like “GET /offers 404 1 ms”." correct>
+
+`app.use` puts the request log in front of every request, whether its route exists or not. On the way back it sees the `404` Hono answers.
+
+</QuizOption>
+
+<QuizOption text="Nothing: if the route doesn’t exist, the request doesn’t go through the middleware.">
+
+The `app.use` middleware comes before the routes, and they run all the same: Hono looks for the route afterward.
+
+</QuizOption>
+
+<QuizOption text="A line with a 200: the request log notes the request when it arrives, before knowing how it ends.">
+
+The request log writes after `await next()`, when the response has already come back with its code, here `404`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [Middleware](https://hono.dev/docs/guides/middleware) (Hono): the order of execution, with the onion drawing.
+- [CORS Middleware](https://hono.dev/docs/middleware/builtin/cors) (Hono): all of `cors`'s options, like `allowMethods` or `credentials`.
+- [WWW-Authenticate](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/WWW-Authenticate) (MDN): the `401`'s header and its schemes.
+- [Using middleware](https://expressjs.com/en/guide/using-middleware.html) (Express): the same concept in Express, with `(req, res, next)`.
