@@ -18,9 +18,20 @@ Every step comes with a sentence that explains what happened and why, and the ou
 
 ### 2.1 The setting
 
-- **The page** is the shop's frontend, `https://tienda.example` (`https://shop.example` in English), the same origin the shop's nginx allows in the practice configuration.
+- **The page** is the shop's frontend, `https://tienda.example`, the same origin the shop's nginx allows in the practice configuration.
 - **The API** is `https://api.tienda.example/pedidos` (another origin: the host is different). One option sends the request to `https://tienda.example/api/pedidos` instead, the same origin, to see that then CORS does not intervene at all.
-- The browser has a cookie for the API (`sesion=…`, `SameSite=None; Secure`), so the only thing that decides whether it travels is the request's `credentials`. `SameSite` itself is lesson 5's subject and is left out here (§7).
+- **The cookie:** the browser has one, `sesion=…; Domain=tienda.example; Secure; SameSite=None`. `Domain` makes it travel to both hosts, the API and the shop itself, so the only thing that decides whether it travels is the request's `credentials`. Both hosts are the same site (`tienda.example`), so `SameSite` would not stop it either; `SameSite` itself is lesson 5's subject and is left out here (§7).
+- **Names in each language.** This spec writes the Spanish ones. The English lab changes them all together, so the same-origin option stays same-origin and every preset keeps matching its control:
+
+  | Spanish | English |
+  |---|---|
+  | `https://tienda.example` (the page, and the same-origin destination) | `https://shop.example` |
+  | `https://api.tienda.example/pedidos` | `https://api.shop.example/orders` |
+  | `https://tienda.example/api/pedidos` | `https://shop.example/api/orders` |
+  | `https://otra.example` (a wrong `Access-Control-Allow-Origin`) | `https://other.example` |
+  | the cookie `sesion=…; Domain=tienda.example` | `session=…; Domain=shop.example` |
+
+  They live in `strings.ts` with the other texts; `cors.ts` compares origins it receives, and its tests run in both languages.
 
 ### 2.2 What the reader can change
 
@@ -39,7 +50,7 @@ Every step comes with a sentence that explains what happened and why, and the ou
 | Control | Values |
 |---|---|
 | Answers `OPTIONS` | yes (`204`), no (`405`, like a static server: the course's own site does it) |
-| `Access-Control-Allow-Origin` | absent, `*`, `https://tienda.example`, `https://otra.example` |
+| `Access-Control-Allow-Origin` | absent, `*`, the page's origin (`https://tienda.example`), another origin (`https://otra.example`) |
 | `Access-Control-Allow-Methods` | any of `GET`, `POST`, `PUT`, `DELETE` (checkboxes) |
 | `Access-Control-Allow-Headers` | none, `Content-Type`, `Authorization` (checkboxes) |
 | `Access-Control-Allow-Credentials` | absent, `true` |
@@ -146,9 +157,9 @@ Example (es, `check-fails`, scenario 1): «La respuesta no trae `Access-Control-
 | Simple requests | `GET` and `POST` with `text/plain` or a form: no preflight; readable only with the right `Access-Control-Allow-Origin` |
 | Preflight triggers | `PUT`, `DELETE`, `POST` with JSON, `Authorization`: each one, alone, triggers a preflight, with the right `Access-Control-Request-*` headers |
 | Preflight failures | Non-2xx status (the `405`), CORS check, method not allowed, header not allowed: the real request is not sent |
-| Credentials | `*` with `include` fails; the exact origin without `Access-Control-Allow-Credentials: true` fails; with both, passes; the preflight never carries the cookie |
+| Credentials | `*` with `include` fails; the exact origin without `Access-Control-Allow-Credentials: true` fails; with both, passes; the preflight never carries the cookie; the cookie travels to both hosts (its `Domain`) |
 | `server-acts` | In every run where the real request is sent, the server acts, whatever the check says |
-| Scenarios | The six scenarios give the outcomes of §2.2 |
+| Scenarios | The six scenarios give the outcomes of §2.2, with the Spanish and with the English names |
 | Messages | Each failure has its Chrome message; the list matches what Chromium printed when the lab was built |
 | Texts and rendering | Every narration key exists in `es` and `en` and fills all its data; `react-dom/server` renders both languages |
 | Browser | Keyboard and focus, light and dark, 375 and 1280 px, reduced motion; the axe tests of `states.e2e.ts` with a failed and a successful scenario |
