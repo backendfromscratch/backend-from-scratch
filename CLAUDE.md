@@ -92,7 +92,7 @@ docker run --rm -v "$PWD/projects/tienda-api/04-servidor-http":/p -w /p node:26 
 - prettier doesn't touch `.md` or `.mdx` files (`.prettierignore`): content formatting is set by `docs/style-guide.md`.
 - **CI** (`.github/workflows/ci.yml`): on every PR and every push to `main` it runs `format:check`, zizmor (the workflows), `check`, `knip`, `test`, `build` and `test:e2e`; a second job, "guided projects (node 26)", installs, type-checks and tests every step of `projects/`. It doesn't deploy. Actions are pinned by commit SHA (with the version in a comment); Dependabot updates them.
 - **Supply chain** (`pnpm-workspace.yaml`): pnpm installs no version younger than 7 days and refuses versions published with weaker guarantees. If an urgent security fix is newer, add its exact version to `minimumReleaseAgeExclude`. Design in `docs/specs/2026-10-02-site-and-phase-0-design.md`, §7.
-- **PR title** (`.github/workflows/pr-title.yml`): on every PR it checks that the title follows Conventional Commits. Three checks are required to merge into `main`: "format, types, tests and build", "conventional commit title" and "CodeQL" (since 2026-10-12; it fails when a PR adds a high or critical security alert, or any other alert of severity "error").
+- **PR title** (`.github/workflows/pr-title.yml`): on every PR it checks that the title follows Conventional Commits. Four checks are required to merge into `main`: "format, types, tests and build", "conventional commit title", "CodeQL" (since 2026-10-12; it fails when a PR adds a high or critical security alert, or any other alert of severity "error") and "guided projects (node 26)" (since 2026-10-13).
 
 ## Git and GitHub
 
