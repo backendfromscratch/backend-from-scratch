@@ -1,7 +1,7 @@
 # Design: Phase 2, «HTTP a fondo»
 
 - **Date:** 2026-10-12
-- **Status:** approved on 2026-10-12. The author accepted the four proposals in §9: no pilot, the English after they read the Spanish, the CORS lab, and no screenshots of DevTools. **The introduction and the eight lessons in Spanish were written on 2026-10-12**, each reviewed independently; the CORS lab waits for its own spec (drafted, in its own PR), and the English for the author's reading.
+- **Status:** approved on 2026-10-12. The author accepted the four proposals in §9: no pilot, the English after they read the Spanish, the CORS lab, and no screenshots of DevTools. **The introduction and the eight lessons in Spanish were written on 2026-10-12**, each reviewed independently; the CORS lab waits for the review of its own spec (`docs/specs/2026-10-12-cors-lab-design.md`), and the English for the author's reading.
 - **Origin:** the roadmap in `CLAUDE.md` (Phase 2). The author asked for this spec once Phase 1 was merged (2026-10-12).
 - **Reference specs:** `docs/specs/2026-10-02-site-and-phase-0-design.md` (template, levels of «Pruébalo», languages) and `docs/specs/2026-10-03-phase-1-design.md` (the practice VM and the way Phase 1 was written). Lesson template, quiz, glossary, translation and SEO rules do not change (`docs/style-guide.md`).
 
