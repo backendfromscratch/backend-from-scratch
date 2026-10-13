@@ -1,4 +1,5 @@
 import { expect, test, type Page } from '@playwright/test';
+import { strings as corsStrings } from '../src/playgrounds/cors-lab/strings';
 import { strings as cryptoStrings } from '../src/playgrounds/crypto-keys/strings';
 import { recorded } from '../src/playgrounds/dns-lookup/fixtures';
 import { strings as dnsStrings } from '../src/playgrounds/dns-lookup/strings';
@@ -66,6 +67,27 @@ for (const theme of themes) {
       await lab.getByRole('button', { name: t.submit }).click();
       await expect(lab.locator('.dns-lab__status')).toContainText(t.errors.ip.slice(0, 20));
       await expectAccessible(page, '.dns-lab');
+    });
+
+    test('CORS lab: a failure with its console message, then an approved preflight', async ({
+      page,
+    }) => {
+      const t = corsStrings.es;
+      const lab = page.locator('.cors-lab');
+      await open(page, '/fase-2/que-es-cors/', theme);
+      await hydrate(page, '.cors-lab');
+
+      // The controls open, and the usual error to the end: the console shows Chrome's message.
+      for (const summary of await lab.locator('summary').all()) await summary.click();
+      await lab.getByRole('button', { name: t.all }).click();
+      await expect(lab.locator('.cors-lab__console')).toContainText('TypeError: Failed to fetch');
+      await expectAccessible(page, '.cors-lab');
+
+      await lab.locator('.cors-lab__scenario select').selectOption('preflight-approved');
+      await lab.getByRole('button', { name: t.next, exact: true }).click();
+      await lab.getByRole('button', { name: t.all }).click();
+      await expect(lab.locator('.cors-lab__answer--true')).toHaveCount(2);
+      await expectAccessible(page, '.cors-lab');
     });
 
     test('cryptography lab: encrypt, decrypt, the wrong key and a signature', async ({ page }) => {
