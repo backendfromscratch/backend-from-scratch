@@ -191,7 +191,7 @@ If `short` contains a colon followed by a space («Nombre: valor»), put it in s
 
 ## Translation
 
-- Spanish is the original. The English translation is done when the author approves the Spanish version.
+- Spanish is the original. The English translation is done when the author approves the Spanish version, or before if the author asks for it (Phase 2, 2026-10-13); then every correction from their reading goes into both languages.
 - The lesson, its new glossary terms and the texts of its diagrams are translated at the same time.
 - An English lesson that uses `<Term>` needs its terms in `glossary/en/`. If they are missing, the build fails, and that is how we want it to work.
 - **English is American,** punctuation included: the period and the comma go inside the quotation marks (“…hand it to me.”), and a quote that ends in «?» or «!» takes no other mark (“Hello?” The caller…). The exception is literal text, what the reader presses or what a program handles letter by letter: there the punctuation stays outside so it does not look like part of the text (press “Next step”.; “Hi, ”, “how are ” and “you?”). Decided on 2026-10-11.

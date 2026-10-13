@@ -1,0 +1,256 @@
+---
+translationKey: phase-2
+title: "Learn HTTP in depth, from the server side"
+description: "Learn HTTP from the server side: requests and responses, methods, status codes, headers, cookies, CORS, caching, and HTTP/2 and HTTP/3."
+sidebar:
+  label: Introduction
+  order: 0
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+
+In Phase 0 you were on the side that asks: you requested a page with `curl`, with `nc` or with the browser, and read what came back. In this phase you switch sides. You'll be the one who receives the <Term id="request">request</Term> and decides what to answer.
+
+You won't write any code yet. You'll play the <Term id="server">server</Term> by hand with `nc`, configure a real one, the nginx on your practice server, and read real responses in the terminal and in the browser. Writing that server in code is Phase 3: when you get there, you'll already know what it has to answer.
+
+## What changes when you're the one answering
+
+Every <Term id="http">HTTP</Term> response is a handful of decisions. As a client, you get them already made; as a server, you make them. It's the same conversation, seen from both sides:
+
+| What you see as a client | What you decide as a server |
+|---|---|
+| The page loads, or you get a “404” | Which <Term id="status-code">status code</Term> each response carries: `200`, `404`, `301`… |
+| One address takes you to another | When to <Term id="redirect">redirect</Term>, and whether it's for good or just for now |
+| The site remembers you're logged in | Which <Term id="cookie">cookie</Term> you create, how long it lasts and who can read it |
+| A <Term id="cors">CORS</Term> error in the browser's console | Which other sites can read your responses |
+| The second visit loads faster | How long each response can be kept |
+
+An example: Ana and Luis's shop, whose repository you explored in [lesson 10 of Phase 1](/en/phase-1/git-internals/). When you open its cart, the server gives you an identifier to recognize you on your next visit. **How it's stored and who can read it is decided by the response**, in one of its <Term id="header">headers</Term>. In this phase you'll set up that shop's server and change its decisions one by one.
+
+## What you will learn
+
+By the end of this phase you'll know what a server should answer in each case, and why. You'll know:
+
+- How to read a whole request and a whole response, in the terminal and in the browser.
+- What each method promises (`GET`, `POST`, `PUT`, `PATCH`, `DELETE`) and which status code fits each case.
+- Which headers matter, security ones included, and how a server sets them.
+- How cookies work and what `HttpOnly`, `Secure` and `SameSite` are for.
+- Why a CORS error shows up, who causes it and how to fix it on the server.
+- How HTTP caching works and what a CDN adds.
+- What changes between HTTP/1.1, HTTP/2 and HTTP/3.
+
+## The lessons
+
+1. [Request and response](/en/phase-2/http-request-and-response/)
+2. [Methods](/en/phase-2/http-methods/)
+3. [Status codes](/en/phase-2/http-status-codes/)
+4. [Headers](/en/phase-2/http-headers/)
+5. [Cookies](/en/phase-2/cookies-httponly-secure-samesite/)
+6. [CORS](/en/phase-2/what-is-cors/)
+7. [Caching](/en/phase-2/http-caching/)
+8. [HTTP versions](/en/phase-2/http2-vs-http3/)
+
+## Where you will practice
+
+Each lesson tells you where its “Try it” happens. There are four places, and none of them requires writing code:
+
+| Where | What for | From |
+|---|---|---|
+| Your terminal, with `curl` and `nc` | Seeing every byte of a request and its response, and playing the server by hand: you write the response | [Lesson 1](/en/phase-2/http-request-and-response/) |
+| DevTools, in your browser | Seeing the requests of any site, its cookies and CORS errors live | This introduction |
+| backenddesdecero.com, this site | A real server we control, so its responses don't change by surprise | This introduction |
+| The nginx on your practice server | Being the one who answers: changing a code, a header, a cookie or a rule, and seeing the effect with `curl` | This introduction |
+
+You already used `nc` in [lesson 2 of Phase 0](/en/phase-0/client-server-model/) and in [lesson 5 of Phase 1](/en/phase-1/linux-processes-and-signals/); nginx is the one you installed in [lesson 6 of Phase 1](/en/phase-1/systemd-services-and-apt/).
+
+We don't use services like httpbin.org, which send back whatever you send them: they belong to someone else and can change or go down, and `nc` does the same thing on your computer.
+
+- **On Windows,** everything happens in WSL, as in Phase 1. If your WSL has systemd ([lesson 6 of Phase 1](/en/phase-1/systemd-services-and-apt/)), it also works as your practice server: where the lessons say `multipass shell course`, open Ubuntu.
+- **Without a practice server,** you can still follow along: every exercise on the VM comes with its output, and reading it is enough.
+
+## Before you start: DevTools
+
+<Term id="devtools">DevTools</Term> are the developer tools built into your browser. You opened them in [lesson 4 of Phase 0](/en/phase-0/tcp-ip-model/) to time a request. In this phase they'll be your window into everything the browser sends, receives and stores.
+
+### How to open them
+
+- **Chrome** (and Edge, Brave or Opera, which have the same ones): <kbd>F12</kbd>, or <kbd>Cmd</kbd> + <kbd>Option</kbd> + <kbd>I</kbd> on a Mac. You can also right-click the page › *Inspect*.
+- **Firefox:** the same keys.
+- **Safari:** first turn them on in *Settings* › *Advanced* › *Show features for web developers*. Then, <kbd>Cmd</kbd> + <kbd>Option</kbd> + <kbd>I</kbd>.
+
+### The three tabs you'll use
+
+A panel opens with lots of tabs, in your browser's language. The lessons use Chrome's English names, and Firefox's when they're different. In this phase, three are enough:
+
+| In Chrome | In Firefox | What it shows | Where you use it |
+|---|---|---|---|
+| **Network** | Network | Every request the page makes, with its response | In almost every lesson |
+| **Console** | Console | The page's warnings and errors, like CORS ones, and a line where you can type code that the browser runs as if it were the page's | In lessons [5](/en/phase-2/cookies-httponly-secure-samesite/) and [6](/en/phase-2/what-is-cors/) |
+| **Application** | Storage | What the site stores in your browser, like its cookies | In [lesson 5](/en/phase-2/cookies-httponly-secure-samesite/) |
+
+If you can't see one, the panel is narrow and it's hidden behind the `»` button, at the end of the row of tabs. Each lesson shows you the part it needs: here you start with the Network tab.
+
+### The Network tab: one row per request
+
+The Network tab only records what happens while it's open. So, after opening it, **reload the page** (<kbd>F5</kbd>, or <kbd>Cmd</kbd> + <kbd>R</kbd> on a Mac). Each row is a request the page made: the document, its styles, its scripts, its fonts and its images.
+
+The columns tell you what was requested, **Name** (in Firefox, “File”), and which status code the server answered with, **Status**. The others, like size or time, are introduced by the lesson that uses them.
+
+Clicking a row opens its details. Its first tab, **Headers**, has three blocks:
+
+- **General:** the address, the method, the status code and the **Remote Address**, which is the IP and port of the server that answered. Firefox shows it at the top, without a title.
+- **Response Headers:** what the server says.
+- **Request Headers:** what your browser sent.
+
+Next to it, **Response** shows the content that arrived.
+
+### Try it: your first request, from the inside
+
+The goal: find out, without leaving the browser, who answers when you open this course, with which code, and what your browser has told it about you.
+
+1. Open `https://backenddesdecero.com/en/` in a new tab.
+2. Open DevTools, go to the **Network** tab and reload the page. About a dozen rows will show up.
+3. Click the first one, `en/`. It's the document, the page itself: the browser requested everything else afterward, while reading it.
+4. Look at the **Headers** tab.
+
+Under *General*, the status code is `200`: everything went well. And the remote address ends in `:443`, the HTTPS port. The response headers are more or less these (we captured them with Chromium, the open-source base of Chrome, on October 13, 2026, and trimmed the long values with `…`):
+
+```text
+alt-svc: h3=":443"; ma=86400
+cache-control: public, max-age=0, must-revalidate
+cf-cache-status: HIT
+cf-ray: a49cce88dd1c7954-MAD
+content-encoding: zstd
+content-type: text/html
+date: Tue, 13 Oct 2026 07:59:46 GMT
+nel: {"report_to":"cf-nel",…}
+report-to: {"group":"cf-nel",…}
+server: cloudflare
+```
+
+Look at two of them:
+
+- **`server: cloudflare`:** the one answering you is Cloudflare, the company where this site lives. The letters at the end of `cf-ray` say from which city: `MAD` is Madrid. Yours may be different, and so will the date.
+- **`content-type: text/html`:** what arrives is a web page, not an image or data.
+
+The others have their own lesson: `content-encoding`, which says the page traveled compressed (you may see `br` instead of `zstd`), in [“Headers”](/en/phase-2/http-headers/); `cache-control`, in [“Caching”](/en/phase-2/http-caching/); and `alt-svc`, in [“HTTP versions”](/en/phase-2/http2-vs-http3/).
+
+Now scroll down to the request headers. Your browser has said more than you might think: `accept-language` says which languages you prefer pages in, and `user-agent`, which browser and which system you use. The lines that start with `:`, like `:method: GET`, are Phase 0's request line written the HTTP/2 way.
+
+If the list is empty, reload with DevTools open. If you see many more rows, one of your browser extensions may be making its own requests: try a private window.
+
+<Aside type="caution" title="Your cookies are your session">
+
+On a site where you're logged in, you'll see among the request headers a `cookie` header with long values. They're your session: whoever has them can get in as you. Never copy them into a command, a website or a chat, not even to ask for help. The lessons always use made-up values.
+
+For the same reason, don't paste into the Console code someone else gives you: it runs with your session open, and it can act on that site as if it were you.
+
+</Aside>
+
+## Before you start: the shop's server
+
+Now, the other side. The server of Ana and Luis's shop is an nginx configuration we've prepared for this phase: a text file that says what to answer at each address. You'll install it on your practice server, the `course` <Term id="virtual-machine">virtual machine</Term> from [lesson 4 of Phase 1](/en/phase-1/linux-users-and-permissions/), where you already have nginx.
+
+The shop listens on <Term id="port">port</Term> 8080, so the welcome page on port 80 stays as it was. Lessons 2 to 7 change one or two lines, reload nginx and compare, and each one tells you how to undo its change. If you ever break it, the original is still in your home folder: repeat the `cp` from step 2, and step 3.
+
+The goal: get the shop answering on your VM, and know how to remove it when you're done. Log in with `multipass shell course` and check that the prompt says `ubuntu@course`: everything that follows happens inside.
+
+<TryIt
+  title="1. Download the configuration"
+  cmd="curl -O https://backenddesdecero.com/practicas/shop-http.conf"
+  output={`  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100  3205  100  3205    0     0  56737      0 --:--:-- --:--:-- --:--:-- 57232`}
+>
+
+As in [lesson 10 of Phase 1](/en/phase-1/git-internals/), `curl -O` saves the file under its own name, `shop-http.conf`, in your home folder. The `3205` is its size in bytes; your speed figures will be different. If you get `Could not resolve host`, the VM has no connection: check your computer's.
+
+</TryIt>
+
+Before installing it, **read it**: `less shop-http.conf` ([lesson 2 of Phase 1](/en/phase-1/linux-file-commands/); quit with <kbd>Q</kbd>). Don't install anything on a server you haven't read. This is one of its parts:
+
+```nginx
+server {
+    listen 8080;
+    …
+    # A page that has moved for good: it redirects to /products.
+    location = /offers {
+        return 301 /products;
+    }
+```
+
+- **`server`** is a website, and **`listen 8080`**, the port it listens on.
+- Each **`location`** is an address of the shop (`/offers`, `/products`, `/cart`…) with what to answer there.
+- **`return 301 /products`** means “answer with code `301` and send the client to `/products`.”
+- Lines that start with `#` are comments: nginx doesn't read them, and they explain each part.
+
+You don't need to understand all of it now: each lesson explains the lines it touches. If you see HTML instead (`<!DOCTYPE html>`…), the download failed and `curl` saved the error page: check the address and download it again.
+
+<TryIt
+  title="2. Copy it and enable it"
+  cmd={`sudo cp shop-http.conf /etc/nginx/sites-available/shop\nsudo ln -s /etc/nginx/sites-available/shop /etc/nginx/sites-enabled/shop`}
+>
+
+On Ubuntu, nginx keeps sites in two folders: `sites-available`, the ones you have, and `sites-enabled`, the ones that are running. **nginx only reads the second one.**
+
+- `cp` copies the configuration into the first one, with the name `shop`.
+- `ln -s` creates a symbolic link in the second one: a file that points to another, like a desktop shortcut. To turn the site off, deleting the link is enough, and the configuration stays where it is.
+
+They need `sudo` because `/etc` belongs to the system ([lesson 4 of Phase 1](/en/phase-1/linux-users-and-permissions/)). If all goes well, they print nothing. If `ln` says `File exists`, you had already enabled it: go on to step 3.
+
+</TryIt>
+
+<TryIt
+  title="3. Check it and reload nginx"
+  cmd="sudo nginx -t && sudo systemctl reload nginx"
+  output={`nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful`}
+>
+
+- **`nginx -t`** (for *test*) checks the whole configuration without touching the nginx that's running. The two lines say it's well written.
+- **`&&`** runs the second command only if the first one went well ([lesson 3 of Phase 1](/en/phase-1/pipes-and-redirection/)).
+- **`systemctl reload`** asks nginx to read its configuration again without cutting open connections, unlike `restart`.
+
+If `nginx -t` finds an error, it says in which file and on which line, and reloads nothing: the running nginx keeps the previous configuration. If the error is `unknown directive "<!DOCTYPE"`, you installed the error page from step 1: download it again and repeat step 2 with `cp`. Always do both steps together, in every lesson.
+
+</TryIt>
+
+<TryIt
+  title="4. Ask the shop for something"
+  cmd={`curl localhost:8080/\ncurl localhost:8080/products`}
+  output={`Ana and Luis's shop. Try /products, /offers, /cart, /api/orders, /img/ and /maintenance.
+[{"id":1,"name":"T-shirt","price":20},{"id":2,"name":"Mug","price":8.5},{"id":3,"name":"Hoodie","price":35}]`}
+>
+
+The first line is the shop's home page: it tells you which addresses it has. The second is its product list in JSON, the data format you saw in [lesson 1 of Phase 0](/en/phase-0/what-is-the-backend/). The `:8080` tells `curl` the port: without it, it would go to port 80 and nginx's welcome page would answer.
+
+If you get `Couldn't connect to server`, nginx hasn't loaded the shop: repeat step 3 and see whether it says something different.
+
+</TryIt>
+
+Leave it installed: you'll use it until lesson 7. When you finish the phase, this is how you remove it:
+
+<TryIt
+  title="To remove the shop"
+  cmd="sudo rm /etc/nginx/sites-enabled/shop && sudo systemctl reload nginx"
+>
+
+`rm` deletes only the link, and `reload` makes nginx stop listening on 8080. They print nothing. The copy stays in `sites-available`: to enable it again, repeat the `ln -s` from step 2, and step 3.
+
+</TryIt>
+
+Wait a second, because nginx takes a moment to release the port, and check it:
+
+<TryIt
+  title="The shop no longer answers"
+  cmd="curl localhost:8080/"
+  output={`curl: (7) Failed to connect to localhost port 8080 after 0 ms: Couldn't connect to server`}
+>
+
+Nobody is listening on 8080 anymore. If the shop still answers, wait a bit and repeat the `curl`. The welcome page on port 80 stays the same.
+
+</TryIt>
+
+You now have the two pieces of the phase: DevTools, to see what the browser does, and a server of your own that answers. Start with lesson 1, [“Request and response”](/en/phase-2/http-request-and-response/): you'll play the server by hand, with `nc`, and write your first response.

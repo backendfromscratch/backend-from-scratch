@@ -1,7 +1,7 @@
 # Design: Phase 2, «HTTP a fondo»
 
 - **Date:** 2026-10-12
-- **Status:** approved on 2026-10-12. The author accepted the four proposals in §9: no pilot, the English after they read the Spanish, the CORS lab, and no screenshots of DevTools. **The introduction and the eight lessons in Spanish were written on 2026-10-12**, each reviewed independently; the CORS lab waits for the review of its own spec (`docs/specs/2026-10-12-cors-lab-design.md`), and the English for the author's reading.
+- **Status:** approved on 2026-10-12. The author accepted the four proposals in §9: no pilot, the English after they read the Spanish, the CORS lab, and no screenshots of DevTools. **The introduction and the eight lessons in Spanish were written on 2026-10-12**, each reviewed independently. The CORS lab's own spec was approved on 2026-10-13 (`docs/specs/2026-10-12-cors-lab-design.md`); the lab is still to be built. **The English was translated on 2026-10-13**, before the author's reading (§9).
 - **Origin:** the roadmap in `CLAUDE.md` (Phase 2). The author asked for this spec once Phase 1 was merged (2026-10-12).
 - **Reference specs:** `docs/specs/2026-10-02-site-and-phase-0-design.md` (template, levels of «Pruébalo», languages) and `docs/specs/2026-10-03-phase-1-design.md` (the practice VM and the way Phase 1 was written). Lesson template, quiz, glossary, translation and SEO rules do not change (`docs/style-guide.md`).
 
@@ -132,12 +132,12 @@ Small, and none of them blocks the first lesson:
 2. **Practice material** (§5): the `_headers` files and the shop's nginx configuration, checked in Docker, with their tests.
 3. **The lessons in Spanish**, the Phase 1 way: one agent writes each lesson with every command run for real and another, independent one reviews it against the checklist; the agents' shared state (ports, keys) stays inside Docker.
 4. **The CORS lab:** its own spec, then the logic with tests and the interface, while the lessons are being written; lesson 6 uses it once it exists.
-5. **The author reads the Spanish**, and then **the English translation**, with its outputs run again.
+5. **The English translation**, with its outputs run again (done on 2026-10-13), and **the author reads both**.
 
 ## 9. Decisions and risks
 
 - **Decided: no pilot.** Phase 1 had one because the template was new; now the template, the quiz and the way of writing are approved. The eight lessons are written in Spanish at once, and the author reads them all.
-- **Decided: the English after the author reads the Spanish** (Phase 1 was translated the same day), so a correction is made once and not twice.
+- **Decided: the English after the author reads the Spanish** (Phase 1 was translated the same day), so a correction is made once and not twice. **Changed on 2026-10-13:** the author asked for the English right away and will point out what to change while reading; each correction is then made in both languages.
 - **Decided: the CORS lab is built** (§4), with its own spec: it is the one thing in the phase that cannot be seen any other way. Lesson 6 also keeps the real console exercise.
 - **Decided: no screenshots of DevTools.** The style guide has no images of interfaces, and DevTools changes often: the lessons give the exact names of tabs and columns, in Chrome and Firefox.
 - **The VM is still unverified** on a real Multipass (Phase 1 pending). Four lessons use it; it is worth checking Phase 1 first.

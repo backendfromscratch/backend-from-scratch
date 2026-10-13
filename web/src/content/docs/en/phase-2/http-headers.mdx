@@ -1,0 +1,511 @@
+---
+translationKey: http-headers
+title: "HTTP headers: common and security headers"
+description: "What HTTP headers are and which ones matter: Accept, User-Agent, Authorization, compression and security headers like HSTS and CSP. Real examples."
+sidebar:
+  label: Headers
+  order: 4
+lesson:
+  oneLiner: "Headers are the “Name: value” lines that travel ahead of the content. With them, the client says who it is and what it prefers, and the server says what it's sending, how it's sending it and what the browser must do to protect you."
+  objectives:
+    - Read the most common headers of a request and a response, and say what each one is for.
+    - Explain how the server chooses the compression or the language based on what the client asks for, and what Vary is for.
+    - Recognize the four basic security headers and what each one stops.
+    - Add a header to an nginx server and check it with curl.
+  prerequisites: [status-codes]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+Imagine Ana and Luis run their shop's website through a free security scanner. The site works: the products show up and the cart keeps what you pick. But the report gives it a failing grade: “security headers missing.” What can be missing, if everything works?
+
+There's another oddity closer to home. This site's home page weighs 45 KB when `curl` asks for it and about 11 KB when your browser does. It's the same page, from the same server.
+
+Both things are decided in the <Term id="header">headers</Term>, the `Name: value` lines that travel ahead of the content. You don't see them on the page, but they decide which format, language and compression a response arrives in, who is asking for it and what the browser may do with it.
+
+## The analogy
+
+<Analogy>
+
+Think of a parcel sent by courier. What matters goes inside the box, and the labels go outside: who it's for, how much it weighs, “fragile.” Whoever carries it doesn't open the box: they read the labels and act on what they say.
+
+An HTTP message is that parcel. The content (the *body*) goes inside, and the headers are the labels. Some describe the content (“it's a web page, compressed”). Others ask something of whoever receives it, like “next time, accept only registered mail”: those are the security headers.
+
+And when you place the order, you tick “in English” or “in a small box, if possible”: those are the request headers, and the shop chooses which version to send you.
+
+<div slot="limits">
+
+- Anyone who handles a parcel can read its labels. With HTTPS, headers travel encrypted: only your browser and the server read them.
+- A courier understands “fragil” even with the last letter missing. A browser doesn't: a header with a misspelled name is ignored without a warning. If it's a security header, there's no error, but there's no protection either.
+- A courier forgets the labels once the parcel is delivered. The browser can remember some for months, as you'll see with HSTS.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### A header is a “Name: value” line
+
+You already wrote one in [lesson 3 of Phase 0](/en/phase-0/what-is-a-protocol/), `Host: example.com`, and in [lesson 1](/en/phase-2/http-request-and-response/) you saw where they go: between the first line and the empty line. This is what `curl` and this site said to each other when it asked for the home page, seen with `curl -v` (`>` is what goes out and `<`, what comes back):
+
+```text
+> GET /en/ HTTP/2
+> Host: backenddesdecero.com
+> User-Agent: curl/8.7.1
+> Accept: */*
+>
+< HTTP/2 200
+< date: Tue, 13 Oct 2026 07:59:48 GMT
+< content-type: text/html
+< cf-cache-status: HIT
+< cache-control: public, max-age=0, must-revalidate
+< …
+< server: cloudflare
+< cf-ray: a49cce9b1c2e0390-MAD
+< alt-svc: h3=":443"; ma=86400
+```
+
+We've removed two long Cloudflare lines. Some headers are standard, like `content-type`; others belong to a company, like `cf-ray`, the number Cloudflare uses to identify each request.
+
+### Request headers: who you are and what you prefer
+
+With its headers, the client introduces itself and says what suits it:
+
+| Header | Example | What it tells the server |
+|---|---|---|
+| `Host` | `backenddesdecero.com` | Which website the request is for |
+| `User-Agent` | `curl/8.7.1` | Which program is sending it |
+| `Accept` | `*/*` | Which formats it accepts (`*/*`, any) |
+| `Accept-Language` | `en-US,en;q=0.9` | Which languages it prefers, in order |
+| `Accept-Encoding` | `gzip, deflate, br, zstd` | Which compressions it understands |
+| `Authorization` | `Bearer made-up-token-123` | Who you are: your credential |
+
+The <Term id="user-agent">User-Agent</Term> of `curl` is its name and its version. A browser's is a long sentence that starts with `Mozilla/5.0`, in Chrome and Safari too. The client writes it: with `curl -A 'whatever you like'` you send a different one. That's why it's useful for statistics or for adapting the response, **never for deciding who gets in**: for that you need a secret credential, like the one in `Authorization`.
+
+The `q=0.9` in `Accept-Language` is a weight from 0 to 1. `en-US,en;q=0.9` means “US English; otherwise, any English, which I like a little less.”
+
+### Response headers: what I'm sending you and how
+
+Several have their own lesson: `Content-Type` and `Content-Length` in [lesson 1](/en/phase-2/http-request-and-response/), `Location` in the <Term id="redirect">redirects</Term> of [lesson 3](/en/phase-2/http-status-codes/), `Set-Cookie` in [lesson 5](/en/phase-2/cookies-httponly-secure-samesite/), `Access-Control-Allow-Origin` in [lesson 6](/en/phase-2/what-is-cors/) and `Cache-Control` in [lesson 7](/en/phase-2/http-caching/). Here you'll see two more: `Content-Encoding`, what the content is compressed with, and `Server`, which program is answering, like `nginx/1.24.0 (Ubuntu)`.
+
+### The server chooses based on what you ask for
+
+Back to the oddity from the beginning. `curl` doesn't send `Accept-Encoding`, so it gets the home page as is: 45 KB. Chrome sends `Accept-Encoding: gzip, deflate, br, zstd`, “I understand these four formats.” The server picks one, compresses the page and says so in the response: to Chrome, this site answers `Content-Encoding: zstd`. About 11 KB arrive, and the browser decompresses them.
+
+That's <Term id="compression">compression</Term>, and the mechanism, where the client offers and the server chooses, is called <Term id="content-negotiation">content negotiation</Term>. The oldest format, **gzip**, is understood by everyone; **br** (Brotli) and **zstd** (Zstandard) are more modern and usually compress more or faster. If the client only offers `br`, as you'll do with `curl`, the server uses `br`. Text gets compressed (HTML, CSS, JavaScript, JSON); images already come compressed.
+
+The same goes for the language: MDN, Mozilla's documentation site, sends you to `/en-US/` or to `/fr/` depending on your `Accept-Language`.
+
+There's a hidden problem. Between you and the server there may be a <Term id="cache">cache</Term>, like a <Term id="cdn">CDN</Term>'s, which keeps a response for the next person who asks for the same address. If it keeps the `br` version and hands it to a client that only understands gzip, that client receives bytes it can't read. That's why the server adds **`Vary: Accept-Encoding`**: “my response depends on this header; keep a copy for each value.”
+
+This site doesn't negotiate the language, on purpose: Google visits pages without `Accept-Language` and would only see one version. That's why English has its own address, `/en/…`.
+
+### Authorization: who you are
+
+When you log in to an app, the server gives it a *token*: a long, random string that works as a temporary pass. From then on, the app sends it with every request, in this header:
+
+```http
+Authorization: Bearer made-up-token-123
+```
+
+*Bearer* means “the one who carries it”: **whoever holds the token** gets in, like with a concert ticket nobody checks against your ID. If it's missing or invalid, the server answers `401` ([lesson 3](/en/phase-2/http-status-codes/)). How it's created, checked and expires, in Phase 6.
+
+That's why you should **never paste a real token** into a website, a chat (an AI one included) or a command you're going to share. `curl -v` writes every header it sends: if you share its output, delete that line first. And if a token slips out, revoke it on the site that gave it to you.
+
+### Security headers
+
+Back to the shop's failing grade. <Term id="security-headers">Security headers</Term> are response headers that don't change the content: they ask the browser to protect whoever visits the site. These are the four basic ones:
+
+| Header and example | What it asks of the browser | What it stops |
+|---|---|---|
+| `Strict-Transport-Security: max-age=31536000` | “For a year, come here only over HTTPS” | Someone on your Wi-Fi answering an unencrypted request, on your later visits |
+| `Content-Security-Policy: script-src 'self'` | “Only run code that comes from these sites” | Running code that an attacker manages to slip into the page |
+| `X-Content-Type-Options: nosniff` | “Trust the `Content-Type`; don't guess” | A file that claims to be text or an image running as code |
+| `Referrer-Policy: strict-origin-when-cross-origin` | “To other sites, only say which domain you come from” | The page's full address reaching other sites |
+
+The first one is known as <Term id="hsts">HSTS</Term>. In [lesson 9 of Phase 0](/en/phase-0/what-happens-when-you-type-a-url/) you saw that asking for `http://github.com` with `curl` costs an extra trip, the `301` to `https://`, and that this request goes unencrypted. With HSTS, the browser remembers the site as soon as it visits it over HTTPS and, the following times, changes `http://` to `https://` on its own. The first visit is still unprotected, with one exception you'll see below with GitHub.
+
+It has a risk: if your HTTPS fails one day, anyone who already visited you won't be able to get in until the `max-age` expires. That's why you start with a short value, and that's why this site doesn't send it yet: it will turn it on once it has been running for a few weeks without problems.
+
+**`Content-Security-Policy`** (CSP) is the most powerful and the hardest. If an attacker sneaks a `<script>` with their code into your site (an attack called XSS, in Phase 6), the browser doesn't run it: `script-src 'self'` only lets files from your own domain run, never code written inside the page. It doesn't save you if the attacker manages to upload a file to your domain. And if you forget a site you do use, you break your own page.
+
+**`X-Content-Type-Options: nosniff`** is the cheapest. Without it, the browser may guess what a file is by looking at its content (*sniffing*), ignoring the `Content-Type`.
+
+**`Referrer-Policy`** decides what the browser tells another site when you follow a link to it, in the `Referer` header (with a single r: a historic typo). If your address carries something private, like `/reset-password?token=…`, you don't want it to arrive whole.
+
+None of them fixes the server's flaws: if your backend lets people read other customers' orders, no header prevents it. They close doors in the browser; full security comes in Phase 6.
+
+### Uppercase, lowercase and the X
+
+Header names are **case-insensitive**: `Content-Type` and `content-type` are the same. nginx writes the first and Cloudflare the second, because <Term id="http2">HTTP/2</Term> and HTTP/3 require lowercase ([lesson 8](/en/phase-2/http2-vs-http3/)). Values can be case-sensitive: a token with one letter changed is no longer valid.
+
+For years, non-standard headers started with `X-` (for *experimental* or *extension*), and some kept it, like `X-Content-Type-Options`. Since 2012, <Term id="rfc">RFC</Term> [6648](https://www.rfc-editor.org/rfc/rfc6648.html) recommends not using it in new ones.
+
+## Try it
+
+The goal: find out what headers decide on real websites, and take the shop one step closer to a passing grade with its first security header.
+
+The first five exercises are in your terminal, with outputs from a Mac (`curl` 8.7.1); on Linux and WSL they come out the same, except for the version. These are real websites: your dates, sizes and values may change. To filter, we use `grep` and the pipe `|` ([lesson 3 of Phase 1](/en/phase-1/pipes-and-redirection/)).
+
+<TryIt
+  title="1. The same page, compressed and uncompressed"
+  cmd={`curl -s -o /dev/null -w '%{size_download} bytes\\n' https://backenddesdecero.com/en/
+curl -s -o /dev/null -w '%{size_download} bytes, %header{content-encoding}\\n' -H 'Accept-Encoding: br' https://backenddesdecero.com/en/`}
+  output={`45445 bytes
+10468 bytes, br`}
+>
+
+`-o /dev/null` throws the content away and `-w` writes how many bytes arrived. In the second one, `-H` adds a header to the request, and `%header{content-encoding}` writes the compression the server chose.
+
+Without `Accept-Encoding`, 45 KB; offering only `br`, under 11 KB, a quarter. If `%header{content-encoding}` comes out literally, your `curl` is older than 7.84, but the number is still valid.
+
+</TryIt>
+
+<TryIt
+  title="2. The server chooses for you"
+  cmd={`curl -sI -H 'Accept-Language: fr' https://developer.mozilla.org/ | grep -iE '^(http|location)'
+curl -sI -H 'Accept-Encoding: br, gzip' https://developer.mozilla.org/fr/ | grep -iE '^(http|content-encoding|vary)'`}
+  output={`HTTP/2 302 
+location: /fr/
+HTTP/2 200 
+content-encoding: br
+vary: Accept-Encoding`}
+>
+
+`-I` asks only for the headers, and `grep -iE` keeps the ones that start with those names, ignoring case.
+
+In the first one, MDN reads your `Accept-Language` and redirects you to `/fr/`, the French version: with `es`, to `/es/`; without the header, to `/en-US/`. In the second one you offer two compressions: it picks `br` and adds `vary: Accept-Encoding` for the caches.
+
+</TryIt>
+
+<TryIt
+  title="3. A made-up token"
+  cmd={`curl -s -w '\\n' https://api.github.com/user
+curl -s -w '\\n' -H 'Authorization: Bearer made-up-token-123' https://api.github.com/user`}
+  output={`{
+  "message": "Requires authentication",
+  "documentation_url": "https://docs.github.com/rest",
+  "status": "401"
+}
+{
+  "message": "Bad credentials",
+  "documentation_url": "https://docs.github.com/rest",
+  "status": "401"
+}`}
+>
+
+This address of GitHub's API returns the data of whoever is asking. `-w '\n'` adds a line break so the responses don't come out stuck together.
+
+Both are a `401`, but not for the same reason. Without `Authorization`, GitHub asks you to identify yourself (`Requires authentication`); with the made-up token, it has looked the token up and rejects it (`Bad credentials`). Don't try with a real one: the command stays in your history.
+
+</TryIt>
+
+<TryIt
+  title="4. Who protects themselves?"
+  cmd={`curl -sI https://github.com | grep -iE 'strict-transport|content-security|x-content-type|referrer-policy' | cut -c 1-80
+curl -sI https://backenddesdecero.com/en/ | grep -iE 'strict-transport|content-security|x-content-type|referrer-policy'`}
+  output={`strict-transport-security: max-age=31536000; includeSubdomains; preload
+x-content-type-options: nosniff
+referrer-policy: origin-when-cross-origin, strict-origin-when-cross-origin
+content-security-policy: default-src 'none'; base-uri 'self'; child-src github.g`}
+>
+
+GitHub sends all four. `cut -c 1-80` cuts each line at 80 characters, because its `content-security-policy` takes up almost 4,000: every site it loads something from. `preload` asks to be added to a list that browsers ship with, and GitHub is on it: browsers go to GitHub over HTTPS from the very first visit.
+
+The second command writes nothing: this site sends none of them. HSTS is pending, and the others mostly protect sites with sessions or forms, which this one doesn't have. Even so, a scanner would fail it.
+
+</TryIt>
+
+This site's headers are configured in a text file, `_headers`, which Cloudflare reads when the site is published. These are its rules for the practice files:
+
+```text
+/practicas/*
+  X-Robots-Tag: noindex
+
+/practicas/*.sh
+  Content-Type: text/plain; charset=utf-8
+
+/practicas/*.conf
+  Content-Type: text/plain; charset=utf-8
+
+/practicas/http/cors-on.json
+  Access-Control-Allow-Origin: *
+```
+
+Each block is a path and the headers added to its responses: the practice files don't show up on Google (`noindex`), scripts and configurations are shown as text in the browser, and `cors-on.json` is for [lesson 6](/en/phase-2/what-is-cors/).
+
+<TryIt
+  title="5. Check that the configuration is applied"
+  cmd={`curl -sI https://backenddesdecero.com/practicas/shop-http.conf | grep -iE 'content-type|x-robots-tag'
+curl -sI https://backenddesdecero.com/en/ | grep -iE 'content-type|x-robots-tag'`}
+  output={`content-type: text/plain; charset=utf-8
+x-robots-tag: noindex
+content-type: text/html`}
+>
+
+The shop's configuration, the one you downloaded in the [introduction](/en/phase-2/), carries both headers. The home page isn't under `/practicas/`: it has no `x-robots-tag`, and its `content-type` is set by the server based on the file's extension.
+
+</TryIt>
+
+Now, in the browser. Open this site in Chrome with <Term id="devtools">DevTools</Term> on the **Network** tab, as in the [introduction](/en/phase-2/), and reload. Click the first row and, under **Headers**, compare `accept-encoding` (in **Request Headers**) with `content-encoding` (in **Response Headers**).
+
+Chrome offers `zstd` and the server picks it, so here you'll see `zstd`, not the `br` from step 1, where `curl` only offered `br`. If your browser doesn't offer `zstd`, you'll see `br`. Firefox uses the same names.
+
+### The shop, with its first security header
+
+The last steps are in your `course` VM, with the shop's configuration you installed in the [introduction](/en/phase-2/). Log in with `multipass shell course`. If you don't have a VM, read the outputs: they're the ones you'd see in it.
+
+You're going to add `X-Content-Type-Options: nosniff` to every response from the shop. Open the configuration with nano ([lesson 2 of Phase 1](/en/phase-1/linux-file-commands/)): `sudo nano /etc/nginx/sites-available/shop`. Below the line `charset utf-8;`, add this one:
+
+```nginx
+    add_header X-Content-Type-Options "nosniff" always;
+```
+
+`add_header` adds a header to the responses, and `always`, to the errors too: without it, nginx only adds it to responses like `200` or `301`, and a `404` would go out without it. Save with <kbd>Ctrl</kbd> + <kbd>O</kbd> and Enter, and quit with <kbd>Ctrl</kbd> + <kbd>X</kbd>.
+
+<TryIt
+  title="6. Check and reload"
+  cmd="sudo nginx -t && sudo systemctl reload nginx"
+  output={`nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful`}
+>
+
+`nginx -t` checks the configuration before applying it, and `&&` only reloads if the check passes. If you get `[emerg]` with a line number, look at that line: most often, the final `;` or a quote is missing.
+
+</TryIt>
+
+<TryIt
+  title="7. Look at the response"
+  cmd="curl -sI localhost:8080/products"
+  output={`HTTP/1.1 200 OK
+Server: nginx/1.24.0 (Ubuntu)
+Date: Tue, 13 Oct 2026 08:01:08 GMT
+Content-Type: application/json
+Content-Length: 109
+Connection: keep-alive
+X-Content-Type-Options: nosniff`}
+>
+
+The last line is yours. Notice the capital letters too: nginx speaks HTTP/1.1 and writes `Content-Type`.
+
+If it doesn't show up, check that you saved the file and repeat step 6.
+
+</TryIt>
+
+<SelfCheck question="Challenge: ask for the headers of /cart. Does it have the new one? If it doesn’t, look in the configuration for what that path has that /products doesn’t.">
+
+```sh
+curl -sI localhost:8080/cart
+```
+
+```text
+HTTP/1.1 200 OK
+Server: nginx/1.24.0 (Ubuntu)
+Date: Tue, 13 Oct 2026 08:01:08 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 20
+Connection: keep-alive
+Set-Cookie: cart=c4f9e2; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax
+```
+
+It doesn't. The `location = /cart` block has its own `add_header`, the cookie's, and in nginx that's enough: if a block has any `add_header`, it no longer inherits the ones from `server`. You fix it by repeating the line inside that `location`. The same happens with `/api/`, `/img/` and `/maintenance`: always check the paths you care about with `curl`.
+
+</SelfCheck>
+
+Before moving on, undo the change so your responses match the ones in the next lessons: open the file again, delete the line with <kbd>Ctrl</kbd> + <kbd>K</kbd>, save, quit and repeat step 6.
+
+## You have already seen it
+
+- **Sites that open in your language without you choosing it:** they've read your `Accept-Language`, like MDN.
+- **You type `http://github.com` in Chrome and there's no `301`:** in DevTools' **Network** tab you'll see a `307 Internal Redirect` with the header `Non-Authoritative-Reason: HSTS`: the browser changed the address on its own.
+- **Apps that don't ask for your password every time:** they keep a token and send it with every request.
+
+And if you code:
+
+- `fetch(url, { headers: { Authorization: 'Bearer …' } })` adds a header to the request, and `response.headers.get('content-type')` reads it regardless of case.
+
+## Common mistakes
+
+- **Copying security headers without understanding them.** A `Content-Security-Policy` copied from another site can block your own scripts. A one-year HSTS set in a hurry locks your visitors out if your HTTPS fails one day. Start with short values.
+- **A misspelled name.** `X-Content-Type-Option`, without the final s, doesn't give any error: the browser ignores it. After every change, check with `curl -sI` that the header comes out exactly as written.
+- **Showing the server's version.** `Server: nginx/1.24.0 (Ubuntu)` saves work for anyone looking for servers with a vulnerable version. In nginx, `server_tokens off;` leaves just `nginx`.
+
+## Summary
+
+- Headers are `Name: value` lines ahead of the content. Their names are case-insensitive, and new ones no longer start with `X-`.
+- The client says who it is and what it prefers (`User-Agent`, `Accept-Language`, `Accept-Encoding`); the server chooses and says so (`Content-Encoding`). `Vary` tells caches which headers change the response.
+- `Authorization: Bearer` carries a token: whoever has it gets in as you. Never share a real one.
+- The four basic security headers (`Strict-Transport-Security`, `Content-Security-Policy`, `X-Content-Type-Options` and `Referrer-Policy`) protect in the browser; they don't fix the server.
+- In nginx, `add_header … always` adds a header; in Phase 3, your server will write them itself.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="Luis downloads the shop’s home page with curl and it’s 60 KB. Ana looks at the same request in DevTools and it’s 14 KB. What’s going on?"
+  review="The server chooses based on what you ask for"
+>
+
+<QuizOption text="curl also downloads the page’s images and styles.">
+
+`curl` only downloads the address you give it. The difference is in the request headers.
+
+</QuizOption>
+
+<QuizOption text="The browser asks for the page compressed, with Accept-Encoding." correct>
+
+`curl` doesn't offer any compression and gets the page as is. The browser offers several, and the server picks one.
+
+</QuizOption>
+
+<QuizOption text="The browser trims from the HTML whatever doesn’t fit on the screen.">
+
+The browser receives the whole page, even if you don't see it all at once. What changes is that it arrives compressed.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="The shop’s API should only serve its mobile app, and someone suggests letting through the requests whose User-Agent is ShopApp/2.0. Is it a good idea?"
+  review="Request headers: who you are and what you prefer"
+>
+
+<QuizOption text="No: anyone can send that User-Agent with curl -A." correct>
+
+The client writes the `User-Agent`. To know who is calling, you need a credential, like a token in `Authorization`.
+
+</QuizOption>
+
+<QuizOption text="Yes: the phone’s operating system sets the User-Agent and nobody can change it.">
+
+The program making the request sets it, and it can set whatever it wants: `curl -A 'ShopApp/2.0'` imitates it in a second.
+
+</QuizOption>
+
+<QuizOption text="Yes, as long as the API uses HTTPS, because then the User-Agent can’t be faked.">
+
+HTTPS stops anyone from reading or changing the request along the way, but it doesn't stop the sender from writing whatever they want in it.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Ana connects her laptop to an airport’s Wi-Fi and types shop.example, without https://. She visited the shop last week. Which header keeps that first request from going out unencrypted?"
+  review="Security headers"
+>
+
+<QuizOption text="Referrer-Policy, which hides from the Wi-Fi which site you visit.">
+
+`Referrer-Policy` decides what the browser tells other sites when you follow a link. It doesn't change how the page is requested.
+
+</QuizOption>
+
+<QuizOption text="X-Content-Type-Options, because it forces the content to travel encrypted.">
+
+`nosniff` only tells the browser not to guess a file's type. It has nothing to do with encryption.
+
+</QuizOption>
+
+<QuizOption text="Strict-Transport-Security, which the browser remembers." correct>
+
+The browser remembers that this site always goes over HTTPS and changes the address before sending anything.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A coworker asks you for the curl -v output of a request to your company’s API to help you with an error. What do you do before pasting it in the chat?"
+  review="Authorization: who you are"
+>
+
+<QuizOption text="Nothing: thanks to HTTPS, nobody can use a token they read in a chat.">
+
+HTTPS encrypts the request while it travels. What you paste in the chat is plain text, and anyone who reads it can copy the token.
+
+</QuizOption>
+
+<QuizOption text="Delete the Authorization line, which carries your token." correct>
+
+*Bearer* means whoever carries it gets in: with your token, anyone would get in as you. If you've already shared it, revoke it.
+
+</QuizOption>
+
+<QuizOption text="Nothing: a token only works from the computer it was created on.">
+
+A *Bearer* token works in any request that carries it, wherever it comes from. Protect it like a password.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You add add_header X-Content-Type-Options nosniff; (without always) to nginx’s server block. /products has it, but a page that doesn’t exist doesn’t. Why?"
+  review="The shop, with its first security header"
+>
+
+<QuizOption text="Without always, nginx only adds it to responses like 200 or 301, not to errors." correct>
+
+A `404` is an error, so it goes out without it. With `always`, nginx adds it to every response.
+
+</QuizOption>
+
+<QuizOption text="The error page is generated by the browser, not by nginx, and that’s why it has no headers.">
+
+The error page is generated by nginx: it arrives with its status line and its headers, like any other response.
+
+</QuizOption>
+
+<QuizOption text="nginx has to be reloaded once for each status code.">
+
+One reload applies the whole configuration to every response. The difference is in `always`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Your nginx sends Content-Type, and the same site behind Cloudflare arrives with content-type. Are they different headers?"
+  review="Uppercase, lowercase and the X"
+>
+
+<QuizOption text="Yes: the client has to look them up exactly as the server wrote them.">
+
+A client looking for `Content-Type` has to find `content-type` too. That's what the standard says.
+
+</QuizOption>
+
+<QuizOption text="Yes: the lowercase ones are the ones Cloudflare adds, on top of yours.">
+
+Cloudflare doesn't add a new header: it sends the same one in lowercase, because HTTP/2 and HTTP/3 require it.
+
+</QuizOption>
+
+<QuizOption text="No: a header’s name isn’t case-sensitive." correct>
+
+They're the same header. Case can only matter in the value, like in a token.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [HTTP headers](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers) (MDN): the reference for all of them, one page per header.
+- [HTTP Observatory](https://developer.mozilla.org/en-US/observatory) (MDN): a free scanner that checks the security headers of any website and explains each failure. Try it with this one.
+- [OWASP Secure Headers Project](https://owasp.org/www-project-secure-headers/): which security headers you should send, and with which values.
+- [Locale-adaptive pages](https://developers.google.com/search/docs/specialty/international/locale-adaptive-pages) (Google): why Google prefers one address per language to negotiating it with `Accept-Language`.

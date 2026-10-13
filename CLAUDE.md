@@ -117,7 +117,8 @@ src/content.config.ts           schemas: docs (`lesson` header, `translationKey`
 src/content/docs/               MDX pages: Spanish at the root (fase-0/…) and English in en/ (en/phase-0/…)
 src/content/glossary/           one YAML per term and language (es/port.yaml, en/port.yaml)
 src/content/i18n/               our own UI strings (es.json, en.json)
-src/content/*.test.ts           content tests: lesson order, UI keys defined and used, and the voice (forbidden words, author notes)
+src/content/*.test.ts           content tests: lesson order, UI keys defined and used, the voice (forbidden words, author notes)
+                                and the glossary (acronyms, and a term's lesson and related terms the same in both languages)
 src/data/phases.ts              the 12 phases: title, summary, status and planned lessons
 src/data/playgrounds.ts         labs and playgrounds, for the /playgrounds/ page
 src/data/site.ts                public URL, site name in each language and the content license
