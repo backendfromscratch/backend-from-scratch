@@ -49,8 +49,9 @@ Every step comes with a sentence that explains what happened and why, and the ou
 1. «El error de siempre»: `GET`, the server sends no CORS header. The request reaches the server; the page cannot read it.
 2. «El servidor da permiso»: the same, with `Access-Control-Allow-Origin: https://tienda.example`.
 3. «Un POST con JSON»: preflight; the server answers `OPTIONS` with `405`. The real request is never sent.
-4. «Con cookies y `*`»: `credentials: 'include'` and `Access-Control-Allow-Origin: *`. The request reaches the server with the cookie; the page cannot read the answer.
-5. «Mismo origen»: no CORS at all.
+4. «El preflight aprobado»: the same `POST` with JSON, and the server answers the `OPTIONS` with `204`, `Access-Control-Allow-Origin: https://tienda.example`, `Access-Control-Allow-Methods: GET, POST` and `Access-Control-Allow-Headers: Content-Type`, and the real response with the same `Access-Control-Allow-Origin`. The real request is sent and the page reads the answer. These are the headers the shop's nginx sends in the practice configuration (`location /api/`; its `Access-Control-Max-Age` is left out, §2.4), so the lesson can point from one to the other.
+5. «Con cookies y `*`»: `credentials: 'include'` and `Access-Control-Allow-Origin: *`. The request reaches the server with the cookie; the page cannot read the answer.
+6. «Mismo origen»: no CORS at all.
 
 ### 2.3 The rules (the Fetch standard, simplified)
 
@@ -147,7 +148,7 @@ Example (es, `check-fails`, scenario 1): «La respuesta no trae `Access-Control-
 | Preflight failures | Non-2xx status (the `405`), CORS check, method not allowed, header not allowed: the real request is not sent |
 | Credentials | `*` with `include` fails; the exact origin without `Access-Control-Allow-Credentials: true` fails; with both, passes; the preflight never carries the cookie |
 | `server-acts` | In every run where the real request is sent, the server acts, whatever the check says |
-| Scenarios | The five scenarios give the outcomes of §2.2 |
+| Scenarios | The six scenarios give the outcomes of §2.2 |
 | Messages | Each failure has its Chrome message; the list matches what Chromium printed when the lab was built |
 | Texts and rendering | Every narration key exists in `es` and `en` and fills all its data; `react-dom/server` renders both languages |
 | Browser | Keyboard and focus, light and dark, 375 and 1280 px, reduced motion; the axe tests of `states.e2e.ts` with a failed and a successful scenario |
