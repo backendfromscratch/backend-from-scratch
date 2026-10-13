@@ -1,0 +1,515 @@
+---
+translationKey: cookies
+title: "Cookies HTTP: HttpOnly, Secure y SameSite"
+description: "Qué son las cookies HTTP y cómo las usa un servidor: Set-Cookie, sesiones y los atributos HttpOnly, Secure y SameSite (Strict, Lax y None), con ejemplos."
+sidebar:
+  label: Cookies
+  order: 5
+lesson:
+  oneLiner: "Una cookie es un dato pequeño que el servidor le pide al navegador que guarde y que le devuelva en las peticiones siguientes a su sitio. Así un protocolo sin memoria te reconoce. HttpOnly, Secure y SameSite deciden quién puede leerla y cuándo viaja."
+  objectives:
+    - Explicar cómo Set-Cookie y Cookie le dan memoria a HTTP, y qué es una sesión.
+    - Saber a qué peticiones añade el navegador una cookie según su dominio, su ruta, su caducidad y SameSite.
+    - Elegir los atributos de una cookie (HttpOnly, Secure y SameSite) y explicar de qué protege cada uno.
+    - Ver las cookies con curl y en DevTools, y distinguir las cookies de terceros y localStorage.
+  prerequisites: [http-headers]
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Imagina que añades una taza al carrito de la tienda de Ana y Luis y pulsas «Pagar». La página de pago se carga… y tu carrito está vacío. Para el servidor, esa petición viene de un desconocido.
+
+No es un fallo de la tienda: HTTP funciona así. Como viste en [la lección 2 de la Fase 0](/fase-0/modelo-cliente-servidor/), cada petición le llega al <Term id="server">servidor</Term> como si fuera la primera. HTTP es un protocolo **sin estado** (*stateless*): no guarda nada de una petición a la siguiente.
+
+Para que la tienda te recuerde, el navegador tiene que llevarle en cada petición algo que te identifique: una <Term id="cookie">cookie</Term>. Y como, para el servidor, quien tiene tu cookie eres tú, media lección trata de cómo protegerla.
+
+## La analogía
+
+<Analogy>
+
+Piensa en el guardarropa de un teatro. Dejas el abrigo y te dan un resguardo con un número, el 42. Al salir, enseñas el 42 y te devuelven el abrigo, sin preguntarte el nombre.
+
+El resguardo es la cookie, y el abrigo, lo que el servidor guarda de ti: tu carrito o tu cuenta. Las reglas impresas en el resguardo («válido solo en este teatro», «caduca al cierre») son los atributos de la cookie.
+
+El guardarropa no mira caras: quien enseña el 42 se lleva el abrigo. Por eso importa tanto quién puede ver tu cookie.
+
+<div slot="limits">
+
+- Tú decides cuándo enseñas el resguardo. La cookie, no: el navegador la añade a cada petición que cumple sus reglas, aunque la provoque otra web.
+- Un resguardo cuesta falsificarlo; una cookie la cambia cualquiera en su navegador. No guardes en ella nada que el usuario no deba cambiar, como un precio.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### El servidor pide guardar y el navegador devuelve
+
+Así habla el navegador con la tienda, el servidor que tienes en tu VM:
+
+```mermaid
+sequenceDiagram
+    participant N as Navegador
+    participant T as Servidor de la tienda
+    N->>T: GET /carrito
+    T-->>N: 200 OK<br/>Set-Cookie: carrito=c4f9e2; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax
+    Note over N: Guarda carrito=c4f9e2 durante una hora
+    N->>T: GET /productos<br/>Cookie: carrito=c4f9e2
+    T-->>N: 200 OK<br/>(sabe que eres el carrito c4f9e2)
+```
+
+Son dos <Term id="header">cabeceras</Term>, una en cada sentido:
+
+- **`Set-Cookie`**, en la respuesta: el servidor pide guardar una cookie. Primero, el nombre y el valor (`carrito=c4f9e2`); detrás, separados por `;`, los atributos.
+- **`Cookie`**, en las peticiones siguientes: el navegador la devuelve. Solo el nombre y el valor: los atributos son instrucciones para el navegador y nunca vuelven al servidor.
+
+Cada cookie llega en su propia línea `Set-Cookie`. De vuelta, el navegador las junta en una sola cabecera: `Cookie: carrito=c4f9e2; idioma=es`.
+
+### Una sesión: el número en la cookie, los datos en el servidor
+
+`c4f9e2` no significa nada por sí solo: es el número del resguardo. Un servidor de verdad tiene una tabla con lo que corresponde a cada número: «c4f9e2: una taza y una camiseta».
+
+Eso es una <Term id="session">sesión</Term>. Iniciar sesión funciona igual: escribes tu contraseña una vez, el servidor la comprueba, crea una sesión y te envía su identificador. Desde entonces, la cookie demuestra quién eres. Por eso un identificador real no es corto como `c4f9e2`, sino largo y aleatorio, imposible de adivinar.
+
+¿Por qué no guardar el carrito entero en la cookie?
+
+- El usuario puede cambiarla: un `precio=1` en una cookie es una invitación.
+- Cabe poco: unos 4 KB por cookie.
+- Viaja en cada petición a ese sitio, también en las de imágenes: cuanto más pesa, más lenta va la web.
+
+Otra forma de recordar quién eres es un token en la cabecera `Authorization` ([lección 4](/fase-2/cabeceras-http/)): sesiones frente a tokens, en la Fase 6.
+
+### Cuánto dura: Expires y Max-Age
+
+- **`Max-Age=3600`:** dura 3600 segundos, una hora, desde que llega.
+- **`Expires=Tue, 12 Oct 2027 18:36:42 GMT`:** dura hasta esa fecha. Si lleva los dos, manda `Max-Age`.
+- **Ninguno:** se borra al cerrar el navegador, salvo si el navegador reabre las pestañas de la última vez.
+
+Chrome no deja que una cookie dure más de 400 días. Para borrarla, el servidor la reenvía con el mismo nombre, la misma ruta y `Max-Age=0`.
+
+### A quién se la devuelve el navegador
+
+El navegador **no envía todas sus cookies en cada petición**. Cada cookie va solo a las peticiones dirigidas al sitio que la creó, y solo si cumple todas sus reglas:
+
+| Atributo | Sin él | Con él |
+|---|---|---|
+| `Domain` | Solo al dominio exacto que la creó, `tienda.example` | `Domain=tienda.example`: también a sus subdominios, como `api.tienda.example` |
+| `Path` | A la carpeta de la ruta que la creó: si la crea `/cuenta/datos`, a todo lo que cuelga de `/cuenta` | `Path=/`: a todas las rutas del sitio |
+| `Max-Age` o `Expires` | Hasta que cierres el navegador | Hasta que caduque |
+| `Secure` | Por `https://` y por `http://` | Solo por `https://` |
+| `SameSite` | Depende del navegador (más abajo) | Decide si viaja cuando la petición la provoca otra web |
+
+`tienda.example` no puede crear cookies de `banco.example`. `Path` sirve para ordenar, no para proteger. Y las cookies no miran el puerto.
+
+### HttpOnly: JavaScript no puede leerla
+
+Las páginas web llevan programas en JavaScript, el lenguaje que mueve los botones y los menús. Ese código lee las cookies de su página con `document.cookie`: `document` es la página, y `cookie`, sus cookies.
+
+El peligro es el código ajeno. Si alguien cuela su JavaScript en una página de la tienda (un ataque llamado XSS, de la Fase 6), puede leer la cookie de sesión, enviársela y entrar en la cuenta de la víctima.
+
+**`HttpOnly` esconde la cookie de JavaScript, no de la red.** El navegador la sigue enviando en cada petición, así que la sesión funciona igual, pero el código de la página no puede leerla ni cambiarla. Una cookie de sesión debe llevar siempre `HttpOnly`; solo se deja sin él lo que la página necesita leer, como el idioma.
+
+### Secure: solo por HTTPS
+
+Una cookie sin `Secure` también viaja en las peticiones `http://`, sin cifrar: cualquiera en el camino puede leerla, como viste en [la lección 8 de la Fase 0](/fase-0/tls-y-https/). Con `Secure`, solo viaja por <Term id="https">HTTPS</Term>.
+
+Una web servida por `http://` tampoco puede crear cookies `Secure`: Chrome y Firefox las descartan, salvo en `http://localhost`, para que puedas programar.
+
+### SameSite: si viaja cuando la petición viene de otra web
+
+Imagina que visitas `ofertas-falsas.example`. Esa página puede tener un enlace a la tienda, cargar una imagen suya o esconder un formulario que le envía un `POST`. ¿Llevan tu cookie esas peticiones?
+
+Lo decide `SameSite`, que compara el sitio de la página que provoca la petición con el de su destino. Un **sitio** es el dominio que se registra (`tienda.example`) con sus subdominios (`api.tienda.example`); para Chrome, además, `http://` y `https://` son sitios distintos. En [la lección 6](/fase-2/que-es-cors/) verás el <Term id="origin">origen</Term>, una idea más estricta.
+
+| Desde otra web… | `Strict` | `Lax` | `None` |
+|---|---|---|---|
+| Haces clic en un enlace a la tienda | No viaja | Viaja | Viaja |
+| Un formulario envía un `POST` a la tienda | No viaja | No viaja | Viaja |
+| La página carga una imagen de la tienda | No viaja | No viaja | Viaja |
+| El JavaScript de la página hace una petición a la tienda | No viaja | No viaja | Solo si ese código lo pide ([lección 6](/fase-2/que-es-cors/)) |
+
+Desde la propia tienda, viaja con los tres valores. Con `None`, siempre que el navegador no bloquee las cookies de terceros (más abajo).
+
+- **`Strict`:** nunca viaja desde otro sitio, ni al seguir un enlace: si llegas a la tienda desde Google, la primera página te ve sin sesión. Es para lo más delicado, como un banco.
+- **`Lax`:** viaja cuando *tú* vas a la tienda con un enlace (una navegación con `GET`), pero no en lo que otra web hace por su cuenta. Es lo habitual para una sesión.
+- **`None`:** viaja siempre, para lo que funciona dentro de otras webs, como un pago incrustado. Exige `Secure`: sin él, Chrome y Firefox la descartan.
+
+¿Y sin `SameSite`? **Chrome, y los navegadores basados en él como Edge, la tratan como `Lax`** (con una excepción: en sus dos primeros minutos, también viaja en un formulario `POST` desde otra web). Firefox y Safari no aplican esa regla. Escríbelo siempre.
+
+`Lax` deja pasar los enlaces: si la tienda vaciara el carrito con un `GET /carrito/vaciar`, un enlace en otra web lo vaciaría. Por eso un `GET` no debe cambiar nada ([lección 2](/fase-2/metodos-http/)). Que otra web haga que tu navegador envíe peticiones con tus cookies es la base de un ataque, el <Term id="csrf">CSRF</Term>, que verás en [la lección 6](/fase-2/que-es-cors/) y en la Fase 6.
+
+### Cookies propias y de terceros
+
+Las cookies del sitio que ves en la barra de direcciones son **propias**. Pero una página carga cosas de otros dominios, como anuncios o un botón de «Me gusta», y cada una puede traer sus cookies. Son <Term id="third-party-cookie">cookies de terceros</Term>.
+
+Un anunciante presente en mil webs recibe su cookie desde las mil: sabe por dónde pasas. Por eso los navegadores las limitan. En octubre de 2026:
+
+- Safari las bloquea por defecto [desde 2020](https://webkit.org/blog/10218/full-third-party-cookie-blocking-and-more/).
+- Firefox, [desde 2022](https://blog.mozilla.org/en/products/firefox/firefox-rolls-out-total-cookie-protection-by-default-to-all-users-worldwide/), guarda las de cada web en un bote aparte, así que el anunciante ve una cookie distinta en cada una.
+- Chrome las permite, salvo en incógnito o si las bloqueas tú. En [abril de 2025](https://privacysandbox.google.com/blog/privacy-sandbox-next-steps) anunció que lo deja así.
+
+En la Unión Europea, una web tiene que pedirte permiso para las cookies que no son imprescindibles, como las de publicidad: de ahí los avisos. La del carrito o la de tu sesión no lo necesitan.
+
+### Cookies o localStorage
+
+Una web también puede guardar datos en localStorage («almacenamiento local»), que funciona al revés:
+
+| | Cookie | localStorage |
+|---|---|---|
+| Quién lo lee | El servidor, en cada petición, y el JavaScript de la página si no es `HttpOnly` | Solo el JavaScript de la página |
+| Viaja solo al servidor | Sí | Nunca |
+| Cuánto cabe | Unos 4 KB por cookie | Unos 5 MB por web |
+| Si alguien cuela su JavaScript | `HttpOnly` la protege | Lo puede leer todo |
+
+Para un identificador de sesión gana la cookie `HttpOnly`. localStorage sirve para lo que no importa que se lea, como el tema claro u oscuro.
+
+## Pruébalo
+
+El objetivo: hacer de navegador con `curl` y comprobar en el navegador que JavaScript no puede leer la cookie del carrito, aunque viaje en cada petición.
+
+<Aside type="caution" title="Nunca pegues una cookie de verdad">
+
+Una cookie de sesión vale lo mismo que tu contraseña. No copies las de tu navegador en un comando, una web ni un chat, te lo pida quien te lo pida. Aquí solo verás cookies de prueba.
+
+</Aside>
+
+Primero, en tu portátil:
+
+<TryIt
+  title="1. Las cookies de una web real"
+  cmd="curl -sI https://github.com | grep -i '^set-cookie'"
+  output={`set-cookie: _gh_sess=qco6SrnNp%2BGaJM73…; path=/; HttpOnly; secure; SameSite=Lax
+set-cookie: _octo=GH1.1.1411589659.1791830202; expires=Tue, 12 Oct 2027 18:36:42 GMT; domain=.github.com; path=/; secure; SameSite=Lax
+set-cookie: logged_in=no; expires=Tue, 12 Oct 2027 18:36:42 GMT; domain=.github.com; path=/; HttpOnly; secure; SameSite=Lax`}
+>
+
+`-I` pide solo las cabeceras, `-s` calla la barra de progreso y `grep -i` ([lección 3 de la Fase 1](/fase-1/pipes-y-redirecciones/)) deja las líneas de `set-cookie`, que salen en minúsculas porque GitHub usa HTTP/2.
+
+- `_gh_sess` es la sesión: larga y aleatoria (la hemos cortado), con los tres atributos y sin `expires`: se borra al cerrar el navegador.
+- `_octo` no lleva `HttpOnly`: el JavaScript de la página puede leerla.
+- `logged_in=no`, con `domain=.github.com`, también va a subdominios como `gist.github.com`.
+
+Tus valores y tus fechas serán otros.
+
+</TryIt>
+
+Ahora, en tu VM (`multipass shell curso`), donde la tienda responde en el puerto 8080 desde que la instalaste en [la introducción de esta fase](/fase-2/). Si no tienes VM, lee las salidas. Tu versión de `curl` puede ser otra.
+
+<TryIt
+  title="2. El servidor te da la cookie"
+  cmd="curl -i localhost:8080/carrito"
+  output={`HTTP/1.1 200 OK
+Server: nginx/1.24.0 (Ubuntu)
+Date: Mon, 12 Oct 2026 18:38:19 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 25
+Connection: keep-alive
+Set-Cookie: carrito=c4f9e2; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax
+
+Tu carrito está vacío.`}
+>
+
+Fíjate en la línea `Set-Cookie`: no lleva `Secure` porque la tienda de prácticas no tiene HTTPS. Si repites la orden, `curl` no envía la cookie: no guarda nada si no se lo pides. Si sale `Couldn't connect to server`, repasa la introducción.
+
+</TryIt>
+
+<TryIt
+  title="3. Guárdala en un fichero"
+  cmd={`curl -c cookies.txt localhost:8080/carrito\ncat cookies.txt`}
+  output={`Tu carrito está vacío.
+# Netscape HTTP Cookie File
+# https://curl.se/docs/http-cookies.html
+# This file was generated by libcurl! Edit at your own risk.
+
+#HttpOnly_localhost	FALSE	/	FALSE	1791833899	carrito	c4f9e2`}
+>
+
+`-c` (de *cookie jar*, «bote de las galletas») guarda las cookies recibidas en un fichero. La última línea es la cookie: el dominio (con la marca `#HttpOnly_`), si vale para subdominios, la ruta, si es `Secure`, la caducidad (en segundos desde 1970; la tuya será otra), el nombre y el valor.
+
+</TryIt>
+
+<TryIt
+  title="4. Devuélvela"
+  cmd="curl -v -b cookies.txt localhost:8080/productos"
+  output={`…
+> GET /productos HTTP/1.1
+> Host: localhost:8080
+> User-Agent: curl/8.5.0
+> Accept: */*
+> Cookie: carrito=c4f9e2
+> 
+< HTTP/1.1 200 OK
+< Server: nginx/1.24.0 (Ubuntu)
+…
+[{"id":1,"nombre":"Camiseta","precio":20},{"id":2,"nombre":"Taza","precio":8.5},{"id":3,"nombre":"Sudadera","precio":35}]
+…`}
+>
+
+`-b` añade las cookies del fichero que tocan. Fíjate en `> Cookie: carrito=c4f9e2`: sin atributos, y en `/productos`, porque tiene `Path=/`. Hemos quitado líneas (`…`). nginx la ignora; en la Fase 3, tu servidor la buscará en su tabla de sesiones.
+
+</TryIt>
+
+Ahora, una cookie que el JavaScript de la tienda sí pueda leer: el idioma. Abre la configuración con `sudo nano /etc/nginx/sites-available/tienda` (el editor de la [lección 2 de la Fase 1](/fase-1/comandos-linux-archivos/)) y, en `location = /carrito`, debajo de la línea del carrito, añade esta, igual pero sin `HttpOnly`:
+
+```nginx
+add_header Set-Cookie "idioma=es; Path=/; Max-Age=3600; SameSite=Lax" always;
+```
+
+Guarda con <kbd>Ctrl</kbd> + <kbd>O</kbd> y <kbd>Enter</kbd>, y sal con <kbd>Ctrl</kbd> + <kbd>X</kbd>.
+
+<TryIt
+  title="5. Comprueba y recarga"
+  cmd="sudo nginx -t && sudo systemctl reload nginx"
+  output={`nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful`}
+>
+
+Si `nginx -t` dice `failed`, mira la línea que indica: suele faltar el `;` final o unas comillas.
+
+</TryIt>
+
+<TryIt
+  title="6. Dos cookies, dos líneas"
+  cmd="curl -i localhost:8080/carrito"
+  output={`HTTP/1.1 200 OK
+Server: nginx/1.24.0 (Ubuntu)
+Date: Mon, 12 Oct 2026 19:03:07 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 25
+Connection: keep-alive
+Set-Cookie: carrito=c4f9e2; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax
+Set-Cookie: idioma=es; Path=/; Max-Age=3600; SameSite=Lax
+
+Tu carrito está vacío.`}
+>
+
+Cada cookie, en su línea. Si solo sale la del carrito, repítelo: nginx tarda un instante en recargar.
+
+</TryIt>
+
+Ahora, el navegador. Abre en Chrome `http://192.168.64.2:8080/carrito`, con la IP de tu VM (sale en `multipass list`, como en [la lección 9 de la Fase 1](/fase-1/que-es-ssh/)). Abre <Term id="devtools">DevTools</Term>, como en la introducción de esta fase:
+
+1. **Dónde se guardan.** En la pestaña **Aplicación** (*Application*), abre **Almacenamiento** (*Storage*) › **Cookies** y elige la dirección de tu VM. Están las dos, y la columna `HttpOnly` solo está marcada en `carrito`. En Firefox, es la pestaña **Almacenamiento** (*Storage*).
+2. **Que viajan las dos.** En la pestaña **Red** (*Network*), recarga y haz clic en la petición `carrito`. En **Encabezados** (*Headers*; en Firefox, «Cabeceras»), la petición lleva `Cookie: carrito=c4f9e2; idioma=es`.
+3. **Qué ve JavaScript.** En la pestaña **Consola** (*Console*), escribe esto y pulsa Enter:
+
+<TryIt title="7. Lo que ve el JavaScript de la página" cmd="document.cookie" lang="js" output="'idioma=es'">
+
+Solo sale `idioma`. La del carrito viaja en cada petición, pero el código de la página no la ve: eso es `HttpOnly`.
+
+Escríbelo a mano: Chrome frena lo pegado en la consola, porque así se roban sesiones.
+
+</TryIt>
+
+Para deshacerlo, borra la línea del idioma y repite el paso 5. Las cookies del navegador puedes borrarlas en **Aplicación**, con el botón derecho sobre cada fila.
+
+<SelfCheck question="Reto: la tienda quiere un botón «Vaciar carrito» que, además, olvide la cookie. ¿Qué Set-Cookie tendría que enviar? Cámbialo en la línea del carrito y compruébalo con curl -b cookies.txt -c cookies.txt.">
+
+La misma cookie, con el mismo nombre y la misma ruta, sin valor y con `Max-Age=0`:
+
+```nginx
+add_header Set-Cookie "carrito=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax" always;
+```
+
+Tras recargar nginx, `curl -b cookies.txt -c cookies.txt localhost:8080/carrito` envía la cookie vieja, recibe la orden de borrarla y reescribe el fichero: con `cat cookies.txt` verás que la línea de `carrito` ya no está. Con otra ruta, como `Path=/carrito`, no la borraría: para el navegador sería otra cookie. Al terminar, deja la línea como estaba.
+
+</SelfCheck>
+
+## Ya lo has visto
+
+- **«Mantener la sesión iniciada».** Es una cookie con una caducidad larga. Y «Cerrar sesión» hace que el servidor olvide tu sesión y suele borrar la cookie con `Max-Age=0`.
+- **La ventana de incógnito.** Tiene su propio bote de cookies, que se vacía al cerrarla: por eso ahí no tienes sesión.
+- **Esta web.** No crea cookies: el tema claro u oscuro que eliges se guarda en localStorage y nunca viaja al servidor.
+
+Y si programas:
+
+- `fetch` envía las cookies a su propio origen; a otro, solo con `credentials: 'include'` y, para leer la respuesta, si el servidor lo permite ([lección 6](/fase-2/que-es-cors/)).
+- Tu frontend en `localhost:5173` y tu API en `localhost:3000` comparten cookies: no miran el puerto.
+
+## Errores comunes
+
+- **Creer que el navegador envía todas tus cookies a todas partes.** Cada cookie va solo a su sitio, si cumple su dominio, su ruta, `Secure` y `SameSite`. Una web nunca recibe las cookies de otra.
+- **Creer que `HttpOnly` esconde la cookie del servidor o del usuario.** Solo la esconde de JavaScript: viaja en cada petición, y tú la ves y la cambias en DevTools.
+- **Guardar en una cookie lo que el usuario no debe cambiar**, como `precio=20` o `admin=true`. Guarda un identificador y deja los datos en el servidor.
+- **`SameSite=None` sin `Secure`, o `Secure` en una web por `http://`.** Chrome y Firefox descartan la cookie sin ningún error en la página. Si pruebas `Secure` en la tienda de la VM por su IP, la cookie no aparecerá.
+
+## Resumen
+
+- HTTP no tiene memoria. El servidor envía `Set-Cookie`, y el navegador le devuelve el nombre y el valor en `Cookie`, solo en las peticiones a ese sitio que cumplen sus reglas.
+- Una sesión guarda los datos en el servidor y un identificador largo y aleatorio en la cookie. Para el servidor, quien lo tiene eres tú.
+- `HttpOnly` esconde la cookie de JavaScript, `Secure` la limita a HTTPS y `SameSite` decide si viaja cuando la petición la provoca otra web.
+- localStorage no viaja solo al servidor, pero cualquier JavaScript de la página lo lee.
+- En la Fase 3 escribirás el servidor de la tienda en código: él creará el identificador de cada carrito y lo enviará con `Set-Cookie`.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Tienes una cookie de sesión de tienda.example y visitas blog.example, una web que no tiene nada que ver. ¿Puede blog.example recibir tu cookie de la tienda?"
+  review="A quién se la devuelve el navegador"
+>
+
+<QuizOption text="Sí: el navegador envía todas sus cookies en cada petición, a cualquier web.">
+
+Cada cookie va solo a las peticiones dirigidas al sitio que la creó.
+
+</QuizOption>
+
+<QuizOption text="No: el navegador solo la envía en las peticiones a tienda.example." correct>
+
+Aunque el blog cargue algo de la tienda, esa petición va a la tienda: el blog nunca ve la cookie.
+
+</QuizOption>
+
+<QuizOption text="Solo si la cookie no lleva HttpOnly: entonces cualquier web puede leerla.">
+
+Sin `HttpOnly`, la lee el JavaScript de las páginas de la propia tienda, no el de otras webs. Una web nunca lee las cookies de otra.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Alguien consigue colar su JavaScript en una página de la tienda. La cookie de sesión lleva HttpOnly. ¿Qué le impide eso?"
+  review="HttpOnly: JavaScript no puede leerla"
+>
+
+<QuizOption text="Leer la cookie de sesión y llevársela a otro ordenador." correct>
+
+Su código no puede leerla con `document.cookie`, así que no puede llevársela.
+
+</QuizOption>
+
+<QuizOption text="Que el navegador envíe la cookie en las peticiones que lance su código.">
+
+`HttpOnly` no cambia cuándo viaja la cookie: va en cada petición a la tienda, también en las de ese código. Por eso XSS sigue siendo grave.
+
+</QuizOption>
+
+<QuizOption text="Que lea la cookie espiando la red de una cafetería.">
+
+De eso protegen `Secure` y HTTPS. `HttpOnly` no tiene nada que ver con la red.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Buscas la tienda en Google y haces clic en el resultado. Tu cookie de sesión tiene SameSite=Strict. ¿Qué ves al llegar?"
+  review="SameSite: si viaja cuando la petición viene de otra web"
+>
+
+<QuizOption text="Un error: Strict bloquea los enlaces que llegan desde otra web.">
+
+`SameSite` no bloquea peticiones: solo decide si la cookie va dentro. La página carga con normalidad.
+
+</QuizOption>
+
+<QuizOption text="Tu cuenta: un clic tuyo siempre cuenta como del mismo sitio.">
+
+El clic sale de una página de Google, otro sitio. Eso distingue `Lax`, que deja pasar la cookie al seguir un enlace, de `Strict`, que no.
+
+</QuizOption>
+
+<QuizOption text="La tienda sin tu sesión, en esa primera página." correct>
+
+Con `Strict`, la cookie no viaja desde otro sitio, ni al seguir un enlace; al navegar dentro de la tienda, ya sí. Por eso las sesiones suelen usar `Lax`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La cookie de sesión de una web no lleva Secure, y la web también responde por http://. ¿Qué riesgo hay?"
+  review="Secure: solo por HTTPS"
+>
+
+<QuizOption text="Ninguno mientras la web tenga certificado: el navegador cifra las cookies por su cuenta.">
+
+El navegador no cifra las cookies: las cifra HTTPS. En una petición `http://`, la cookie va a la vista.
+
+</QuizOption>
+
+<QuizOption text="Que viaje sin cifrar en una petición http:// y alguien en la red la lea." correct>
+
+Sin `Secure`, la cookie también va por `http://`, y cualquiera en el camino puede copiarla y hacerse pasar por ti.
+
+</QuizOption>
+
+<QuizOption text="Que otras webs la reciban en sus peticiones.">
+
+`Secure` no decide a qué sitio va la cookie, sino por qué conexión. A otras webs no va nunca.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La tienda quiere recordar qué hay en tu carrito entre una página y otra. ¿Qué debería guardar en la cookie?"
+  review="Una sesión: el número en la cookie, los datos en el servidor"
+>
+
+<QuizOption text="Los productos y sus precios: una cookie solo la puede cambiar el servidor que la creó.">
+
+Cualquiera cambia sus cookies en DevTools o con `curl`. Un precio en una cookie lo decide el usuario.
+
+</QuizOption>
+
+<QuizOption text="Tu usuario y tu contraseña, para que el servidor te reconozca en cada petición.">
+
+La contraseña solo se envía al iniciar sesión. En una cookie viajaría en cada petición.
+
+</QuizOption>
+
+<QuizOption text="Un identificador largo y aleatorio; los productos, en el servidor." correct>
+
+Es una sesión: el carrito se queda en el servidor, y la cookie solo lleva el número, como el resguardo.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un compañero guarda el identificador de sesión en localStorage «porque así no viaja en cada petición y es más seguro». ¿Qué le dices?"
+  review="Cookies o localStorage"
+>
+
+<QuizOption text="Que cualquier JavaScript de la página lo lee; una cookie HttpOnly, no." correct>
+
+Si alguien cuela su código en la página, localStorage no tiene ninguna protección. Una cookie `HttpOnly` sigue funcionando sin que el código la vea.
+
+</QuizOption>
+
+<QuizOption text="Que da igual: localStorage también se esconde de JavaScript, como HttpOnly.">
+
+Es al revés: localStorage solo se lee desde JavaScript. No tiene nada parecido a `HttpOnly`.
+
+</QuizOption>
+
+<QuizOption text="Que localStorage también viaja al servidor en cada petición, como una cookie.">
+
+localStorage nunca viaja solo: el código de la página tiene que leerlo y enviarlo. En eso tu compañero tiene razón; en lo de «más seguro», no.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Cookies HTTP](https://developer.mozilla.org/es/docs/Web/HTTP/Guides/Cookies) (MDN): la guía completa, con todos los atributos.
+- [Set-Cookie](https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Headers/Set-Cookie) (MDN): la cabecera, atributo por atributo.
+- [SameSite cookies explained](https://web.dev/articles/samesite-cookies-explained) (web.dev), en inglés: `Strict`, `Lax` y `None` con ejemplos, del equipo de Chrome.
+- [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265), en inglés: el estándar de las cookies.

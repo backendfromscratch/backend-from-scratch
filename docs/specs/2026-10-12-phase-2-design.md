@@ -1,7 +1,7 @@
 # Design: Phase 2, «HTTP a fondo»
 
 - **Date:** 2026-10-12
-- **Status:** approved on 2026-10-12. The author accepted the four proposals in §9: no pilot, the English after they read the Spanish, the CORS lab, and no screenshots of DevTools.
+- **Status:** approved on 2026-10-12. The author accepted the four proposals in §9: no pilot, the English after they read the Spanish, the CORS lab, and no screenshots of DevTools. **The introduction and the eight lessons in Spanish were written on 2026-10-12**, each reviewed independently; the CORS lab waits for its own spec (drafted, in its own PR), and the English for the author's reading.
 - **Origin:** the roadmap in `CLAUDE.md` (Phase 2). The author asked for this spec once Phase 1 was merged (2026-10-12).
 - **Reference specs:** `docs/specs/2026-10-02-site-and-phase-0-design.md` (template, levels of «Pruébalo», languages) and `docs/specs/2026-10-03-phase-1-design.md` (the practice VM and the way Phase 1 was written). Lesson template, quiz, glossary, translation and SEO rules do not change (`docs/style-guide.md`).
 
@@ -102,7 +102,7 @@ The phase's `lessonCount` in `web/src/data/phases.ts` becomes 8, and its status 
 Static files whose headers are set in `web/public/_headers`, so the lessons have a stable server with known answers:
 
 - `cors-on.json` with `Access-Control-Allow-Origin: *`, and `cors-off.json` without it (one pair for both languages, like `access.log`; **done on 2026-10-12**): from the console of another origin (`https://example.com`), the first can be read and the second gives the CORS error (lesson 6). It needs no server code: `_headers` already sets headers on `/practicas/` (`X-Robots-Tag`, `Content-Type`).
-- Nothing else is needed: what the rest of the lessons show on the site is already there (checked on 2026-10-12: `POST`, `PUT`, `DELETE` and `OPTIONS` answer `405` without `Allow`; `/fase-0` answers `307` to `/fase-0/`; `http://` answers `301`; the HTML is `public, max-age=0, must-revalidate`, compressed with `br` and without `ETag`; the `/_astro/` files are `public, max-age=31536000, immutable`, with `ETag` and `304` for `If-None-Match`; `alt-svc: h3=":443"`).
+- Nothing else is needed: what the rest of the lessons show on the site is already there (checked on 2026-10-12: `POST`, `PUT`, `PATCH`, `DELETE` and `OPTIONS` answer `405` without `Allow`, even for paths that do not exist; `/fase-0` answers `307` to `/fase-0/`; `http://` answers `301`; the HTML is `public, max-age=0, must-revalidate`, compressed with `br` and without `ETag`; the `/_astro/` files are `public, max-age=31536000, immutable`, with `ETag` and `304` for `If-None-Match`; `alt-svc: h3=":443"`).
 - **Risk:** Cloudflare can change these details (for example, add `Allow` to the `405`). Outputs carry their date, and a test cannot check production; a note in `docs/todo.md` asks to repeat them before each review of the phase.
 
 ### 5.2 The shop's nginx configuration (for the VM)
