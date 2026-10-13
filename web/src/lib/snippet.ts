@@ -53,6 +53,7 @@ export function languageOf(file: string): string {
     js: 'js',
     json: 'json',
     sh: 'sh',
+    proto: 'proto',
   };
   const language = languages[extension] ?? (file.split('/').at(-1)?.startsWith('.') ? 'ini' : '');
   if (!language) throw new Error(`No language for «${file}»`);

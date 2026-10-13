@@ -1,0 +1,622 @@
+---
+translationKey: serialization
+title: "JSON y formatos binarios: serializar datos"
+description: "Qué es serializar y las trampas de JSON en una API: fechas en ISO 8601, dinero en céntimos, números grandes y null. Y Protobuf, comparado con JSON."
+sidebar:
+  label: "Serialización"
+  order: 6
+lesson:
+  oneLiner: "Serializar es convertir los datos de tu programa en bytes para enviarlos. JSON, el formato de casi todas las APIs, no tiene fechas, dinero ni enteros grandes: cómo escribirlos lo decides tú, y es parte del contrato. Protobuf, un formato binario, ocupa menos, pero sin su esquema no se lee."
+  objectives:
+    - Explicar qué es serializar y qué clases de datos tiene JSON, y cuáles no.
+    - Enviar las fechas en ISO 8601 y en UTC, el dinero en céntimos enteros y los ids grandes como texto, y distinguir null de un campo que no viene.
+    - Leer un mensaje de Protobuf byte a byte y compararlo con el mismo pedido en JSON.
+    - Decidir cuándo compensa un formato binario y cuándo quedarse con JSON.
+  prerequisites: [openapi]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+
+## El problema
+
+La empresa de reparto que usa la API de la tienda pide un dato nuevo: cuándo se hizo cada pedido, para llevar antes los más antiguos. Imagina que lo añades como lo escribirías a mano: `"fecha": "03/10/2026 11:30"`.
+
+Su programa tiene que adivinar dos cosas. ¿Es el 3 de octubre, o el 10 de marzo, como lo leería un programa de Estados Unidos? ¿Son las 11:30 de Madrid, o las de Bogotá, donde la empresa tiene su oficina? El texto no lo dice.
+
+Y no es la única trampa: la app de móvil suma un carrito, 8,50 + 0,10 + 0,20 €, y le sale `8.799999999999999`. Los datos están bien en tu servidor; se estropean al convertirlos para que viajen, o al leerlos al otro lado.
+
+## La analogía
+
+<Analogy>
+
+Imagina que envías un armario por mensajería. Entero no cabe en la furgoneta: lo desmontas, metes las piezas en una caja y, al llegar, alguien lo vuelve a montar.
+
+Puedes etiquetar cada pieza con su nombre, «puerta izquierda»: cualquiera entiende la caja, aunque las etiquetas ocupan sitio. Eso es JSON. O numerar las piezas y mandar el manual aparte: la caja pesa menos, pero sin el manual nadie sabe qué es la pieza 4. Eso es Protobuf, y el manual es su esquema.
+
+<div slot="limits">
+
+- Un armario llega igual que salió. Algunos datos, no: una fecha sale como fecha y llega como texto, y un número muy grande, con otras cifras, sin que nadie avise.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Serializar es convertir datos en bytes
+
+Ya lo has hecho: en la [lección 2 de la Fase 3](/fase-3/javascript-para-backend/#json-los-datos-convertidos-en-texto), `JSON.stringify` convertía un objeto en texto, y `JSON.parse`, al revés. Cada `c.json(pedido)` de tu API lo hace por ti.
+
+Eso es la <Term id="serialization">serialización</Term> (*serialization*): convertir los datos de la memoria de un programa en bytes que pueden viajar por la red o guardarse en un fichero. Deserializar es lo contrario. En JSON, cada cifra o letra sin tilde es un byte.
+
+Tu servidor y la app de móvil guardan los datos cada uno a su manera, y necesitan un formato común: en las APIs públicas, casi siempre <Term id="json">JSON</Term>.
+
+### JSON solo conoce seis clases de datos
+
+| Clase | Ejemplo |
+|---|---|
+| Texto | `"pendiente"` |
+| Número | `2`, `8.5` |
+| Verdadero o falso | `true`, `false` |
+| Nada | `null` |
+| <Term id="object">Objeto</Term> | `{"id":7}` |
+| Lista (<Term id="array">*array*</Term>) | `[1,2,3]` |
+
+No hay fechas, ni dinero, ni distinción entre enteros y decimales. Lo demás lo conviertes tú en una de esas seis cosas, y **cómo lo haces es parte del contrato de tu API**. Estas son las trampas más comunes.
+
+### Las fechas: texto en ISO 8601, en UTC
+
+`JSON.stringify` convierte una fecha en texto, y `JSON.parse` no la convierte de vuelta. Abre el <Term id="repl">REPL</Term> con `node`:
+
+<TryIt
+  title="En el REPL: una fecha va y vuelve como texto"
+  lang="js"
+  cmd={`const fecha = new Date('2026-10-13T09:30:00Z')
+const texto = JSON.stringify({ creadoEn: fecha })
+texto
+typeof JSON.parse(texto).creadoEn`}
+  output={`undefined
+undefined
+'{"creadoEn":"2026-10-13T09:30:00.000Z"}'
+'string'`}
+>
+
+- `new Date('…')` crea una fecha a partir de un texto, y `JSON.stringify` la escribe como `"2026-10-13T09:30:00.000Z"`: año, mes y día; una `T`; la hora con sus milésimas, y una `Z`.
+- `typeof` dice qué clase de dato es algo: al volver, `creadoEn` es un texto. Si el cliente quiere una fecha, la crea con `new Date(texto)`.
+
+Las salidas de esta lección son de Node 26.
+
+</TryIt>
+
+Ese formato es **ISO 8601**, una norma internacional: empieza por el año, así que nadie confunde el día con el mes. La `Z` significa **UTC**, la hora de referencia de todo el mundo, sin horario de verano, y es lo que más importa. Mira el mismo texto sin ella:
+
+<TryIt
+  title="El mismo texto, en dos zonas horarias"
+  cmd={`TZ=Europe/Madrid node -p "new Date('2026-10-13T09:30:00').toISOString()"
+TZ=America/Bogota node -p "new Date('2026-10-13T09:30:00').toISOString()"
+TZ=America/Bogota node -p "new Date('2026-10-13T09:30:00Z').toISOString()"`}
+  output={`2026-10-13T07:30:00.000Z
+2026-10-13T14:30:00.000Z
+2026-10-13T09:30:00.000Z`}
+>
+
+`TZ=…` cambia la zona horaria solo para esa orden. `node -p` ejecuta el JavaScript entre comillas y escribe el resultado, y `toISOString()` da la fecha en UTC.
+
+Sin la `Z`, `new Date` entiende «las 9:30 de aquí»: las 7:30 UTC en Madrid y las 14:30 UTC en Bogotá. Con la `Z`, lo mismo en cualquier sitio.
+
+</TryIt>
+
+**Envía las fechas en ISO 8601 y en UTC, con la `Z`.** Cada cliente las pasa a su hora local solo para enseñarlas. Así lo hace el proyecto: en `src/datos.ts`, el pedido tiene un campo nuevo:
+
+<ProjectCode file="tienda-api/15-serializacion/src/datos.ts" region="pedido" />
+
+`creadoEn` es un `string`, no un `Date`: lo que se guarda y lo que viaja es un texto. Así se rellena:
+
+<ProjectCode file="tienda-api/15-serializacion/src/datos.ts" region="crear-pedido" />
+
+`creadoEn = new Date()` es un valor por defecto: si no se pasa, vale la hora de ahora.
+
+Y en `src/esquemas.ts`, el esquema que se convierte en el contrato de la lección 5:
+
+<ProjectCode file="tienda-api/15-serializacion/src/esquemas.ts" region="pedido" />
+
+`z.iso.datetime()` es «un texto con una fecha y hora en ISO 8601». En el `openapi.json` sale como `"type": "string"` con `"format": "date-time"`: quien lea el contrato sabe qué esperar.
+
+### El dinero, en céntimos enteros
+
+El segundo problema del principio, en `ejemplos/dinero.ts`:
+
+<ProjectCode file="tienda-api/15-serializacion/ejemplos/dinero.ts" region="decimales" />
+
+<TryIt
+  title="Las cuentas de dinero.ts"
+  cmd="node ejemplos/dinero.ts"
+  output={`0.1 + 0.2 = 0.30000000000000004
+¿0.1 + 0.2 es 0.3? false
+
+En euros: 8.799999999999999
+En céntimos: 880
+Para enseñarlo: 8,80 €`}
+>
+
+Fíjate en el `false`: `0.1 + 0.2` no es `0.3`. Y la taza, la pegatina y la chapa suman `8.799999999999999`. No es cosa de JavaScript: Python o Java dan lo mismo.
+
+</TryIt>
+
+Lo explica el comentario del código: en binario, `0,1` no tiene forma exacta, como `1/3` en decimal (`0,3333…`). La solución es no usar decimales:
+
+<ProjectCode file="tienda-api/15-serializacion/ejemplos/dinero.ts" region="centimos" />
+
+- En céntimos, todo son enteros, y sumar enteros es exacto: `850 + 10 + 20` es `880`, siempre.
+- `Intl.NumberFormat` escribe un número como se espera en cada idioma: con `'es-ES'` y el euro, `8,80 €`.
+
+**El dinero viaja en céntimos enteros, y se pasa a euros solo para enseñarlo.** Por eso la versión 2 de la tienda (lección 4) cambió `"precio": 8.5` por `"precioCentimos": 850`, y la versión 1 traduce con `Math.round`, porque `8.29 * 100` da `828.9999999999999`. Las APIs de pagos hacen lo mismo: en [Stripe](https://docs.stripe.com/currencies), `"amount": 1099` son 10,99 dólares.
+
+### Los números enteros más allá de 2⁵³
+
+JavaScript guarda todos los números igual, con sitio para unas 16 cifras. Hasta 2⁵³ − 1, unos nueve mil billones, todos los enteros son exactos; por encima, no:
+
+<TryIt
+  title="En el REPL: un id demasiado grande"
+  lang="js"
+  cmd={`Number.MAX_SAFE_INTEGER
+JSON.parse('{"id":9007199254740993}')
+JSON.parse('{"id":"9007199254740993"}')`}
+  output={`9007199254740991
+{ id: 9007199254740992 }
+{ id: '9007199254740993' }`}
+>
+
+`Number.MAX_SAFE_INTEGER` es ese límite. El id `9007199254740993` llega como `9007199254740992`, otro número, sin ningún error. Entre comillas, como texto, llega entero.
+
+</TryIt>
+
+Pasa de verdad: los ids de X (antes Twitter) son números de 64 bits, y su API los envía como texto; su [documentación](https://docs.x.com/fundamentals/x-ids) lo explica con este mismo problema de JavaScript. **Los ids que puedan crecer tanto, o que vengan de otro sistema, van como texto.** Los de la tienda son pequeños y siguen siendo números.
+
+### null o ausente no son lo mismo
+
+Un campo puede valer `null` o no estar. Y JavaScript tiene `undefined`, que JSON no conoce:
+
+<TryIt
+  title="En el REPL: null, undefined y un campo que falta"
+  lang="js"
+  cmd={`JSON.stringify({ id: 7, nota: undefined, cupon: null })
+const pedido = JSON.parse('{"id":7,"cupon":null}')
+pedido.cupon
+pedido.nota`}
+  output={`'{"id":7,"cupon":null}'
+undefined
+null
+undefined`}
+>
+
+`JSON.stringify` borra los campos que valen `undefined`; `null`, en cambio, viaja. Al leer, `cupon` existe y vale `null`; `nota` no existe, y da `undefined`.
+
+</TryIt>
+
+`null` dice «este campo existe y está vacío»; un campo que no viene dice «de esto no te digo nada». En un `PATCH` ([Fase 2](/fase-2/metodos-http/#put-sustituye-patch-cambia-una-parte)), `{"telefono": null}` pide borrar el teléfono, y `{}`, no tocarlo. Si tu API trata igual las dos cosas, nadie puede borrar un teléfono.
+
+Decide qué acepta cada campo y escríbelo en el esquema: en Zod, `.optional()` permite que falte, y `.nullable()`, que valga `null`.
+
+### Los nombres de los campos también son contrato
+
+En JSON, los nombres viajan en cada objeto. Elige un estilo y no lo mezcles: la tienda usa `productoId` (*camelCase*), como JavaScript; GitHub, `created_at` (*snake_case*). Pon la unidad si hay duda, como en `precioCentimos`, y acierta a la primera: cambiar un nombre rompe a todos los clientes (lección 4).
+
+### Protobuf: un esquema y bytes en vez de texto
+
+<Term id="protobuf">Protobuf</Term> (*Protocol Buffers*) es un formato binario, de bytes que no son texto, creado por Google. Los datos se describen en un <Term id="schema">esquema</Term>, un fichero `.proto`. Este es el pedido, en `ejemplos/pedido.proto`:
+
+<ProjectCode file="tienda-api/15-serializacion/ejemplos/pedido.proto" />
+
+- `enum Estado` da un número a cada estado. El `0` es lo que se lee si el campo no viene: por eso es `ESTADO_SIN_DEFINIR`, no un estado de verdad.
+- `message Pedido` describe cada campo con su tipo (`uint32`, un entero sin signo) y su número. Los nombres van con guion bajo, por costumbre de Protobuf.
+- El `= 1`, `= 2`… no es un valor: es el número del campo, y **es lo que viaja en lugar del nombre**.
+
+Para usarlo desde Node hace falta un <Term id="package">paquete</Term>, `protobufjs`:
+
+<TryIt
+  title="Instala protobufjs"
+  cmd="npm install protobufjs@8.8.0"
+  output={`added 2 packages, and audited 37 packages in 569ms
+
+6 packages are looking for funding
+  run \`npm fund\` for details
+
+found 0 vulnerabilities`}
+>
+
+Tus tiempos serán otros.
+
+</TryIt>
+
+El programa que compara los dos formatos, `ejemplos/protobuf.ts`, en tres partes:
+
+<ProjectCode file="tienda-api/15-serializacion/ejemplos/protobuf.ts" region="importar" />
+
+`import.meta.dirname` es la carpeta de este fichero, y `join` le añade `pedido.proto`. `enHexadecimal` escribe cada byte en hexadecimal, que cuenta del 0 al 9 y sigue de la `a` a la `f`: un byte, del 0 al 255, va de `00` a `ff`.
+
+El pedido en JSON:
+
+<ProjectCode file="tienda-api/15-serializacion/ejemplos/protobuf.ts" region="json" />
+
+`Buffer.from` convierte el texto en bytes, y `.length` los cuenta. Y el mismo pedido en Protobuf:
+
+<ProjectCode file="tienda-api/15-serializacion/ejemplos/protobuf.ts" region="protobuf" />
+
+- `protobuf.load` lee el `.proto`; leer un fichero tarda, así que lleva `await` ([Fase 3](/fase-3/javascript-para-backend/#esperar-lo-que-tarda-promesas-async-y-await)). `lookupType` busca en él el mensaje `Pedido`.
+- `fromObject` prepara una copia del pedido según el esquema, con el estado como lo llama el `enum`, y `encode(…).finish()` la serializa: da los bytes.
+- `decode` hace lo contrario, y `toObject` da un objeto normal; `{ enums: String }` pide el estado por su nombre.
+
+<TryIt
+  title="El mismo pedido, en JSON y en Protobuf"
+  cmd="node ejemplos/protobuf.ts"
+  output={`JSON: 95 bytes
+{"id":7,"productoId":1,"cantidad":2,"estado":"pendiente","creadoEn":"2026-10-13T09:30:00.000Z"}
+
+Protobuf: 34 bytes
+08 07 10 01 18 02 20 01 2a 18 32 30 32 36 2d 31 30 2d 31 33 54 30 39 3a 33 30 3a 30 30 2e 30 30 30 5a
+
+Leído de los bytes: {
+  id: 7,
+  productoId: 1,
+  cantidad: 2,
+  estado: 'PENDIENTE',
+  creadoEn: '2026-10-13T09:30:00.000Z'
+}`}
+>
+
+95 bytes frente a 34, y al leerlos con el esquema, el pedido vuelve entero. Si sale `Cannot find package 'protobufjs'`, te falta instalarlo; si sale `no such file`, `pedido.proto` no está en `ejemplos/`.
+
+</TryIt>
+
+Esos 34 bytes se pueden leer a mano:
+
+| Bytes | Qué dicen |
+|---|---|
+| `08 07` | Campo 1 (`id`), un número: 7 |
+| `10 01` | Campo 2 (`producto_id`): 1 |
+| `18 02` | Campo 3 (`cantidad`): 2 |
+| `20 01` | Campo 4 (`estado`): 1, que es `PENDIENTE` |
+| `2a 18` | Campo 5 (`creado_en`), un texto de `18` bytes, que en decimal son 24 |
+| `32 30 32 36 …` | `2026-10-13T09:30:00.000Z`, letra a letra: `32` es el «2», y `30`, el «0» |
+
+El primer byte de cada fila es el número del campo por 8, más 0 si es un número o 2 si es un texto: el campo 5 da 42, `2a`. Ni nombres, ni comillas, ni llaves: de ahí el ahorro. La fecha, en cambio, sigue siendo texto: 26 de los 34 bytes.
+
+Quien lee con un `.proto` antiguo se salta los números de campo que no conoce. Por eso añadir un campo con un número nuevo no rompe a nadie, y un número usado no se reutiliza nunca.
+
+### Cuándo compensa un formato binario
+
+| | JSON | Protobuf |
+|---|---|---|
+| Se lee | A simple vista, con `curl` o DevTools | Solo con el esquema y un programa |
+| Tamaño | Más grande: los nombres van en cada objeto | Menor: este pedido, algo más de un tercio |
+| Esquema | Opcional, como tu OpenAPI | Obligatorio: el `.proto` |
+| Dónde se usa | APIs públicas y webs | Entre los servicios de una misma empresa |
+
+El tamaño engaña un poco: las respuestas suelen comprimirse antes de viajar ([Fase 2](/fase-2/cabeceras-http/#el-servidor-elige-según-lo-que-pides)), y lo que más se repite en JSON, los nombres, es lo que mejor se comprime. Lo medirás en «Pruébalo».
+
+Protobuf compensa cuando controlas los dos lados y el volumen es enorme: servicios de una empresa que se llaman miles de veces por segundo, casi siempre con gRPC (lección 9). Para una API que usa gente que no conoces, JSON: se lee con `curl`, sin pedirte el esquema.
+
+## Pruébalo
+
+El objetivo: que cada pedido diga cuándo se hizo, sin romper a ningún cliente, y medir lo que ocupa. Partes de tu proyecto de la lección 5, en `~/curso-backend/fase-3/tienda-api`. Si te atascas, descarga la carpeta de esta lección y compárala con la tuya: desde `~/curso-backend/fase-3`, `curl -O https://backenddesdecero.com/practicas/tienda-api/15-serializacion.tar.gz` y `tar -xzf 15-serializacion.tar.gz`.
+
+### Añade la fecha a los pedidos
+
+1. En `src/datos.ts`, cambia el `interface Pedido` y la función `crearPedido` por los de «Las fechas: texto en ISO 8601, en UTC».
+2. En el mismo fichero, cambia los pedidos de ejemplo por estos:
+
+<ProjectCode file="tienda-api/15-serializacion/src/datos.ts" region="pedidos-de-ejemplo" />
+
+Uno cada siete horas desde el 1 de octubre a las 9:00 UTC: `getTime()` da la fecha en milisegundos, y sumarle `SIETE_HORAS` avanza siete horas. Con fechas fijas, tu lista sale igual que aquí.
+
+3. En `src/esquemas.ts`, añade `creadoEn` al esquema `esquemaPedido`, como arriba.
+
+Arranca el servidor con `npm run dev` y, en otra terminal, pide el primer pedido a las dos versiones de la API:
+
+<TryIt
+  title="1. El pedido 1, en v2 y en v1"
+  cmd={`curl -w '\\n' localhost:3000/v2/pedidos/1
+curl -w '\\n' localhost:3000/v1/pedidos/1`}
+  output={`{"id":1,"productoId":2,"cantidad":2,"estado":"enviado","creadoEn":"2026-10-01T09:00:00.000Z"}
+{"id":1,"productoId":2,"cantidad":2,"estado":"enviado","creadoEn":"2026-10-01T09:00:00.000Z"}`}
+>
+
+Las dos dan `creadoEn`: un campo nuevo no rompe a nadie, y no hace falta una versión 3. Si no aparece, mira que hayas guardado `datos.ts` y que el servidor se haya reiniciado.
+
+</TryIt>
+
+<TryIt
+  title="2. Un pedido nuevo, con la hora de ahora"
+  cmd={`curl -w '\\n' --json '{"productoId":2,"cantidad":1}' localhost:3000/v2/pedidos`}
+  output={`{"id":26,"productoId":2,"cantidad":1,"estado":"pendiente","creadoEn":"2026-10-13T14:28:07.224Z"}`}
+>
+
+Tu fecha y tu hora serán otras, y en UTC: en la España peninsular, dos horas menos que tu reloj en verano y una en invierno.
+
+</TryIt>
+
+### Los ejemplos, y la lista comprimida
+
+Crea la carpeta `ejemplos/` con los tres ficheros de «Cómo funciona de verdad», instala `protobufjs` si no lo hiciste y ejecuta los dos ejemplos: tienen que salirte los mismos números. Después, reinicia el servidor (<kbd>Ctrl</kbd> + <kbd>C</kbd> y `npm run dev`), para que solo estén los 25 pedidos de ejemplo, y mide la lista:
+
+<TryIt
+  title="3. La lista de pedidos, sin comprimir y comprimida"
+  cmd={`curl -s 'localhost:3000/v2/pedidos?limite=50' | wc -c
+curl -s 'localhost:3000/v2/pedidos?limite=50' | gzip | wc -c`}
+  output={`2369
+336`}
+>
+
+`wc -c` cuenta los bytes que le llegan por la <Term id="pipe">tubería</Term>, y `gzip` los comprime antes. En el Mac, `wc` escribe espacios delante del número, y `gzip` puede dar unos bytes de diferencia.
+
+</TryIt>
+
+De 2369 bytes a 336. En Protobuf, esos 25 pedidos ocuparían unos 900 sin comprimir: 34 por pedido, y dos más por estar en una lista. **El JSON comprimido ocupa menos que el Protobuf sin comprimir.** Por eso el tamaño, solo, rara vez justifica un formato binario en una API pública: basta con que tu servidor, o su <Term id="cdn">CDN</Term>, comprima las respuestas.
+
+<SelfCheck question="Reto: en ejemplos/protobuf.ts, borra la línea de creadoEn del pedido y vuelve a ejecutarlo. Antes de mirar: ¿cuántos bytes crees que ocupará cada formato, y por qué?">
+
+```
+JSON: 57 bytes
+{"id":7,"productoId":1,"cantidad":2,"estado":"pendiente"}
+
+Protobuf: 8 bytes
+08 07 10 01 18 02 20 01
+
+Leído de los bytes: { id: 7, productoId: 1, cantidad: 2, estado: 'PENDIENTE' }
+```
+
+JSON baja de 95 a 57 bytes, y Protobuf, de 34 a 8: la fecha eran 26. Sin textos, Protobuf ocupa siete veces menos: ahorra en nombres y números, no en textos. Después, vuelve a poner la línea: las pruebas cuentan con ella.
+
+</SelfCheck>
+
+### Una prueba demasiado estricta
+
+Ahora, las pruebas que tienes de la lección 5:
+
+<TryIt
+  title="4. Las pruebas de antes"
+  cmd="npm test"
+  output={`ℹ tests 51
+ℹ suites 0
+ℹ pass 50
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1190.601596
+
+✖ failing tests:
+
+test at test/rest.test.ts:58:1
+✖ PATCH /pedidos/:id cambia la cantidad y devuelve el pedido entero (4.633985ms)
+  AssertionError [ERR_ASSERTION]: Expected values to be strictly deep-equal:
+  + actual - expected
+  
+    {
+      cantidad: 5,
+  +   creadoEn: '2026-10-13T14:27:46.427Z',
+      estado: 'pendiente',
+      id: 27,
+      productoId: 1
+    }
+  
+      at TestContext.<anonymous> (file:///Users/ana/curso-backend/fase-3/tienda-api/test/rest.test.ts:62:10)`}
+>
+
+Es un trozo del final de la salida, con la ruta de Linux cambiada por la de un Mac. Fíjate en la línea con `+`: un campo que la prueba no esperaba, porque comparaba el pedido entero con `deepEqual`.
+
+</TryIt>
+
+Tu API no ha roto nada: la prueba era un cliente demasiado estricto. Es la regla de la [Fase 0](/fase-0/que-es-un-protocolo/): sé estricto con lo que envías y tolerante con lo que recibes. La prueba nueva compara el pedido sin `creadoEn`. Trae las pruebas de la carpeta de esta lección, la que descargaste al principio:
+
+<TryIt
+  title="5. Las pruebas de esta lección"
+  cmd={`cp -r ../15-serializacion/test .
+npm test`}
+  output={`ℹ tests 57
+ℹ suites 0
+ℹ pass 57
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1279.965425`}
+>
+
+El final de la salida: 57 pruebas y `fail 0`. Seis son nuevas, en `test/serializacion.test.ts`, y dos ejecutan tus ejemplos: si fallan, compara tu `ejemplos/` con el de la descarga.
+
+</TryIt>
+
+## Ya lo has visto
+
+- **Las apps que dicen «hace 5 minutos»** o la hora de un mensaje en tu zona horaria: el servidor suele mandar la fecha en UTC, y la app la pasa a tu hora.
+- **Los precios en las tiendas en línea.** En la pestaña **Red** de DevTools ([cómo abrirlo](/fase-2/#antes-de-empezar-devtools)), muchas responden con importes en céntimos, como `1999`, y la página escribe «19,99 €».
+
+## Errores comunes
+
+- **Fechas sin zona horaria**, como `"2026-10-13 11:30"`: cada cliente las lee en su hora.
+- **Dinero con decimales:** errores diminutos que se acumulan.
+- **Ids grandes como número:** `JSON.parse` los redondea sin avisar.
+- **Tratar igual `null` y un campo que falta.** En un `PATCH`, uno borra y el otro no toca.
+- **Un cliente que compara la respuesta entera:** falla con cada campo nuevo.
+- **Pasar a Protobuf para ahorrar bytes sin comprimir antes las respuestas.**
+
+## Resumen
+
+- Serializar es convertir datos en bytes. JSON no tiene fechas, dinero ni enteros grandes: cómo los escribes es parte del contrato.
+- Fechas en ISO 8601 y en UTC, con la `Z`; dinero en céntimos enteros; ids enormes, como texto.
+- `null` y un campo que falta son cosas distintas, y un cliente ignora los campos que no conoce.
+- Protobuf envía números de campo en vez de nombres: el pedido pasa de 95 a 34 bytes, pero sin el `.proto` no se lee.
+- Para una API pública, JSON comprimido; un formato binario, entre servicios propios con mucho tráfico.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="El servidor, en Madrid, envía la fecha de un pedido como «2026-10-13T11:30:00», sin nada al final. La app la lee en Bogotá con new Date. ¿Qué hora entiende?"
+  review="Las fechas: texto en ISO 8601, en UTC"
+>
+
+<QuizOption text="Las 11:30 de Bogotá: sin zona horaria, cada uno la lee como su hora local." correct>
+
+Sin `Z` ni desfase, `new Date` entiende la hora del sitio donde corre: el mismo texto es otro momento en cada ciudad.
+
+</QuizOption>
+
+<QuizOption text="Las 11:30 de Madrid: el JSON guarda la zona horaria del servidor que lo escribió.">
+
+JSON no tiene fechas: viaja un texto, y sin zona horaria el cliente no sabe dónde estaba el servidor.
+
+</QuizOption>
+
+<QuizOption text="Las 11:30 UTC: una fecha en formato ISO 8601 siempre está en UTC.">
+
+Solo si lleva la `Z` (o un desfase como `+02:00`). Sin ella, JavaScript la lee como hora local.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="El carrito suma 8.5 + 0.1 + 0.2 en euros y aplica un regalo si el total es 8.8 o más. ¿Qué pasa con una taza, una pegatina y una chapa?"
+  review="El dinero, en céntimos enteros"
+>
+
+<QuizOption text="El regalo se aplica: el total es 8.8, y 8.8 no es menor que 8.8.">
+
+La suma da `8.799999999999999`: en binario, los decimales no tienen forma exacta.
+
+</QuizOption>
+
+<QuizOption text="JavaScript da un error, porque esa suma no tiene un resultado exacto.">
+
+No hay ningún error: JavaScript guarda el número más cercano y sigue, sin avisar.
+
+</QuizOption>
+
+<QuizOption text="No se aplica: la suma da 8.799999999999999, menor que 8.8." correct>
+
+Es la salida de `ejemplos/dinero.ts`. En céntimos, `850 + 10 + 20` es `880` exacto, y la comparación funciona.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Una pasarela de pagos te devuelve un pago con el id 9007199254740993, como número. Tu servidor en Node lo guarda y, al día siguiente, consulta ese pago. ¿Qué pasa?"
+  review="Los números enteros más allá de 2⁵³"
+>
+
+<QuizOption text="JSON.parse lanza un error al leerlo, porque el número no cabe.">
+
+`JSON.parse` no avisa: redondea al número más cercano que puede guardar.
+
+</QuizOption>
+
+<QuizOption text="Consulta otro pago, el 9007199254740992: el id se redondeó." correct>
+
+Por encima de 2⁵³ − 1, JavaScript no guarda todos los enteros. Los ids así de grandes deben viajar como texto.
+
+</QuizOption>
+
+<QuizOption text="Nada raro: los enteros de JSON se leen siempre sin perder cifras.">
+
+JSON no pone límite, pero quien lo lee sí: JavaScript no guarda exactos los enteros mayores que 2⁵³ − 1.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A un PATCH /perfil le llega un cuerpo en el que telefono vale null. ¿Qué debería entender la API?"
+  review="null o ausente no son lo mismo"
+>
+
+<QuizOption text="Que el cliente quiere borrar el teléfono." correct>
+
+`null` dice «este campo existe y está vacío». Para no tocar el teléfono, el cliente no lo envía.
+
+</QuizOption>
+
+<QuizOption text="Lo mismo que si no viniera: null y un campo ausente significan «nada».">
+
+Si fueran lo mismo, no habría forma de pedir que se borre.
+
+</QuizOption>
+
+<QuizOption text="Que el cuerpo está mal escrito: null no es un valor válido en JSON.">
+
+`null` es una de las seis clases de datos de JSON. Lo que JSON no conoce es `undefined`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Añades creadoEn a los pedidos y la app de móvil empieza a fallar: comprueba que cada pedido tenga exactamente los campos que espera. ¿Qué ha pasado?"
+  review="Una prueba demasiado estricta"
+>
+
+<QuizOption text="Que añadir un campo rompe a los clientes: había que sacarlo en una versión 3.">
+
+Añadir un campo no rompe el contrato. Lo que falla es la forma de leer de la app.
+
+</QuizOption>
+
+<QuizOption text="Que la app es demasiado estricta: debería ignorar los campos que no conoce." correct>
+
+Es lo que le pasó a la prueba con `deepEqual`. Un cliente tolerante mira solo los campos que usa.
+
+</QuizOption>
+
+<QuizOption text="Que la fecha tenía que ir en una cabecera, para no cambiar el cuerpo.">
+
+Las cabeceras hablan de la respuesta, no de cada pedido: una lista de 25 pedidos tiene 25 fechas.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La tienda va a abrir su API a cualquier desarrollador que quiera hacer apps con ella. Las respuestas ya van comprimidas. ¿JSON o Protobuf?"
+  review="Cuándo compensa un formato binario"
+>
+
+<QuizOption text="Protobuf: el pedido ocupa un tercio, así que siempre es mejor.">
+
+Comprimida, la lista de 25 pedidos ocupa 336 bytes en JSON, menos que en Protobuf sin comprimir. Y cada cliente necesitaría el `.proto`.
+
+</QuizOption>
+
+<QuizOption text="Protobuf: sin el .proto nadie puede leer tus datos, y eso protege la API.">
+
+El `.proto` no es una contraseña: tus clientes lo necesitan, así que lo publicas. Proteger una API es cosa de la autenticación (Fase 6).
+
+</QuizOption>
+
+<QuizOption text="JSON: cualquiera lo lee con curl, en cualquier lenguaje." correct>
+
+Para gente que no conoces, lo que cuenta es que la API se entienda sin pedirte nada.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [RFC 8259](https://www.rfc-editor.org/rfc/rfc8259) (en inglés): la norma de JSON; la sección 6, sobre los números grandes.
+- [RFC 3339](https://www.rfc-editor.org/rfc/rfc3339) (en inglés): las fechas de ISO 8601 en los protocolos de internet.
+- [Date.prototype.toISOString()](https://developer.mozilla.org/es/docs/Web/JavaScript/Reference/Global_Objects/Date/toISOString) y [Number.MAX_SAFE_INTEGER](https://developer.mozilla.org/es/docs/Web/JavaScript/Reference/Global_Objects/Number/MAX_SAFE_INTEGER) (MDN).
+- [Floating Point Math](https://0.30000000000000004.com/) (en inglés): `0.1 + 0.2` en decenas de lenguajes, y por qué.
+- [Protocol Buffers: Encoding](https://protobuf.dev/programming-guides/encoding/) (en inglés): los bytes de un mensaje, campo a campo.

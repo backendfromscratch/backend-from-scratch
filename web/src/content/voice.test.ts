@@ -27,8 +27,30 @@ function files(): { path: string; locale: Locale; text: string }[] {
   }));
 }
 
+/**
+ * The guided projects' code and READMEs: the lessons show their comments and messages, so the
+ * same words are forbidden there (tienda-api in Spanish, shop-api in English).
+ */
+function projectFiles(): { path: string; locale: Locale; text: string }[] {
+  const projects = fileURLToPath(new URL('../../../projects/', import.meta.url));
+  const languages: Record<string, Locale> = { 'tienda-api': 'es', 'shop-api': 'en' };
+  return Object.entries(languages).flatMap(([project, locale]) =>
+    readdirSync(projects + project, { recursive: true, encoding: 'utf8' })
+      .filter((name) => /\.(ts|js|md)$/.test(name) && !name.includes('node_modules'))
+      .map((name) => ({
+        path: `${project}/${name}`,
+        locale,
+        text: readFileSync(`${projects}${project}/${name}`, 'utf8'),
+      })),
+  );
+}
+
 describe('voice', () => {
   it.each(files())('$path has none of the forbidden words', ({ locale, text }) => {
+    expect(text).not.toMatch(forbidden[locale]);
+  });
+
+  it.each(projectFiles())('projects/$path has none of the forbidden words', ({ locale, text }) => {
     expect(text).not.toMatch(forbidden[locale]);
   });
 

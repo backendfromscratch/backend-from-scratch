@@ -1,0 +1,141 @@
+// La versión 2 de la API: los precios, en céntimos enteros (precioCentimos). Cada ruta sale de
+// su definición en el contrato (contrato.ts): OpenAPIHono valida la petición con sus esquemas y
+// apunta la ruta en la documentación.
+import { OpenAPIHono } from '@hono/zod-openapi';
+import type { Context } from 'hono';
+import * as contrato from './contrato.ts';
+import {
+  borrarProducto,
+  buscarPedido,
+  buscarProducto,
+  crearPedido,
+  crearProducto,
+  pedidosMasNuevosPrimero,
+  productos,
+} from './datos.ts';
+import { siNoEsValido } from './middleware/validar.ts';
+import { enlaceSiguiente, paginaPorCursor, paginaPorDesplazamiento } from './paginacion.ts';
+import { datosNoValidos, problema, problemaHttp, tipo } from './problemas.ts';
+
+// #region crear-v2
+// defaultHook: lo que se responde si la petición no cumple el esquema. El mismo 422 de siempre.
+export const v2 = new OpenAPIHono({ defaultHook: siNoEsValido });
+
+// Cómo se manda el token, para la documentación: Authorization: Bearer <token>.
+v2.openAPIRegistry.registerComponent('securitySchemes', 'Bearer', {
+  type: 'http',
+  scheme: 'bearer',
+});
+// #endregion crear-v2
+
+v2.openapi(contrato.listarProductos, (c) => {
+  const { maxCentimos, orden } = c.req.valid('query');
+  let lista = productos;
+  if (maxCentimos !== undefined) {
+    lista = lista.filter((producto) => producto.precioCentimos <= maxCentimos);
+  }
+  // toSorted ordena una copia: el orden de la lista original no cambia.
+  if (orden === 'precio') lista = lista.toSorted((a, b) => a.precioCentimos - b.precioCentimos);
+  if (orden === '-precio') lista = lista.toSorted((a, b) => b.precioCentimos - a.precioCentimos);
+  return c.json(lista, 200);
+});
+
+// #region ver-producto
+// TypeScript comprueba cada respuesta contra el contrato: un 404 que no estuviera en él, o un
+// c.json sin el código, no compilaría.
+v2.openapi(contrato.verProducto, (c) => {
+  const producto = buscarProducto(c.req.valid('param').id);
+  if (!producto) return problemaHttp(c, 404, 'No existe ese producto');
+  return c.json(producto, 200);
+});
+// #endregion ver-producto
+
+v2.openapi(contrato.crearProducto, (c) => {
+  const { nombre, precioCentimos } = c.req.valid('json');
+  const producto = crearProducto(nombre, precioCentimos);
+  return c.json(producto, 201, { Location: `${c.req.path}/${producto.id}` });
+});
+
+v2.openapi(contrato.borrarProducto, (c) => {
+  if (!borrarProducto(c.req.valid('param').id)) {
+    return problemaHttp(c, 404, 'No existe ese producto');
+  }
+  return c.body(null, 204);
+});
+
+// Una página de pedidos, del más nuevo al más antiguo. Si hay más, la cabecera Link dice dónde
+// está la siguiente. ?desplazamiento= se queda para comparar las dos formas de paginar.
+v2.openapi(contrato.listarPedidos, (c) => {
+  const { limite, cursor, desplazamiento, estado } = c.req.valid('query');
+  let lista = pedidosMasNuevosPrimero();
+  if (estado !== undefined) lista = lista.filter((pedido) => pedido.estado === estado);
+
+  if (desplazamiento !== undefined) {
+    const { pagina, siguiente } = paginaPorDesplazamiento(lista, limite, desplazamiento);
+    if (siguiente !== undefined) {
+      c.header('Link', enlaceSiguiente(c.req.url, 'desplazamiento', String(siguiente)));
+    }
+    return c.json(pagina, 200);
+  }
+
+  const { pagina, siguiente } = paginaPorCursor(lista, limite, cursor);
+  if (siguiente !== undefined) c.header('Link', enlaceSiguiente(c.req.url, 'cursor', siguiente));
+  return c.json(pagina, 200);
+});
+
+v2.openapi(contrato.verPedido, (c) => {
+  const pedido = buscarPedido(c.req.valid('param').id);
+  if (!pedido) return problemaHttp(c, 404, 'No existe ese pedido');
+  return c.json(pedido, 200);
+});
+
+// Un producto que no existe es un dato que no vale: el mismo 422 que la validación, con el campo.
+v2.openapi(contrato.crearPedido, (c) => {
+  const { productoId, cantidad } = c.req.valid('json');
+  if (!buscarProducto(productoId)) {
+    return datosNoValidos(c, [{ campo: 'productoId', problema: 'No existe ese producto' }]);
+  }
+  const pedido = crearPedido(productoId, cantidad);
+  return c.json(pedido, 201, { Location: `${c.req.path}/${pedido.id}` });
+});
+
+// Un tipo propio de la tienda: la petición está bien escrita, pero el estado del pedido no deja
+// hacerla. title es siempre el mismo; detail dice qué pasa con este pedido.
+function estadoNoLoPermite(c: Context, detail: string) {
+  return problema(c, {
+    type: tipo('estado-del-pedido'),
+    title: 'El estado del pedido no lo permite',
+    status: 409,
+    detail,
+  });
+}
+
+v2.openapi(contrato.cambiarPedido, (c) => {
+  const pedido = buscarPedido(c.req.valid('param').id);
+  if (!pedido) return problemaHttp(c, 404, 'No existe ese pedido');
+  if (pedido.estado !== 'pendiente') {
+    return estadoNoLoPermite(c, `El pedido está ${pedido.estado}: ya no se puede cambiar`);
+  }
+  pedido.cantidad = c.req.valid('json').cantidad;
+  return c.json(pedido, 200);
+});
+
+v2.openapi(contrato.cancelarPedido, (c) => {
+  const pedido = buscarPedido(c.req.valid('param').id);
+  if (!pedido) return problemaHttp(c, 404, 'No existe ese pedido');
+  if (pedido.estado === 'enviado') {
+    return estadoNoLoPermite(c, 'El pedido ya está enviado: no se puede cancelar');
+  }
+  pedido.estado = 'cancelado';
+  return c.json(pedido, 200);
+});
+
+// Un método que la ruta no tiene: 405, y en Allow, los que sí tiene.
+const noPermitido = (c: Context, permitidos: string) =>
+  problemaHttp(c, 405, `Esta ruta no admite ${c.req.method}`, { Allow: permitidos });
+
+v2.all('/productos', (c) => noPermitido(c, 'GET, POST'));
+v2.all('/productos/:id', (c) => noPermitido(c, 'GET, DELETE'));
+v2.all('/pedidos', (c) => noPermitido(c, 'GET, POST'));
+v2.all('/pedidos/:id', (c) => noPermitido(c, 'GET, PATCH'));
+v2.all('/pedidos/:id/cancelacion', (c) => noPermitido(c, 'POST'));

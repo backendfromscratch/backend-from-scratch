@@ -1,0 +1,298 @@
+---
+translationKey: phase-4
+title: "Diseño de APIs: una API que otros puedan usar"
+description: "Aprende a diseñar APIs REST desde cero: recursos, errores con Problem Details, paginación, versionado, OpenAPI, webhooks y tiempo real."
+sidebar:
+  label: Introducción
+  order: 0
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+
+En la Fase 3 escribiste una <Term id="api">API</Term> que funciona. Tenía un solo <Term id="client">cliente</Term>, la web de la tienda, y si algo no estaba claro, la persona que la usaba podía preguntarte. En esta fase, la usan otros: gente que no conoces, que no puede preguntarte y que no puede romperse cada vez que tú cambias algo.
+
+No cambias de proyecto. Sigues con la misma API de la tienda, y cada lección le añade algo que necesita cuando sale de casa.
+
+## Qué cambia cuando otros usan tu API
+
+A la tienda de Ana y Luis le va bien, y le salen dos clientes nuevos. Imagina:
+
+- **Una app para el móvil,** que hace un estudio de fuera. Enseña los productos, crea pedidos y avisa cuando uno sale de camino.
+- **Una empresa de reparto,** que cada mañana pide los pedidos listos para recoger y quiere enterarse de los nuevos sin estar preguntando.
+
+Ninguno de los dos ha visto tu código. Solo ven tus respuestas. Eso cambia muchas cosas que hasta ahora daban igual:
+
+| Cuando solo la usaba tu web | Cuando la usan otros |
+|---|---|
+| Si cambias el nombre de un campo, cambias la web ese mismo día | La app que la gente tiene instalada no se actualiza sola: un nombre cambiado la rompe durante meses |
+| Si algo falla, miras tus <Term id="log">logs</Term> | La empresa de reparto solo ve tu respuesta, y tiene que entender el error con ella |
+| Sabes de memoria qué devuelve cada dirección | Nadie puede preguntarte: lo que no está escrito, para ellos no existe |
+| Tres productos y unos pocos pedidos caben en una respuesta | Miles de pedidos no caben: hay que darlos por partes |
+| Si quieres saber si hay un pedido nuevo, miras | La empresa de reparto quiere que le avises, no preguntarte cada minuto |
+
+**Cada fila es una lección de esta fase.** Tu API aprenderá algunas cosas nuevas, pero lo importante es otra cosa: que otros puedan usarla sin ti.
+
+## Qué hace buena a una API
+
+Una API buena se usa sin preguntar a quien la hizo. Para eso necesita tres cosas:
+
+- **Predecible.** Si `GET /pedidos/7` devuelve un pedido, alguien que no te conoce adivina que `GET /productos/2` devuelve un producto, y que un error tendrá la misma forma en las dos. Las direcciones, los <Term id="http-method">métodos</Term> y los <Term id="status-code">códigos de estado</Term> siguen unas reglas que mucha gente ya conoce. De eso tratan las lecciones de REST, errores y paginación.
+- **Documentada.** Lo que acepta y lo que devuelve cada dirección está escrito, y no en un documento aparte que nadie actualiza, sino en un contrato que sale del mismo código que comprueba los datos. Es la lección de OpenAPI.
+- **Estable.** Cambia sin romper a nadie: lo nuevo se añade, y lo que no se puede añadir va en una versión nueva, con fecha de despedida para la antigua. Es la lección de versionado.
+
+Las tres te sonarán de cualquier aplicación: una buena interfaz se entiende sin manual y no cambia los botones de sitio cada semana. Aquí, la interfaz son tus URLs, tus códigos y tu <Term id="json">JSON</Term>, y quien la usa es otro programa.
+
+## Lo que vas a construir
+
+Un ejemplo de lo que cambia. Si a la API de la Fase 3 le pides un pedido de cero tazas, contesta con un formato que inventaste tú:
+
+```text
+HTTP/1.1 422 Unprocessable Entity
+content-type: application/json
+…
+
+{"error":"Los datos no son válidos","detalles":[{"campo":"cantidad","problema":"Como mínimo, 1"}]}
+```
+
+Al final de esta fase, contesta así (lo capturamos con la versión final del proyecto y Node 26, y recortamos algunas cabeceras con `…`):
+
+```text
+HTTP/1.1 422 Unprocessable Entity
+content-type: application/problem+json
+…
+
+{"type":"https://tienda.example/problemas/datos-no-validos","title":"Los datos no son válidos","status":422,"detail":"Mira en «errores» qué falla en cada campo.","errores":[{"campo":"cantidad","problema":"Como mínimo, 1"}]}
+```
+
+Dice lo mismo, pero en un formato que no es tuyo: el de un estándar, Problem Details, escrito en un <Term id="rfc">RFC</Term>. La empresa de reparto ya lo conoce de otras APIs, y su programa sabe leerlo sin que le expliques nada. Fíjate también en la <Term id="header">cabecera</Term> `content-type`: avisa de ese formato antes de que nadie lea el cuerpo.
+
+La lista de pedidos, en cambio, ya no llega entera. Llega por páginas, y cada una dice dónde está la siguiente:
+
+```text
+HTTP/1.1 200 OK
+content-type: application/json
+link: <http://localhost:3000/v2/pedidos?limite=2&cursor=MjQ>; rel="next"
+…
+
+[{"id":25,"productoId":2,"cantidad":2,"estado":"pendiente","creadoEn":"2026-10-08T09:00:00.000Z"},{"id":24,"productoId":1,"cantidad":1,"estado":"pendiente","creadoEn":"2026-10-08T02:00:00.000Z"}]
+```
+
+Lección a lección, la API gana esto:
+
+| Lección | Lo que gana la API de la tienda |
+|---|---|
+| 1. REST | Cambiar un pedido (`PATCH`), cancelarlo y retirar un producto (`DELETE`), cada cosa con su método y su código |
+| 2. Errores | Todos los errores con la misma forma, la del estándar Problem Details |
+| 3. Paginación | Los pedidos por páginas, filtrados por estado, y los productos ordenados por precio |
+| 4. Versionado | `/v1/` y `/v2/` a la vez: el precio pasa a céntimos sin romper a quien lo leía en euros |
+| 5. OpenAPI | Un contrato, `openapi.json`, y una página de documentación en `/docs` |
+| 6. Serialización | La fecha de cada pedido, bien escrita, y el mismo pedido en JSON y en un formato binario, Protobuf |
+| 7. Webhooks | Una dirección para que la pasarela de pago avise de cada pago, con firma, y pedidos que no se duplican si alguien repite la petición |
+| 8. Tiempo real | El estado de un pedido, en directo, sin preguntar cada minuto |
+| 9. Alternativas | Nada nuevo en el proyecto: comparas REST con GraphQL y gRPC |
+
+Los datos siguen en la memoria del programa. Guardarlos en una base de datos es la Fase 5.
+
+## Lo que vas a aprender
+
+Al terminar esta fase sabrás diseñar una API que otros usen sin preguntarte. Sabrás:
+
+- Nombrar las direcciones de una API alrededor de sus recursos, para que se puedan adivinar, y qué quiere decir REST de verdad.
+- Contestar los errores siempre igual, con un formato estándar.
+- Dar una lista larga por páginas sin saltarte ni repetir nada, aunque lleguen datos nuevos mientras tanto.
+- Cambiar una API sin romper a sus clientes, y saber qué cuenta como romper.
+- Documentarla con OpenAPI, como un contrato que leen personas y programas.
+- Las trampas del JSON: fechas, dinero, números muy grandes y `null`.
+- Avisar a otros cuando pasa algo, con webhooks, y mandar datos en directo con Server-Sent Events y WebSockets.
+- Cuándo vale la pena GraphQL o gRPC, y por qué REST sigue siendo lo normal en una API pública.
+
+## Las lecciones
+
+1. [REST](/fase-4/que-es-api-rest/)
+2. [Errores](/fase-4/errores-api-problem-details/)
+3. [Paginación](/fase-4/paginacion-api/)
+4. [Versionado](/fase-4/versionado-api/)
+5. [OpenAPI](/fase-4/openapi-swagger/)
+6. [Serialización](/fase-4/json-protobuf/)
+7. [Webhooks](/fase-4/webhooks-idempotencia/)
+8. [Tiempo real](/fase-4/websockets-sse/)
+9. [Alternativas](/fase-4/graphql-grpc-rest/)
+
+## Dónde vas a practicar
+
+Todo se hace en tu ordenador, como en la Fase 3. Hay tres sitios:
+
+| Dónde | Para qué | Desde |
+|---|---|---|
+| Tu proyecto, `tienda-api` | Cada lección le añade algo, y lo pruebas con `curl` en `http://localhost:3000` | La lección 1 |
+| La API de GitHub, con `curl` | Una API pública bien diseñada, que se lee sin cuenta: cómo nombra sus direcciones, cómo da las listas por páginas y qué límites te pone | Esta introducción |
+| La consola del navegador | Escuchar a tu servidor en directo, sin recargar la página | La lección 8 |
+
+La consola es la pestaña de <Term id="devtools">DevTools</Term> donde se escribe código que el navegador ejecuta; la conociste en la [introducción de la Fase 2](/fase-2/#antes-de-empezar-devtools). La lección 9 usa además otra API pública, de GraphQL, también sin cuenta.
+
+- **En Windows,** todo se hace en WSL, como desde la [Fase 0](/fase-0/#antes-de-empezar-la-terminal).
+- **El servidor de prácticas sigue descansando:** en la Fase 8 subirás a él esta misma API.
+
+Las salidas de tu proyecto están capturadas con Node 26, y las de GitHub, el 13 de octubre de 2026. Tus tiempos, tus fechas y algunos números serán otros.
+
+## Antes de empezar: tu proyecto
+
+Sigues en la misma carpeta de la Fase 3, `~/curso-backend/fase-3/tienda-api`. El nombre de la carpeta dice dónde nació el proyecto, no la fase en la que estás: moverla no aporta nada, y así tus rutas siguen siendo las de siempre.
+
+Antes de la lección 1, comprueba que tu API arranca: `npm start` dentro de la carpeta, como en la [lección 8 de la Fase 3](/fase-3/errores-y-logs-node/). Si arranca y `curl localhost:3000/productos` te da la lista, estás listo.
+
+### Si prefieres empezar limpio
+
+Si no hiciste la Fase 3, o tu proyecto se ha quedado a medias, empieza con el código del final de esa fase: la carpeta de su última lección, `09-event-loop`. Primero, aparta la tuya cambiándole el nombre (si no tienes ninguna, sáltate esa línea; `mv` diría `No such file or directory`):
+
+<TryIt
+  title="Descarga el final de la Fase 3"
+  cmd={`cd ~/curso-backend/fase-3\ncurl -O https://backenddesdecero.com/practicas/tienda-api/09-event-loop.tar.gz\ntar -xzf 09-event-loop.tar.gz\nmv tienda-api tienda-api-antes\nmv 09-event-loop tienda-api\nls`}
+  output={`  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100 11225  100 11225    0     0   169k      0 --:--:-- --:--:-- --:--:--  171k
+09-event-loop.tar.gz
+tienda-api
+tienda-api-antes`}
+>
+
+Son las órdenes de la [introducción de la Fase 3](/fase-3/#si-te-atascas-el-código-de-cada-lección): `curl -O` descarga la carpeta empaquetada y `tar -xzf` la desempaqueta, sin escribir nada. Lo nuevo es `mv`, que aquí no mueve, sino que cambia el nombre ([lección 2 de la Fase 1](/fase-1/comandos-linux-archivos/)): tu proyecto pasa a llamarse `tienda-api-antes`, y la carpeta descargada ocupa su sitio.
+
+`ls` lo confirma: tres nombres. El tamaño de la descarga puede cambiar cuando actualicemos el código, y tus velocidades serán otras.
+
+</TryIt>
+
+<TryIt
+  title="Prepárala"
+  cmd={`cd tienda-api\nnpm install`}
+  output={`added 21 packages, and audited 22 packages in 5s
+
+2 packages are looking for funding
+  run \`npm fund\` for details
+
+found 0 vulnerabilities`}
+>
+
+`npm install` descarga los paquetes que usa el proyecto: Hono, Zod, pino y sus dependencias. Tu tiempo será otro.
+
+Falta el `.env`, que nunca viaja con el código porque guarda secretos. Si tenías uno, cópialo de tu carpeta antigua con `cp ../tienda-api-antes/.env .`; si no, créalo como en la [lección 8 de la Fase 3](/fase-3/errores-y-logs-node/): `cp .env.ejemplo .env`, y un `ADMIN_TOKEN` de verdad con `openssl rand -hex 24`.
+
+</TryIt>
+
+Cada lección de esta fase tiene también su carpeta, con el proyecto tal y como queda al terminarla: de `10-rest` a `17-tiempo-real`. Se descargan igual, desde `~/curso-backend/fase-3`, y sirven para comparar cuando te atasques, no para sustituir tu proyecto. La lección 9 no tiene: no cambia el código.
+
+## Pruébalo: lee una API que no es tuya
+
+El objetivo: **sin abrir la documentación de GitHub, encuentra las issues abiertas del repositorio de Node.js en su API.** Una *issue* es un aviso que alguien abre en un repositorio: un fallo, una propuesta o una pregunta. Si la API está bien diseñada, deberías poder adivinar las direcciones.
+
+La API de GitHub vive en `https://api.github.com`, y sin cuenta deja hacer 60 peticiones por hora desde cada dirección IP. Este ejercicio usa cinco.
+
+### 1. Una usuaria
+
+Empieza por `octocat`, la cuenta de la mascota de GitHub, que existe para los ejemplos:
+
+<TryIt
+  title="La usuaria octocat"
+  cmd={`curl -s https://api.github.com/users/octocat | grep -E '"(login|url|repos_url|name|public_repos)"'`}
+  output={`  "login": "octocat",
+  "url": "https://api.github.com/users/octocat",
+  "repos_url": "https://api.github.com/users/octocat/repos",
+  "name": "The Octocat",
+  "public_repos": 8,`}
+>
+
+La respuesta tiene más de treinta líneas de JSON. `grep -E` se queda con las cinco que nos interesan: las que tienen alguno de esos nombres entre comillas ([lección 2 de la Fase 1](/fase-1/comandos-linux-archivos/)). Si no sale nada, quita el `| grep …` y mira la respuesta entera.
+
+Fíjate en la dirección: `/users` son todas las cuentas, y `/users/octocat`, una de ellas. Primero la colección, después cuál. Y la respuesta te da la dirección siguiente sin que la busques: `repos_url`, los repositorios de esa cuenta.
+
+</TryIt>
+
+### 2. Un repositorio
+
+En la web, Node.js está en `github.com/nodejs/node`: la cuenta `nodejs` y el repositorio `node`.
+
+<SelfCheck question="Reto: con lo que has visto, ¿qué dirección de la API crees que da el repositorio de Node.js? Pruébala con curl antes de mirar.">
+
+Las cuentas están en `/users/…`; los repositorios, en `/repos/…`, con la cuenta y el nombre, como en la web:
+
+```sh
+curl -s https://api.github.com/repos/nodejs/node | grep -E '^  "(full_name|url|issues_url|open_issues_count)"'
+```
+
+```text
+  "full_name": "nodejs/node",
+  "url": "https://api.github.com/repos/nodejs/node",
+  "issues_url": "https://api.github.com/repos/nodejs/node/issues{/number}",
+  "open_issues_count": 1197,
+```
+
+El `^  ` del `grep` pide que el nombre empiece la línea con dos espacios, para quedarse con los datos del repositorio y no con los de su dueño, que van más adentro. `issues_url` te da la pista: `{/number}` es un hueco opcional. Sin él, la lista de issues; con un número, una sola. Tu `open_issues_count` será otro: cambia cada hora.
+
+</SelfCheck>
+
+### 3. Sus issues, de dos en dos
+
+Con la pista de `issues_url`, la lista está en `/repos/nodejs/node/issues`. Son más de mil, así que pide solo dos:
+
+<TryIt
+  title="Las dos últimas issues"
+  cmd={`curl -s "https://api.github.com/repos/nodejs/node/issues?per_page=2" | grep -E '^    "(number|title|state)"'`}
+  output={`    "number": 66705,
+    "title": "test: deflake test-net-autoselectfamily-local-port",
+    "state": "open",
+    "number": 66704,
+    "title": "tools: update OpenSSL on the selected branch",
+    "state": "open",`}
+>
+
+`?per_page=2` es una <Term id="query-string">query string</Term> ([lección 1 de la Fase 2](/fase-2/peticion-y-respuesta-http/)): «dos por página». Las comillas de la dirección hacen falta por el `?`, que la shell podría tomar por otra cosa. Tus números y tus títulos serán otros: salen las más recientes.
+
+Objetivo cumplido, sin documentación: las direcciones se adivinan porque siguen una regla.
+
+</TryIt>
+
+### 4. Lo que dicen las cabeceras
+
+Las dos issues son la primera página. ¿Dónde está la segunda? No en el cuerpo, sino en las cabeceras:
+
+<TryIt
+  title="Las cabeceras de la lista"
+  cmd={`curl -sI "https://api.github.com/repos/nodejs/node/issues?per_page=2" | grep -iE '^(HTTP|link|etag|x-ratelimit-(limit|remaining))'`}
+  output={`HTTP/2 200 
+etag: W/"497c2c4cfa9a2028b33819cd12088d3c4d9b7be36b32686dc1ee8eed07535c10"
+link: <https://api.github.com/repositories/27193779/issues?per_page=2&after=Y3Vyc29yOnYyOpLPAAABoTU4rEjPAAAAAVuCfJw%3D&page=2>; rel="next"
+x-ratelimit-limit: 60
+x-ratelimit-remaining: 50`}
+>
+
+`curl -sI` envía un `HEAD`, que pide solo las cabeceras ([lección 2 de la Fase 2](/fase-2/metodos-http/)), y `grep -iE` se queda con cuatro, sin mirar mayúsculas. Línea a línea:
+
+- **`link`** es la dirección de la página siguiente, con `rel="next"`. Fíjate en `after=…`: es un marcador que dice «sigue después de esta», y lo verás en la lección de paginación. El `27193779` es el número del repositorio de Node: otra forma de nombrarlo.
+- **`etag`** es la huella de esta respuesta, la de la [lección de caché de la Fase 2](/fase-2/cache-http/): con ella, el cliente pregunta si algo ha cambiado sin volver a descargarlo.
+- **`x-ratelimit-limit`** y **`x-ratelimit-remaining`** son tu límite por hora y lo que te queda. Cada petición de este ejercicio ha restado una; tu número será otro. Si llegas a cero, GitHub responde con un error hasta que pasa la hora. Poner límites así es la Fase 6.
+
+</TryIt>
+
+Ninguna de estas cabeceras la necesitaba un navegador. Están ahí para el programa que use la API: cómo seguir, cuándo volver a preguntar y cuánto le queda. **Una API pensada para otros contesta también a lo que su cliente va a preguntar después.**
+
+### 5. Una dirección que no existe
+
+¿Y si te equivocas al adivinar? Prueba con los repositorios en español:
+
+<TryIt
+  title="Una dirección inventada"
+  cmd={`curl -s -w '\\n' https://api.github.com/users/octocat/repositorios`}
+  output={`{
+  "message": "Not Found",
+  "documentation_url": "https://docs.github.com/rest",
+  "status": "404"
+}`}
+>
+
+Un `404`, con la misma forma que el `401` que viste en la [lección de cabeceras de la Fase 2](/fase-2/cabeceras-http/): `message`, `documentation_url` y `status`. GitHub contesta todos sus errores igual, y el programa que la usa los lee todos con el mismo código. Es lo que hará tu API desde la lección 2. `-w '\n'` añade un salto de línea al final, para que el prompt no salga pegado.
+
+</TryIt>
+
+En esta fase, tu API aprenderá a hacer todo esto: direcciones que se adivinan, listas con su página siguiente y errores que se parecen. Empieza por la [lección 1, «REST»](/fase-4/que-es-api-rest/): verás de dónde salen las reglas que acabas de usar sin leerlas, y rediseñarás con ellas las rutas de la tienda.
