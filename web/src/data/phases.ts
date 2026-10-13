@@ -45,7 +45,8 @@ export const phases: Phase[] = [
   },
   {
     number: 3,
-    status: 'coming-soon',
+    status: 'available',
+    lessonCount: 9,
     title: { es: 'Tu primer servidor', en: 'Your first server' },
     summary: {
       es: 'Node.js y TypeScript: un servidor HTTP sin framework, después con uno, validación de entrada, errores, logs y el event loop.',

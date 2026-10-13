@@ -43,6 +43,7 @@ A public, bilingual (Spanish and English) website with a backend course organise
 - `tcp-handshake` lab (the first React playground, the pattern for the next ones): `docs/specs/2026-10-03-tcp-lab-design.md`.
 - Phase 1 design (approved on 2026-10-07; completed on 2026-10-12, in Spanish and English): `docs/specs/2026-10-03-phase-1-design.md`.
 - `cors-lab` lab (Phase 2, lesson 6; approved and built on 2026-10-13): `docs/specs/2026-10-12-cors-lab-design.md`. Chrome's console messages are captured from Chromium, never written by hand.
+- Phase 3 design (approved on 2026-10-13; Node 26 with TypeScript run directly, two lessons of language for readers who never programmed, Hono, and a guided project per language): `docs/specs/2026-10-13-phase-3-design.md`. Phase 4 design (approved the same day, builds on Phase 3's project): `docs/specs/2026-10-13-phase-4-design.md`.
 - Phase 2 design (approved on 2026-10-12; eight lessons from the side that answers, practiced with `nc`, the course's own site and the VM's nginx, and a CORS lab): `docs/specs/2026-10-12-phase-2-design.md`.
 - Name and domain: «Backend desde cero» / "Backend from Scratch", on `backenddesdecero.com`, a single domain for both languages (decided on 2026-10-03; analysis in `docs/research/2026-10-03-languages-and-names.md`). Spanish is the main language and domain.
 - Technical names in English: GitHub organisation `backendfromscratch`, repository and package `backend-from-scratch` (decided on 2026-10-08). The site's public name follows each reader's language.
@@ -80,13 +81,16 @@ pnpm --filter web practice:log  # regenerates web/public/practicas/access.log (P
 pnpm format                  # formats with prettier
 pnpm format:check            # checks the format without changing anything
 pnpm knip                    # unused files, exports and dependencies (knip.jsonc lists what it cannot see)
+
+# a step of a guided project (projects/), with the Node version the lessons use, in Docker:
+docker run --rm -v "$PWD/projects/tienda-api/04-servidor-http":/p -w /p node:26 sh -c 'npm ci && npm run check && npm test'
 ```
 
 - **The build fails on purpose** if an internal link is broken or crosses languages (`starlight-links-validator`), if a mermaid block can't be drawn, if a `<Term>` has no glossary entry, if an `<Analogy>` has no `limits`, if a UI string is missing in one language or if an SEO audit rule breaks. Fix the cause; don't disable the check.
 - Tests live next to the code (`x.ts` → `x.test.ts`). The ones that render a playground in a simulated document are named `*.dom.test.tsx`, start with `// @vitest-environment happy-dom` and use `web/src/playgrounds/dom-test.ts`.
 - Browser tests live in `web/e2e/` and are named `*.e2e.ts`, so Vitest does not pick them up. They run axe-core (WCAG 2.2 A and AA, plus "Label in Name") on every page of the sitemap and on the states that only appear after doing something (`states.e2e.ts`: the labs, a quiz answered, the glossary popover, the open explorer, the phone menu), in dark and light. A violation that is not ours to fix goes in the `known` list of `e2e/axe.ts`, with its reason. The first time, `pnpm --filter web exec playwright install chromium`.
 - prettier doesn't touch `.md` or `.mdx` files (`.prettierignore`): content formatting is set by `docs/style-guide.md`.
-- **CI** (`.github/workflows/ci.yml`): on every PR and every push to `main` it runs `format:check`, zizmor (the workflows), `check`, `knip`, `test`, `build` and `test:e2e`. It doesn't deploy. Actions are pinned by commit SHA (with the version in a comment); Dependabot updates them.
+- **CI** (`.github/workflows/ci.yml`): on every PR and every push to `main` it runs `format:check`, zizmor (the workflows), `check`, `knip`, `test`, `build` and `test:e2e`; a second job, "guided projects (node 26)", installs, type-checks and tests every step of `projects/`. It doesn't deploy. Actions are pinned by commit SHA (with the version in a comment); Dependabot updates them.
 - **Supply chain** (`pnpm-workspace.yaml`): pnpm installs no version younger than 7 days and refuses versions published with weaker guarantees. If an urgent security fix is newer, add its exact version to `minimumReleaseAgeExclude`. Design in `docs/specs/2026-10-02-site-and-phase-0-design.md`, §7.
 - **PR title** (`.github/workflows/pr-title.yml`): on every PR it checks that the title follows Conventional Commits. Three checks are required to merge into `main`: "format, types, tests and build", "conventional commit title" and "CodeQL" (since 2026-10-12; it fails when a PR adds a high or critical security alert, or any other alert of severity "error").
 
@@ -126,9 +130,11 @@ src/data/site.ts                public URL, site name in each language and the c
 src/routeData.ts                Starlight middleware: fixes the sidebar, pagination, hreflang and language picker for translated routes
 src/pages/og/[...route].png.ts  a 1200 × 630 PNG per page (og:image), generated at build time
 src/integrations/               our own Astro integrations: drop-fallbacks (deletes the fallback pages), markdown-plugins
-                                (registers our Sätteri plugins: diagrams and term punctuation) and seo-audit
+                                (registers our Sätteri plugins: diagrams and term punctuation), project-downloads (each step of
+                                projects/ as a .tar.gz in /practicas/, after the build) and seo-audit
 src/components/                 lessons (Term, TryIt, Analogy, SelfCheck, Quiz with QuizQuestion and QuizOption), general pages (PhaseList, PlaygroundList, GlossaryList, CodeLens),
-                                AcronymLine (what a glossary acronym stands for, in Term and GlossaryList)
+                                AcronymLine (what a glossary acronym stands for, in Term and GlossaryList), ProjectCode (a file or a
+                                region of a guided project, as a code block: lessons never paste project code)
                                 and layout (Outline, Minimap, ExplorerToggle; LessonIntro, the lesson header, from overrides/PageTitle.astro)
 src/components/overrides/       replacements for Starlight components, registered in astro.config.ts: Header, Sidebar, PageTitle, LanguageSelect,
                                 TwoColumnContent, PageSidebar, Pagination, Footer, SiteTitle and ThemeSelect
@@ -159,7 +165,9 @@ src/lib/                        pure logic, no DOM, with tests:
   og/                           social image (card.ts) and its fonts (fonts.ts)
   practice/                     practice material for the lessons: the sample access.log (access-log.ts), always the same file,
                                 and the tests of the files in public/practicas/: the Git practice repositories (repo-tienda.test.ts,
-                                repo-shop.test.ts) and Phase 2's CORS files and nginx configurations (http-practice.test.ts)
+                                repo-shop.test.ts) and Phase 2's CORS files and nginx configurations (http-practice.test.ts);
+                                project-archive.ts (the steps' .tar.gz) and projects.test.ts (both languages' projects in step)
+  snippet.ts                    reads a guided project's file, whole or one `// #region`, for ProjectCode
 public/                         copied as is: favicon.svg, robots.txt, _headers (Cloudflare response headers: cache for /_astro/,
                                 noindex for /practicas/, scripts and nginx configurations as text, CORS for one practice file) and
                                 practicas/ (files the lessons download: access.log, generated by scripts/; the Git practice repository,
@@ -169,6 +177,8 @@ scripts/                        one-off generators run by hand: generate-access-
 e2e/                            browser tests with Playwright against the built site: axe.ts (helpers and known violations),
                                 pages.e2e.ts (every page) and states.e2e.ts (labs and other states); config in playwright.config.ts
 ```
+
+Outside `web/`, `projects/` holds the guided projects from Phase 3 on: `tienda-api/` (Spanish) and `shop-api/` (English), one folder per lesson (`04-servidor-http/`…), each a complete npm project with its lockfile, its tests (`node --test`) and an `.npmrc` that waits 7 days for new versions and runs no install scripts. They are not part of the pnpm workspace, prettier formats them and knip ignores them. Rules in `docs/style-guide.md`, "Code in lessons".
 
 - **Translated routes.** Starlight assumes a page's translation has the same route with another language prefix, and that's not the case here (`/fase-0/que-es-dns/` ↔ `/en/phase-0/what-is-dns/`). The frontmatter's `translationKey` links each pair: `lib/translations.ts` builds the index and `routeData.ts` uses it to fix what Starlight gets wrong. The fallback pages Starlight would generate for untranslated pages are deleted from the build and the sitemap (`integrations/drop-fallbacks.ts`). Rules in `docs/style-guide.md`, "Routes, translations and SEO".
 - **Pure logic, UI that only renders.** Anything that decides something goes in `src/lib/` (or in each playground's logic, like `machine.ts` in `tcp-handshake`) as pure functions with tests. The `.astro` and `.tsx` files only call it and render. The playground pattern is in `docs/style-guide.md`, "Playgrounds".

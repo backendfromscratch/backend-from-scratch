@@ -3,7 +3,7 @@
 ## Voice
 
 - Address the reader informally (in Spanish, with *tú*) and write as you would explain something to a colleague, without condescension.
-- **Write for a general audience:** do not assume any programming knowledge. If a lesson uses `fetch`, a variable or a function, explain in one sentence what it is, or link to where it is explained. References to the work of a frontend dev are an extra for those who are one, never a requirement to understand the lesson.
+- **Write for a general audience:** do not assume any programming knowledge (from Phase 3 the course teaches it: lessons 2 and 3 of Phase 3 are the base, and later lessons link to them). If a lesson uses `fetch`, a variable or a function, explain in one sentence what it is, or link to where it is explained. References to the work of a frontend dev are an extra for those who are one, never a requirement to understand the lesson.
 - **DevTools is for everyone** from lesson 4 of Phase 0, which explains how to open it in Chrome. The following lessons use it without hiding it behind «Y si programas:» ("If you code:") and refer back to that lesson.
 - Short sentences. One idea per paragraph.
 - Forbidden: «simplemente», «obviamente», «es fácil», «como todo el mundo sabe» (in English: "simply", "obviously", "it's easy", "as everyone knows"). They make people who don't get it feel clumsy. A test fails if they appear in a lesson or the glossary (`web/src/content/voice.test.ts`).
@@ -188,6 +188,18 @@ If `short` contains a colon followed by a space («Nombre: valor»), put it in s
 - Personal data in the output (MAC addresses, public IPs, user or computer names) is replaced with example values, and the explanation says so: «hemos cambiado la dirección MAC por una de ejemplo» ("we have replaced the MAC address with an example one").
 - The example user is `ana`, on the computer `portatil`, with the folder `/Users/ana` and the group `staff`; on the practice server, `ubuntu`, on the VM `curso`. Outputs are captured in an example home folder, never in the author's.
 - Commands are also run on a real Ubuntu (for example, `docker run --rm -it ubuntu:24.04 bash`), and every difference from macOS that the reader is going to notice is mentioned in the explanation of the `<TryIt>`.
+
+## Code in lessons
+
+From Phase 3 the reader writes code. These rules keep every line a lesson shows working.
+
+- **The code comes from the guided projects** (`projects/tienda-api/` in Spanish, `projects/shop-api/` in English), which CI installs, type-checks and tests with Node 26. A lesson never pastes code: it shows a file, or one region of it, with `<ProjectCode file="tienda-api/04-servidor-http/src/app.ts" region="rutas" />`. Regions are marked in the file with `// #region name` and `// #endregion name`; a region that does not exist fails the build.
+- **One folder per lesson** (`04-servidor-http/`…): the project as it is at the end of that lesson, complete and runnable. The reader can download it (`curl -O https://backenddesdecero.com/practicas/tienda-api/04-servidor-http.tar.gz` and `tar -xzf`) to compare it with theirs. Changing a step's code means changing the same lines in the later steps that keep it, and in the other language.
+- **The project is in the reader's language:** identifiers, routes (`/productos`), data, messages and comments. Environment variables keep their usual English names (`PORT`, `LOG_LEVEL`, `ADMIN_TOKEN`), because hosting platforms read them by those names.
+- **Short blocks, explained piece by piece:** 5 to 20 lines per block, and after it, what each new piece does, like the commands of Phase 1 («Palabra a palabra»). A longer file is shown in regions.
+- **Running it:** the server's own output and the `curl` against it go in `<TryIt>` blocks, captured from a real run (Node 26 in Docker for the outputs; `node:26` image). Say which Node version, and that the reader's numbers (times, ids, dates) may differ.
+- **Install exact versions** (`npm install hono@4.13.13`): the steps' `.npmrc` waits 7 days for new versions (`min-release-age=7`), runs no install scripts and saves exact versions. The first lesson that installs a package explains why.
+- **No «Y si programas:»** in the phases that teach code (from Phase 3): programming is the subject.
 
 ## Translation
 
