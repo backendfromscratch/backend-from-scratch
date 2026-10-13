@@ -1,0 +1,515 @@
+---
+translationKey: cookies
+title: "HTTP cookies: HttpOnly, Secure and SameSite"
+description: "What HTTP cookies are and how a server uses them: Set-Cookie, sessions, HttpOnly, Secure, SameSite (Strict, Lax, None) and cookies vs localStorage."
+sidebar:
+  label: Cookies
+  order: 5
+lesson:
+  oneLiner: "A cookie is a small piece of data the server asks the browser to store and send back on its next requests to that site. That's how a protocol with no memory recognizes you. HttpOnly, Secure and SameSite decide who can read it and when it travels."
+  objectives:
+    - Explain how Set-Cookie and Cookie give HTTP a memory, and what a session is.
+    - Know which requests the browser adds a cookie to, based on its domain, path, expiry and SameSite.
+    - Choose a cookie's attributes (HttpOnly, Secure and SameSite) and explain what each one protects against.
+    - See cookies with curl and in DevTools, and tell third-party cookies and localStorage apart.
+  prerequisites: [http-headers]
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+Imagine you add a mug to your cart in Ana and Luis's shop and press “Checkout”. The checkout page loads… and your cart is empty. To the server, that request comes from a stranger.
+
+It's not a bug in the shop: that's how HTTP works. As you saw in [lesson 2 of Phase 0](/en/phase-0/client-server-model/), every request reaches the <Term id="server">server</Term> as if it were the first one. HTTP is a **stateless** protocol: it keeps nothing from one request to the next.
+
+For the shop to remember you, the browser has to bring it something that identifies you on every request: a <Term id="cookie">cookie</Term>. And since, to the server, whoever has your cookie is you, half of this lesson is about how to protect it.
+
+## The analogy
+
+<Analogy>
+
+Think of a theater's coat check. You leave your coat and they give you a ticket with a number, 42. On your way out, you show the 42 and they give you back your coat, without asking your name.
+
+The ticket is the cookie, and the coat is what the server keeps about you: your cart or your account. The rules printed on the ticket (“valid only in this theater,” “expires at closing time”) are the cookie's attributes.
+
+The coat check doesn't look at faces: whoever shows the 42 takes the coat. That's why who can see your cookie matters so much.
+
+<div slot="limits">
+
+- You decide when you show the ticket. With a cookie, you don't: the browser adds it to every request that meets its rules, even if another website triggers it.
+- A ticket is hard to forge; anyone can change a cookie in their browser. Don't store anything in it the user shouldn't change, like a price.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### The server asks to store it and the browser sends it back
+
+This is how the browser talks to the shop, the server you have in your VM:
+
+```mermaid
+sequenceDiagram
+    participant N as Browser
+    participant T as Shop server
+    N->>T: GET /cart
+    T-->>N: 200 OK<br/>Set-Cookie: cart=c4f9e2; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax
+    Note over N: Stores cart=c4f9e2 for one hour
+    N->>T: GET /products<br/>Cookie: cart=c4f9e2
+    T-->>N: 200 OK<br/>(knows you're cart c4f9e2)
+```
+
+There are two <Term id="header">headers</Term>, one in each direction:
+
+- **`Set-Cookie`**, in the response: the server asks to store a cookie. First, the name and the value (`cart=c4f9e2`); after them, separated by `;`, the attributes.
+- **`Cookie`**, in the following requests: the browser sends it back. Only the name and the value: the attributes are instructions for the browser and never go back to the server.
+
+Each cookie arrives on its own `Set-Cookie` line. On the way back, the browser puts them together in a single header: `Cookie: cart=c4f9e2; lang=en`.
+
+### A session: the number in the cookie, the data on the server
+
+`c4f9e2` means nothing on its own: it's the number on the ticket. A real server has a table with what belongs to each number: “c4f9e2: a mug and a T-shirt.”
+
+That's a <Term id="session">session</Term>. Logging in works the same way: you type your password once, the server checks it, creates a session and sends you its identifier. From then on, the cookie proves who you are. That's why a real identifier isn't short like `c4f9e2`, but long and random, impossible to guess.
+
+Why not store the whole cart in the cookie?
+
+- The user can change it: a `price=1` in a cookie is an invitation.
+- Not much fits: about 4 KB per cookie.
+- It travels on every request to that site, including the ones for images: the heavier it is, the slower the website.
+
+Another way to remember who you are is a token in the `Authorization` header ([lesson 4](/en/phase-2/http-headers/)): sessions versus tokens, in Phase 6.
+
+### How long it lasts: Expires and Max-Age
+
+- **`Max-Age=3600`:** it lasts 3600 seconds, one hour, from when it arrives.
+- **`Expires=Tue, 12 Oct 2027 18:36:42 GMT`:** it lasts until that date. If it has both, `Max-Age` wins.
+- **Neither:** it's deleted when you close the browser, unless the browser reopens the tabs from last time.
+
+Chrome doesn't let a cookie last more than 400 days. To delete it, the server sends it again with the same name, the same path and `Max-Age=0`.
+
+### Who the browser sends it back to
+
+The browser **doesn't send all its cookies on every request**. Each cookie goes only on requests to the site that created it, and only if it meets all its rules:
+
+| Attribute | Without it | With it |
+|---|---|---|
+| `Domain` | Only to the exact domain that created it, `shop.example` | `Domain=shop.example`: also to its subdomains, like `api.shop.example` |
+| `Path` | To the folder of the path that created it: if `/account/details` creates it, to everything under `/account` | `Path=/`: to every path on the site |
+| `Max-Age` or `Expires` | Until you close the browser | Until it expires |
+| `Secure` | Over `https://` and over `http://` | Only over `https://` |
+| `SameSite` | Depends on the browser (below) | Decides whether it travels when another website triggers the request |
+
+`shop.example` can't create cookies for `bank.example`. `Path` is for keeping things tidy, not for protection. And cookies don't look at the port.
+
+### HttpOnly: JavaScript can't read it
+
+Web pages carry programs in JavaScript, the language that makes buttons and menus work. That code reads its page's cookies with `document.cookie`: `document` is the page, and `cookie`, its cookies.
+
+The danger is someone else's code. If somebody sneaks their JavaScript into one of the shop's pages (an attack called XSS, in Phase 6), it can read the session cookie, send it to them, and they get into the victim's account.
+
+**`HttpOnly` hides the cookie from JavaScript, not from the network.** The browser keeps sending it on every request, so the session works the same, but the page's code can't read it or change it. A session cookie must always have `HttpOnly`; only what the page needs to read goes without it, like the language.
+
+### Secure: only over HTTPS
+
+A cookie without `Secure` also travels on `http://` requests, unencrypted: anyone along the way can read it, as you saw in [lesson 8 of Phase 0](/en/phase-0/tls-and-https/). With `Secure`, it only travels over <Term id="https">HTTPS</Term>.
+
+A website served over `http://` can't create `Secure` cookies either: Chrome and Firefox discard them, except on `http://localhost`, so you can develop.
+
+### SameSite: whether it travels when the request comes from another website
+
+Imagine you visit `fake-deals.example`. That page can have a link to the shop, load one of its images or hide a form that sends it a `POST`. Do those requests carry your cookie?
+
+`SameSite` decides, by comparing the site of the page that triggers the request with the site it goes to. A **site** is the registered domain (`shop.example`) with its subdomains (`api.shop.example`); for Chrome, `http://` and `https://` are also different sites. In [lesson 6](/en/phase-2/what-is-cors/) you'll see the <Term id="origin">origin</Term>, a stricter idea.
+
+| From another website… | `Strict` | `Lax` | `None` |
+|---|---|---|---|
+| You click a link to the shop | Doesn't travel | Travels | Travels |
+| A form sends a `POST` to the shop | Doesn't travel | Doesn't travel | Travels |
+| The page loads an image from the shop | Doesn't travel | Doesn't travel | Travels |
+| The page's JavaScript makes a request to the shop | Doesn't travel | Doesn't travel | Only if that code asks for it ([lesson 6](/en/phase-2/what-is-cors/)) |
+
+From the shop itself, it travels with all three values. With `None`, as long as the browser doesn't block third-party cookies (below).
+
+- **`Strict`:** it never travels from another site, not even when following a link: if you reach the shop from Google, the first page sees you without a session. It's for the most sensitive things, like a bank.
+- **`Lax`:** it travels when *you* go to the shop through a link (a navigation with `GET`), but not in what another website does on its own. It's the usual choice for a session.
+- **`None`:** it always travels, for things that work inside other websites, like an embedded payment. It requires `Secure`: without it, Chrome and Firefox discard it.
+
+And without `SameSite`? **Chrome, and the browsers based on it like Edge, treat it as `Lax`** (with one exception: in its first two minutes, it also travels in a `POST` form from another website). Firefox and Safari don't apply that rule. Always write it.
+
+`Lax` lets links through: if the shop emptied the cart with a `GET /cart/empty`, a link on another website would empty it. That's why a `GET` must not change anything ([lesson 2](/en/phase-2/http-methods/)). Another website making your browser send requests with your cookies is the basis of an attack, <Term id="csrf">CSRF</Term>, which you'll see in [lesson 6](/en/phase-2/what-is-cors/) and in Phase 6.
+
+### First-party and third-party cookies
+
+The cookies of the site you see in the address bar are **first-party**. But a page loads things from other domains, like ads or a “Like” button, and each one can bring its own cookies. Those are <Term id="third-party-cookie">third-party cookies</Term>.
+
+An advertiser present on a thousand websites receives its cookie from all thousand: it knows where you go. That's why browsers limit them. As of October 2026:
+
+- Safari blocks them by default [since 2020](https://webkit.org/blog/10218/full-third-party-cookie-blocking-and-more/).
+- Firefox, [since 2022](https://blog.mozilla.org/en/products/firefox/firefox-rolls-out-total-cookie-protection-by-default-to-all-users-worldwide/), keeps each website's cookies in a separate jar, so the advertiser sees a different cookie on each one.
+- Chrome allows them, except in incognito or if you block them yourself. In [April 2025](https://privacysandbox.google.com/blog/privacy-sandbox-next-steps) it announced it's keeping it that way.
+
+In the European Union, a website has to ask your permission for the cookies that aren't essential, like advertising ones: hence the banners. The cart cookie and your session cookie don't need it.
+
+### Cookies or localStorage
+
+A website can also store data in localStorage, which works the other way around:
+
+| | Cookie | localStorage |
+|---|---|---|
+| Who reads it | The server, on every request, and the page's JavaScript if it isn't `HttpOnly` | Only the page's JavaScript |
+| Travels to the server on its own | Yes | Never |
+| How much fits | About 4 KB per cookie | About 5 MB per website |
+| If someone sneaks in their JavaScript | `HttpOnly` protects it | They can read all of it |
+
+For a session identifier, the `HttpOnly` cookie wins. localStorage is for things that don't matter if someone reads them, like the light or dark theme.
+
+## Try it
+
+The goal: play the browser with `curl` and check in the browser that JavaScript can't read the cart cookie, even though it travels on every request.
+
+<Aside type="caution" title="Never paste a real cookie">
+
+A session cookie is worth as much as your password. Don't copy the ones from your browser into a command, a website or a chat, no matter who asks. Here you'll only see test cookies.
+
+</Aside>
+
+First, on your laptop:
+
+<TryIt
+  title="1. A real website's cookies"
+  cmd="curl -sI https://github.com | grep -i '^set-cookie'"
+  output={`set-cookie: _gh_sess=qco6SrnNp%2BGaJM73…; path=/; HttpOnly; secure; SameSite=Lax
+set-cookie: _octo=GH1.1.1411589659.1791830202; expires=Tue, 12 Oct 2027 18:36:42 GMT; domain=.github.com; path=/; secure; SameSite=Lax
+set-cookie: logged_in=no; expires=Tue, 12 Oct 2027 18:36:42 GMT; domain=.github.com; path=/; HttpOnly; secure; SameSite=Lax`}
+>
+
+`-I` asks only for the headers, `-s` silences the progress bar and `grep -i` ([lesson 3 of Phase 1](/en/phase-1/pipes-and-redirection/)) keeps the `set-cookie` lines, which come out in lowercase because GitHub uses HTTP/2.
+
+- `_gh_sess` is the session: long and random (we've cut it short), with all three attributes and no `expires`: it's deleted when you close the browser.
+- `_octo` doesn't have `HttpOnly`: the page's JavaScript can read it.
+- `logged_in=no`, with `domain=.github.com`, also goes to subdomains like `gist.github.com`.
+
+Your values and dates will be different.
+
+</TryIt>
+
+Now, in your VM (`multipass shell course`), where the shop has been answering on port 8080 since you installed it in [this phase's introduction](/en/phase-2/). If you don't have a VM, read the outputs. Your version of `curl` may be different.
+
+<TryIt
+  title="2. The server gives you the cookie"
+  cmd="curl -i localhost:8080/cart"
+  output={`HTTP/1.1 200 OK
+Server: nginx/1.24.0 (Ubuntu)
+Date: Tue, 13 Oct 2026 08:01:09 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 20
+Connection: keep-alive
+Set-Cookie: cart=c4f9e2; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax
+
+Your cart is empty.`}
+>
+
+Look at the `Set-Cookie` line: it doesn't have `Secure` because the practice shop has no HTTPS. If you repeat the command, `curl` doesn't send the cookie: it stores nothing unless you ask it to. If you get `Couldn't connect to server`, go over the introduction again.
+
+</TryIt>
+
+<TryIt
+  title="3. Store it in a file"
+  cmd={`curl -c cookies.txt localhost:8080/cart\ncat cookies.txt`}
+  output={`Your cart is empty.
+# Netscape HTTP Cookie File
+# https://curl.se/docs/http-cookies.html
+# This file was generated by libcurl! Edit at your own risk.
+
+#HttpOnly_localhost	FALSE	/	FALSE	1791882069	cart	c4f9e2`}
+>
+
+`-c` (from *cookie jar*) stores the cookies it receives in a file. The last line is the cookie: the domain (with the `#HttpOnly_` mark), whether it's valid for subdomains, the path, whether it's `Secure`, the expiry (in seconds since 1970; yours will be different), the name and the value.
+
+</TryIt>
+
+<TryIt
+  title="4. Send it back"
+  cmd="curl -v -b cookies.txt localhost:8080/products"
+  output={`…
+> GET /products HTTP/1.1
+> Host: localhost:8080
+> User-Agent: curl/8.5.0
+> Accept: */*
+> Cookie: cart=c4f9e2
+> 
+< HTTP/1.1 200 OK
+< Server: nginx/1.24.0 (Ubuntu)
+…
+[{"id":1,"name":"T-shirt","price":20},{"id":2,"name":"Mug","price":8.5},{"id":3,"name":"Hoodie","price":35}]
+…`}
+>
+
+`-b` adds the cookies from the file that apply. Look at `> Cookie: cart=c4f9e2`: no attributes, and on `/products`, because it has `Path=/`. We've removed some lines (`…`). nginx ignores it; in Phase 3, your server will look it up in its sessions table.
+
+</TryIt>
+
+Now, a cookie the shop's JavaScript can read: the language. Open the configuration with `sudo nano /etc/nginx/sites-available/shop` (the editor from [lesson 2 of Phase 1](/en/phase-1/linux-file-commands/)) and, in `location = /cart`, below the cart line, add this one, the same but without `HttpOnly`:
+
+```nginx
+add_header Set-Cookie "lang=en; Path=/; Max-Age=3600; SameSite=Lax" always;
+```
+
+Save with <kbd>Ctrl</kbd> + <kbd>O</kbd> and <kbd>Enter</kbd>, and quit with <kbd>Ctrl</kbd> + <kbd>X</kbd>.
+
+<TryIt
+  title="5. Check and reload"
+  cmd="sudo nginx -t && sudo systemctl reload nginx"
+  output={`nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful`}
+>
+
+If `nginx -t` says `failed`, look at the line it points to: usually the final `;` or a quotation mark is missing.
+
+</TryIt>
+
+<TryIt
+  title="6. Two cookies, two lines"
+  cmd="curl -i localhost:8080/cart"
+  output={`HTTP/1.1 200 OK
+Server: nginx/1.24.0 (Ubuntu)
+Date: Tue, 13 Oct 2026 08:01:15 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 20
+Connection: keep-alive
+Set-Cookie: cart=c4f9e2; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax
+Set-Cookie: lang=en; Path=/; Max-Age=3600; SameSite=Lax
+
+Your cart is empty.`}
+>
+
+Each cookie on its own line. If only the cart one shows up, repeat it: nginx takes a moment to reload.
+
+</TryIt>
+
+Now, the browser. Open `http://192.168.64.2:8080/cart` in Chrome, with your VM's IP (it shows up in `multipass list`, as in [lesson 9 of Phase 1](/en/phase-1/what-is-ssh/)). Open <Term id="devtools">DevTools</Term>, as in this phase's introduction:
+
+1. **Where they're stored.** In the **Application** tab, open **Storage** › **Cookies** and choose your VM's address. Both are there, and the `HttpOnly` column is only checked for `cart`. In Firefox, it's the **Storage** tab.
+2. **That both travel.** In the **Network** tab, reload and click the `cart` request. Under **Headers**, the request carries `Cookie: cart=c4f9e2; lang=en`.
+3. **What JavaScript sees.** In the **Console** tab, type this and press Enter:
+
+<TryIt title="7. What the page's JavaScript sees" cmd="document.cookie" lang="js" output="'lang=en'">
+
+Only `lang` shows up. The cart cookie travels on every request, but the page's code doesn't see it: that's `HttpOnly`.
+
+Type it by hand: Chrome holds back what you paste into the console, because that's how sessions get stolen.
+
+</TryIt>
+
+To undo it, delete the language line and repeat step 5. You can delete the browser's cookies in **Application**, by right-clicking each row.
+
+<SelfCheck question="Challenge: the shop wants an “Empty cart” button that also forgets the cookie. What Set-Cookie would it have to send? Change it in the cart line and check it with curl -b cookies.txt -c cookies.txt.">
+
+The same cookie, with the same name and the same path, with no value and with `Max-Age=0`:
+
+```nginx
+add_header Set-Cookie "cart=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax" always;
+```
+
+After reloading nginx, `curl -b cookies.txt -c cookies.txt localhost:8080/cart` sends the old cookie, receives the order to delete it and rewrites the file: with `cat cookies.txt` you'll see the `cart` line is gone. With another path, like `Path=/cart`, it wouldn't delete it: to the browser it would be a different cookie. When you're done, put the line back as it was.
+
+</SelfCheck>
+
+## You have already seen it
+
+- **“Keep me signed in”.** It's a cookie with a long expiry. And “Sign out” makes the server forget your session and usually deletes the cookie with `Max-Age=0`.
+- **The incognito window.** It has its own cookie jar, which is emptied when you close it: that's why you're not signed in there.
+- **This website.** It doesn't create cookies: the light or dark theme you choose is stored in localStorage and never travels to the server.
+
+And if you code:
+
+- `fetch` sends cookies to its own origin; to another one, only with `credentials: 'include'` and, to read the response, if the server allows it ([lesson 6](/en/phase-2/what-is-cors/)).
+- Your frontend on `localhost:5173` and your API on `localhost:3000` share cookies: they don't look at the port.
+
+## Common mistakes
+
+- **Thinking the browser sends all your cookies everywhere.** Each cookie goes only to its site, if it meets its domain, its path, `Secure` and `SameSite`. A website never receives another website's cookies.
+- **Thinking `HttpOnly` hides the cookie from the server or the user.** It only hides it from JavaScript: it travels on every request, and you can see it and change it in DevTools.
+- **Storing in a cookie what the user must not change**, like `price=20` or `admin=true`. Store an identifier and keep the data on the server.
+- **`SameSite=None` without `Secure`, or `Secure` on a website over `http://`.** Chrome and Firefox discard the cookie without any error on the page. If you try `Secure` on the VM's shop through its IP, the cookie won't show up.
+
+## Summary
+
+- HTTP has no memory. The server sends `Set-Cookie`, and the browser sends back the name and the value in `Cookie`, only on requests to that site that meet its rules.
+- A session keeps the data on the server and a long, random identifier in the cookie. To the server, whoever has it is you.
+- `HttpOnly` hides the cookie from JavaScript, `Secure` limits it to HTTPS and `SameSite` decides whether it travels when another website triggers the request.
+- localStorage doesn't travel to the server on its own, but any JavaScript on the page can read it.
+- In Phase 3 you'll write the shop's server in code: it will create each cart's identifier and send it with `Set-Cookie`.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="You have a session cookie from shop.example and you visit blog.example, an unrelated website. Can blog.example receive your shop cookie?"
+  review="Who the browser sends it back to"
+>
+
+<QuizOption text="Yes: the browser sends all its cookies on every request, to any website.">
+
+Each cookie goes only on requests to the site that created it.
+
+</QuizOption>
+
+<QuizOption text="No: the browser only sends it on requests to shop.example." correct>
+
+Even if the blog loads something from the shop, that request goes to the shop: the blog never sees the cookie.
+
+</QuizOption>
+
+<QuizOption text="Only if the cookie doesn’t have HttpOnly: then any website can read it.">
+
+Without `HttpOnly`, the JavaScript of the shop's own pages can read it, not that of other websites. A website never reads another website's cookies.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Someone manages to sneak their JavaScript into one of the shop’s pages. The session cookie has HttpOnly. What does that stop?"
+  review="HttpOnly: JavaScript can't read it"
+>
+
+<QuizOption text="Reading the session cookie and taking it to another computer." correct>
+
+Their code can't read it with `document.cookie`, so it can't take it away.
+
+</QuizOption>
+
+<QuizOption text="The browser sending the cookie on the requests their code makes.">
+
+`HttpOnly` doesn't change when the cookie travels: it goes on every request to the shop, including the ones from that code. That's why XSS is still serious.
+
+</QuizOption>
+
+<QuizOption text="Reading the cookie by spying on a coffee shop’s network.">
+
+`Secure` and HTTPS protect against that. `HttpOnly` has nothing to do with the network.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You search for the shop on Google and click the result. Your session cookie has SameSite=Strict. What do you see when you arrive?"
+  review="SameSite: whether it travels when the request comes from another website"
+>
+
+<QuizOption text="An error: Strict blocks links coming from another website.">
+
+`SameSite` doesn't block requests: it only decides whether the cookie goes inside. The page loads normally.
+
+</QuizOption>
+
+<QuizOption text="Your account: a click of yours always counts as same-site.">
+
+The click comes from a Google page, another site. That's what sets `Lax`, which lets the cookie through when following a link, apart from `Strict`, which doesn't.
+
+</QuizOption>
+
+<QuizOption text="The shop without your session, on that first page." correct>
+
+With `Strict`, the cookie doesn't travel from another site, not even when following a link; once you browse inside the shop, it does. That's why sessions usually use `Lax`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A website’s session cookie doesn’t have Secure, and the website also answers over http://. What’s the risk?"
+  review="Secure: only over HTTPS"
+>
+
+<QuizOption text="None as long as the website has a certificate: the browser encrypts cookies on its own.">
+
+The browser doesn't encrypt cookies: HTTPS does. On an `http://` request, the cookie is in plain sight.
+
+</QuizOption>
+
+<QuizOption text="That it travels unencrypted on an http:// request and someone on the network reads it." correct>
+
+Without `Secure`, the cookie also goes over `http://`, and anyone along the way can copy it and pretend to be you.
+
+</QuizOption>
+
+<QuizOption text="That other websites receive it on their requests.">
+
+`Secure` doesn't decide which site the cookie goes to, but over which connection. It never goes to other websites.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="The shop wants to remember what’s in your cart from one page to the next. What should it store in the cookie?"
+  review="A session: the number in the cookie, the data on the server"
+>
+
+<QuizOption text="The products and their prices: only the server that created a cookie can change it.">
+
+Anyone can change their cookies in DevTools or with `curl`. A price in a cookie is decided by the user.
+
+</QuizOption>
+
+<QuizOption text="Your username and password, so the server recognizes you on every request.">
+
+The password is only sent when logging in. In a cookie it would travel on every request.
+
+</QuizOption>
+
+<QuizOption text="A long, random identifier; the products, on the server." correct>
+
+It's a session: the cart stays on the server, and the cookie only carries the number, like the coat check ticket.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A colleague stores the session identifier in localStorage “because that way it doesn’t travel on every request and it’s more secure.” What do you tell them?"
+  review="Cookies or localStorage"
+>
+
+<QuizOption text="That any JavaScript on the page can read it, but not an HttpOnly cookie." correct>
+
+If someone sneaks their code into the page, localStorage has no protection at all. An `HttpOnly` cookie keeps working without the code seeing it.
+
+</QuizOption>
+
+<QuizOption text="That it makes no difference: localStorage is also hidden from JavaScript, like HttpOnly.">
+
+It's the other way around: localStorage can only be read from JavaScript. It has nothing like `HttpOnly`.
+
+</QuizOption>
+
+<QuizOption text="That localStorage also travels to the server on every request, like a cookie.">
+
+localStorage never travels on its own: the page's code has to read it and send it. Your colleague is right about that, but not about it being “more secure.”
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [Using HTTP cookies](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Cookies) (MDN): the complete guide, with every attribute.
+- [Set-Cookie](https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Set-Cookie) (MDN): the header, attribute by attribute.
+- [SameSite cookies explained](https://web.dev/articles/samesite-cookies-explained) (web.dev): `Strict`, `Lax` and `None` with examples, from the Chrome team.
+- [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265): the cookie standard.
