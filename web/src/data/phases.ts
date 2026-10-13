@@ -35,7 +35,8 @@ export const phases: Phase[] = [
   },
   {
     number: 2,
-    status: 'coming-soon',
+    status: 'available',
+    lessonCount: 8,
     title: { es: 'HTTP a fondo', en: 'HTTP in depth' },
     summary: {
       es: 'El protocolo de la web visto desde quien responde: métodos, códigos de estado, cabeceras, cookies, CORS y caché.',

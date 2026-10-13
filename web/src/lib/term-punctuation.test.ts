@@ -46,6 +46,13 @@ describe('satteriTermPunctuation', () => {
     expect(js).not.toContain('term-group');
   });
 
+  it('does not climb out of a bold with more than the term: the whole phrase would not wrap', () => {
+    const js = compile(
+      '**Los programas deciden por el <Term id="x">código</Term>**, no por el texto.',
+    );
+    expect(js).not.toContain('term-group');
+  });
+
   it('does not climb out of a bold that goes on after the term', () => {
     const js = compile('**<Term id="x">TCP</Term> se encarga**.');
     expect(js).not.toContain('term-group');

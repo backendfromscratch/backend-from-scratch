@@ -1,0 +1,511 @@
+---
+translationKey: http-headers
+title: "Cabeceras HTTP: las básicas y las de seguridad"
+description: "Qué son las cabeceras HTTP y cuáles importan: Accept, User-Agent, Authorization, la compresión y las de seguridad, como HSTS y CSP. Con ejemplos reales."
+sidebar:
+  label: Cabeceras
+  order: 4
+lesson:
+  oneLiner: "Las cabeceras son las líneas «Nombre: valor» que viajan delante del contenido. Con ellas, el cliente dice quién es y qué prefiere, y el servidor dice qué envía, cómo lo envía y qué debe hacer el navegador para protegerte."
+  objectives:
+    - Leer las cabeceras más comunes de una petición y de una respuesta, y decir para qué sirve cada una.
+    - Explicar cómo elige el servidor la compresión o el idioma según lo que pide el cliente, y para qué sirve Vary.
+    - Reconocer las cuatro cabeceras de seguridad básicas y qué frena cada una.
+    - Añadir una cabecera a un servidor nginx y comprobarla con curl.
+  prerequisites: [status-codes]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Imagina que Ana y Luis pasan la web de su tienda por un analizador de seguridad gratuito. La web funciona: los productos salen y el carrito guarda lo que eliges. Pero el informe es un suspenso: «faltan cabeceras de seguridad». ¿Qué puede faltar, si todo funciona?
+
+Hay otra rareza más cerca. La portada de esta web pesa 46 KB cuando la pide `curl` y unos 11 KB cuando la pide tu navegador. Es la misma página, del mismo servidor.
+
+Las dos cosas se deciden en las <Term id="header">cabeceras</Term> (*headers*), las líneas `Nombre: valor` que viajan delante del contenido. No se ven en la página, pero deciden en qué formato, idioma y compresión llega una respuesta, quién la pide y qué puede hacer el navegador con ella.
+
+## La analogía
+
+<Analogy>
+
+Piensa en un paquete de mensajería. Lo que importa va dentro de la caja, y fuera van las etiquetas: a quién va, cuánto pesa, «frágil». Quien lo transporta no abre la caja: lee las etiquetas y actúa según lo que dicen.
+
+Un mensaje HTTP es ese paquete. El contenido (*body*) va dentro, y las cabeceras son las etiquetas. Unas describen el contenido («es una página web, comprimida»). Otras le piden algo a quien lo recibe, como «la próxima vez, acepta solo envíos certificados»: esas son las de seguridad.
+
+Y al hacer el pedido marcas «en español» o «en caja pequeña, si puede ser»: son las cabeceras de la petición, y la tienda elige qué versión te manda.
+
+<div slot="limits">
+
+- Las etiquetas de un paquete las lee cualquiera que lo toque. Con HTTPS, las cabeceras viajan cifradas: solo las leen tu navegador y el servidor.
+- Un repartidor entiende «fragil» aunque falte la tilde. Un navegador no: una cabecera con el nombre mal escrito se ignora sin avisar. Si es de seguridad, no hay error, pero tampoco hay protección.
+- Un repartidor olvida las etiquetas al entregar el paquete. El navegador puede recordar alguna durante meses, como verás con HSTS.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Una cabecera es una línea «Nombre: valor»
+
+Ya escribiste una en la [lección 3 de la Fase 0](/fase-0/que-es-un-protocolo/), `Host: example.com`, y en la [lección 1](/fase-2/peticion-y-respuesta-http/) viste dónde van: entre la primera línea y la línea vacía. Esto se dijeron `curl` y esta web al pedir la portada, visto con `curl -v` (`>` es lo que sale y `<`, lo que vuelve):
+
+```text
+> GET / HTTP/2
+> Host: backenddesdecero.com
+> User-Agent: curl/8.7.1
+> Accept: */*
+>
+< HTTP/2 200
+< date: Mon, 12 Oct 2026 18:36:42 GMT
+< content-type: text/html
+< cf-cache-status: HIT
+< cache-control: public, max-age=0, must-revalidate
+< …
+< server: cloudflare
+< cf-ray: a498362c4c79a844-MAD
+< alt-svc: h3=":443"; ma=86400
+```
+
+Hemos quitado dos líneas largas de Cloudflare. Unas cabeceras son estándar, como `content-type`; otras son de una empresa, como `cf-ray`, el número con el que Cloudflare identifica cada petición.
+
+### Las de la petición: quién eres y qué prefieres
+
+Con sus cabeceras, el cliente se presenta y dice qué le viene bien:
+
+| Cabecera | Ejemplo | Qué le dice al servidor |
+|---|---|---|
+| `Host` | `backenddesdecero.com` | A qué web va la petición |
+| `User-Agent` | `curl/8.7.1` | Qué programa la envía |
+| `Accept` | `*/*` | Qué formatos acepta (`*/*`, cualquiera) |
+| `Accept-Language` | `es-ES,es;q=0.9` | Qué idiomas prefiere, por orden |
+| `Accept-Encoding` | `gzip, deflate, br, zstd` | Qué compresiones entiende |
+| `Authorization` | `Bearer token-inventado-123` | Quién eres: tu credencial |
+
+El <Term id="user-agent">User-Agent</Term> de `curl` es su nombre y su versión. El de un navegador es una frase larga que empieza por `Mozilla/5.0`, también en Chrome y en Safari. Lo escribe el cliente: con `curl -A 'lo que quieras'` envías otro. Por eso sirve para estadísticas o para adaptar la respuesta, **nunca para decidir quién entra**: para eso hace falta una credencial secreta, como la de `Authorization`.
+
+El `q=0.9` de `Accept-Language` es un peso de 0 a 1. `es-ES,es;q=0.9` quiere decir «español de España; si no, cualquier español, que me gusta un poco menos».
+
+### Las de la respuesta: qué te mando y cómo
+
+Varias tienen su lección: `Content-Type` y `Content-Length` en la [lección 1](/fase-2/peticion-y-respuesta-http/), `Location` en las <Term id="redirect">redirecciones</Term> de la [3](/fase-2/codigos-de-estado-http/), `Set-Cookie` en la [5](/fase-2/cookies-httponly-secure-samesite/), `Access-Control-Allow-Origin` en la [6](/fase-2/que-es-cors/) y `Cache-Control` en la [7](/fase-2/cache-http/). Aquí verás dos más: `Content-Encoding`, con qué va comprimido el contenido, y `Server`, qué programa responde, como `nginx/1.24.0 (Ubuntu)`.
+
+### El servidor elige según lo que pides
+
+Vuelve a la rareza del principio. `curl` no envía `Accept-Encoding`, así que recibe la portada tal cual: 46 KB. Chrome envía `Accept-Encoding: gzip, deflate, br, zstd`, «entiendo estos cuatro formatos». El servidor elige uno, comprime la página y lo dice en la respuesta: a Chrome, esta web le contesta `Content-Encoding: zstd`. Llegan unos 11 KB, y el navegador los descomprime.
+
+Eso es la <Term id="compression">compresión</Term>, y el mecanismo, que el cliente ofrezca y el servidor elija, se llama <Term id="content-negotiation">negociación de contenido</Term>. El formato más antiguo, **gzip**, lo entiende todo el mundo; **br** (Brotli) y **zstd** (Zstandard) son más modernos y suelen comprimir más o más deprisa. Si el cliente solo ofrece `br`, como harás con `curl`, el servidor usa `br`. Se comprime el texto (HTML, CSS, JavaScript, JSON); las imágenes ya vienen comprimidas.
+
+Con el idioma pasa lo mismo: MDN, la web de documentación de Mozilla, te manda a `/es/` o a `/fr/` según tu `Accept-Language`.
+
+Hay un problema escondido. Entre tú y el servidor puede haber una <Term id="cache">caché</Term>, como la de una <Term id="cdn">CDN</Term>, que guarda una respuesta para el siguiente que pida la misma dirección. Si guarda la versión en `br` y se la da a un cliente que solo entiende gzip, ese cliente recibe bytes que no sabe leer. Por eso el servidor añade **`Vary: Accept-Encoding`**: «mi respuesta depende de esta cabecera; guarda una copia para cada valor».
+
+Esta web no negocia el idioma, a propósito: Google visita las páginas sin `Accept-Language` y solo vería una versión. Por eso el inglés tiene su dirección, `/en/…`.
+
+### Authorization: quién eres
+
+Cuando inicias sesión en una app, el servidor le da un *token*: una cadena larga y aleatoria que hace de pase temporal. Desde entonces, la app lo envía en cada petición, en esta cabecera:
+
+```http
+Authorization: Bearer token-inventado-123
+```
+
+*Bearer* significa «portador»: entra **quien lleve el token**, como con una entrada de concierto que nadie compara con tu DNI. Si falta o no vale, el servidor responde `401` ([lección 3](/fase-2/codigos-de-estado-http/)). Cómo se crea, se comprueba y caduca, en la Fase 6.
+
+Por eso, **nunca pegues un token real** en una web, un chat (también uno de inteligencia artificial) o una orden que vayas a compartir. `curl -v` escribe todas las cabeceras que envía: si compartes su salida, borra antes esa línea. Y si se te escapa un token, anúlalo en la web que te lo dio.
+
+### Las cabeceras de seguridad
+
+Volvamos al suspenso de la tienda. Las <Term id="security-headers">cabeceras de seguridad</Term> son cabeceras de respuesta que no cambian el contenido: le piden al navegador que proteja a quien visita la web. Estas son las cuatro básicas:
+
+| Cabecera y ejemplo | Qué le pide al navegador | Qué frena |
+|---|---|---|
+| `Strict-Transport-Security: max-age=31536000` | «Durante un año, entra aquí solo por HTTPS» | Que alguien en tu wifi conteste a una petición sin cifrar, en tus visitas siguientes |
+| `Content-Security-Policy: script-src 'self'` | «Ejecuta solo el código que venga de estos sitios» | Que se ejecute código que un atacante consiga meter en la página |
+| `X-Content-Type-Options: nosniff` | «Fíate del `Content-Type`; no adivines» | Que un fichero que dice ser texto o imagen se ejecute como código |
+| `Referrer-Policy: strict-origin-when-cross-origin` | «A otras webs, diles solo de qué dominio vienes» | Que la dirección completa de la página llegue a otras webs |
+
+La primera se conoce como <Term id="hsts">HSTS</Term>. En la [lección 9 de la Fase 0](/fase-0/que-pasa-cuando-escribes-una-url/) viste que pedir `http://github.com` con `curl` cuesta un viaje extra, el del `301` hacia `https://`, y que esa petición va sin cifrar. Con HSTS, el navegador recuerda la web en cuanto la visita por HTTPS y, las veces siguientes, cambia `http://` por `https://` él solo. La primera visita sigue sin proteger, salvo una excepción que verás más abajo con GitHub.
+
+Tiene un riesgo: si un día tu HTTPS falla, quien ya te visitó no podrá entrar hasta que caduque el `max-age`. Por eso se empieza con un valor corto, y por eso esta web aún no la envía: la activará cuando lleve unas semanas funcionando sin problemas.
+
+**`Content-Security-Policy`** (CSP) es la más potente y la más difícil. Si un atacante cuela un `<script>` con su código en tu web (un ataque llamado XSS, de la Fase 6), el navegador no lo ejecuta: `script-src 'self'` solo deja ejecutar ficheros de tu propio dominio, nunca código escrito dentro de la página. No te salva si el atacante consigue subir un fichero a tu dominio. Y si olvidas un sitio que sí usas, rompes tu propia página.
+
+**`X-Content-Type-Options: nosniff`** es la más barata. Sin ella, el navegador puede adivinar qué es un fichero mirando su contenido (*sniffing*, «olfatear»), sin hacer caso del `Content-Type`.
+
+**`Referrer-Policy`** decide qué le cuenta el navegador a otra web cuando sigues un enlace hacia ella, en la cabecera `Referer` (con una sola r: una errata histórica). Si tu dirección lleva algo privado, como `/restablecer?token=…`, no quieres que llegue entera.
+
+Ninguna arregla los fallos del servidor: si tu backend deja leer los pedidos de otros clientes, ninguna cabecera lo evita. Cierran puertas en el navegador; la seguridad completa llega en la Fase 6.
+
+### Mayúsculas, minúsculas y la X
+
+Los nombres de las cabeceras **no distinguen mayúsculas de minúsculas**: `Content-Type` y `content-type` son la misma. nginx escribe la primera y Cloudflare, la segunda, porque <Term id="http2">HTTP/2</Term> y HTTP/3 obligan a usar minúsculas ([lección 8](/fase-2/http2-http3/)). Los valores sí pueden distinguirlas: un token con una letra cambiada ya no vale.
+
+Durante años, las cabeceras fuera del estándar empezaban por `X-` (de *experimental* o *extension*), y algunas se quedaron con ella, como `X-Content-Type-Options`. Desde 2012, el <Term id="rfc">RFC</Term> [6648](https://www.rfc-editor.org/rfc/rfc6648.html) recomienda no usarla en las nuevas.
+
+## Pruébalo
+
+El objetivo: descubrir qué deciden las cabeceras en webs reales y quitarle a la tienda una parte de su suspenso con su primera cabecera de seguridad.
+
+Los cinco primeros ejercicios son en tu terminal, con salidas de un Mac (`curl` 8.7.1); en Linux y WSL salen igual, salvo la versión. Son webs reales: tus fechas, tamaños y valores pueden cambiar. Para filtrar usamos `grep` y la tubería `|` ([lección 3 de la Fase 1](/fase-1/pipes-y-redirecciones/)).
+
+<TryIt
+  title="1. La misma página, comprimida y sin comprimir"
+  cmd={`curl -s -o /dev/null -w '%{size_download} bytes\\n' https://backenddesdecero.com/
+curl -s -o /dev/null -w '%{size_download} bytes, %header{content-encoding}\\n' -H 'Accept-Encoding: br' https://backenddesdecero.com/`}
+  output={`46338 bytes
+10932 bytes, br`}
+>
+
+`-o /dev/null` tira el contenido y `-w` escribe cuántos bytes llegaron. En la segunda, `-H` añade una cabecera a la petición, y `%header{content-encoding}` escribe la compresión que eligió el servidor.
+
+Sin `Accept-Encoding`, 46 KB; ofreciendo solo `br`, menos de 11 KB, una cuarta parte. Si sale `%header{content-encoding}` tal cual, tu `curl` es anterior a la 7.84, pero la cifra vale igual.
+
+</TryIt>
+
+<TryIt
+  title="2. El servidor elige por ti"
+  cmd={`curl -sI -H 'Accept-Language: es' https://developer.mozilla.org/ | grep -iE '^(http|location)'
+curl -sI -H 'Accept-Encoding: br, gzip' https://developer.mozilla.org/es/ | grep -iE '^(http|content-encoding|vary)'`}
+  output={`HTTP/2 302 
+location: /es/
+HTTP/2 200 
+content-encoding: br
+vary: Accept-Encoding`}
+>
+
+`-I` pide solo las cabeceras, y `grep -iE` se queda con las que empiezan por esos nombres, sin mirar mayúsculas.
+
+En la primera, MDN lee tu `Accept-Language` y te redirige a `/es/`: con `fr`, a `/fr/`; sin la cabecera, a `/en-US/`. En la segunda ofreces dos compresiones: elige `br` y añade `vary: Accept-Encoding` para las cachés.
+
+</TryIt>
+
+<TryIt
+  title="3. Un token inventado"
+  cmd={`curl -s -w '\\n' https://api.github.com/user
+curl -s -w '\\n' -H 'Authorization: Bearer token-inventado-123' https://api.github.com/user`}
+  output={`{
+  "message": "Requires authentication",
+  "documentation_url": "https://docs.github.com/rest",
+  "status": "401"
+}
+{
+  "message": "Bad credentials",
+  "documentation_url": "https://docs.github.com/rest",
+  "status": "401"
+}`}
+>
+
+Esta dirección de la API de GitHub devuelve los datos de quien pregunta. `-w '\n'` añade un salto de línea para que las respuestas no salgan pegadas.
+
+Las dos son un `401`, pero no por lo mismo. Sin `Authorization`, GitHub responde «hace falta identificarse»; con el token inventado, lo ha buscado y responde «credenciales incorrectas». No pruebes con uno real: la orden se queda en tu historial.
+
+</TryIt>
+
+<TryIt
+  title="4. ¿Quién se protege?"
+  cmd={`curl -sI https://github.com | grep -iE 'strict-transport|content-security|x-content-type|referrer-policy' | cut -c 1-80
+curl -sI https://backenddesdecero.com | grep -iE 'strict-transport|content-security|x-content-type|referrer-policy'`}
+  output={`strict-transport-security: max-age=31536000; includeSubdomains; preload
+x-content-type-options: nosniff
+referrer-policy: origin-when-cross-origin, strict-origin-when-cross-origin
+content-security-policy: default-src 'none'; base-uri 'self'; child-src github.g`}
+>
+
+GitHub envía las cuatro. `cut -c 1-80` corta cada línea a 80 caracteres, porque su `content-security-policy` ocupa casi 4.000: todos los sitios de los que carga algo. `preload` pide entrar en una lista que los navegadores traen de fábrica, y GitHub está en ella: van por HTTPS desde la primera visita.
+
+La segunda orden no escribe nada: esta web no envía ninguna. HSTS está pendiente, y las otras protegen sobre todo webs con sesiones o formularios, que esta no tiene. Aun así, un analizador la suspendería.
+
+</TryIt>
+
+Las cabeceras de esta web se configuran en un fichero de texto, `_headers`, que Cloudflare lee al publicarla. Estas son sus reglas para las prácticas:
+
+```text
+/practicas/*
+  X-Robots-Tag: noindex
+
+/practicas/*.sh
+  Content-Type: text/plain; charset=utf-8
+
+/practicas/*.conf
+  Content-Type: text/plain; charset=utf-8
+
+/practicas/http/cors-on.json
+  Access-Control-Allow-Origin: *
+```
+
+Cada bloque es una ruta y las cabeceras que se añaden a sus respuestas: los ficheros de prácticas no salen en Google (`noindex`), los scripts y las configuraciones se ven como texto en el navegador, y `cors-on.json` es para la [lección 6](/fase-2/que-es-cors/).
+
+<TryIt
+  title="5. Comprueba que la configuración se cumple"
+  cmd={`curl -sI https://backenddesdecero.com/practicas/tienda-http.conf | grep -iE 'content-type|x-robots-tag'
+curl -sI https://backenddesdecero.com/ | grep -iE 'content-type|x-robots-tag'`}
+  output={`content-type: text/plain; charset=utf-8
+x-robots-tag: noindex
+content-type: text/html`}
+>
+
+La configuración de la tienda, la que descargaste en la [introducción](/fase-2/), lleva las dos cabeceras. La portada no está en `/practicas/`: no lleva `x-robots-tag`, y su `content-type` lo pone el servidor según la extensión del fichero.
+
+</TryIt>
+
+Ahora, en el navegador. Abre esta web en Chrome con <Term id="devtools">DevTools</Term> en la pestaña **Red**, como en la [introducción](/fase-2/), y recarga. Haz clic en la primera fila y, en **Encabezados**, compara `accept-encoding` (en **Encabezados de solicitud**) con `content-encoding` (en **Encabezados de respuesta**).
+
+Chrome ofrece `zstd` y el servidor lo elige, así que aquí verás `zstd`, no el `br` del paso 1, donde `curl` solo ofrecía `br`. Si tu navegador no ofrece `zstd`, verás `br`. En Firefox, la pestaña de cada petición se llama **Cabeceras** (o **Encabezados**, según tu español).
+
+### La tienda, con su primera cabecera de seguridad
+
+Los últimos pasos son en tu VM `curso`, con la configuración de la tienda que instalaste en la [introducción](/fase-2/). Entra con `multipass shell curso`. Si no tienes VM, lee las salidas: son las que verías en ella.
+
+Vas a añadir `X-Content-Type-Options: nosniff` a todas las respuestas de la tienda. Abre la configuración con nano ([lección 2 de la Fase 1](/fase-1/comandos-linux-archivos/)): `sudo nano /etc/nginx/sites-available/tienda`. Debajo de la línea `charset utf-8;`, añade esta otra:
+
+```nginx
+    add_header X-Content-Type-Options "nosniff" always;
+```
+
+`add_header` añade una cabecera a las respuestas, y `always`, también a los errores: sin él, nginx solo la pone en respuestas como `200` o `301`, y un `404` saldría sin ella. Guarda con <kbd>Ctrl</kbd> + <kbd>O</kbd> y Enter, y sal con <kbd>Ctrl</kbd> + <kbd>X</kbd>.
+
+<TryIt
+  title="6. Comprueba y recarga"
+  cmd="sudo nginx -t && sudo systemctl reload nginx"
+  output={`nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful`}
+>
+
+`nginx -t` revisa la configuración antes de aplicarla, y `&&` solo recarga si la revisión sale bien. Si sale `[emerg]` con un número de línea, mira esa línea: lo más habitual es que falte el `;` del final o una comilla.
+
+</TryIt>
+
+<TryIt
+  title="7. Mira la respuesta"
+  cmd="curl -sI localhost:8080/productos"
+  output={`HTTP/1.1 200 OK
+Server: nginx/1.24.0 (Ubuntu)
+Date: Mon, 12 Oct 2026 18:41:56 GMT
+Content-Type: application/json
+Content-Length: 122
+Connection: keep-alive
+X-Content-Type-Options: nosniff`}
+>
+
+La última línea es la tuya. Fíjate también en las mayúsculas: nginx habla HTTP/1.1 y escribe `Content-Type`.
+
+Si no sale, comprueba que guardaste el fichero y repite el paso 6.
+
+</TryIt>
+
+<SelfCheck question="Reto: pide las cabeceras de /carrito. ¿Lleva la nueva? Si no la lleva, busca en la configuración qué tiene esa ruta que no tenga /productos.">
+
+```sh
+curl -sI localhost:8080/carrito
+```
+
+```text
+HTTP/1.1 200 OK
+Server: nginx/1.24.0 (Ubuntu)
+Date: Mon, 12 Oct 2026 18:41:56 GMT
+Content-Type: text/plain; charset=utf-8
+Content-Length: 25
+Connection: keep-alive
+Set-Cookie: carrito=c4f9e2; Path=/; Max-Age=3600; HttpOnly; SameSite=Lax
+```
+
+No la lleva. El bloque `location = /carrito` tiene su propio `add_header`, el de la cookie, y en nginx eso basta: si un bloque tiene algún `add_header`, ya no hereda los del `server`. Se arregla repitiendo la línea dentro de ese `location`. Pasa lo mismo con `/api/`, `/img/` y `/mantenimiento`: comprueba siempre con `curl` las rutas que te importan.
+
+</SelfCheck>
+
+Antes de seguir, deshaz el cambio para que tus respuestas coincidan con las de las próximas lecciones: abre otra vez el fichero, borra la línea con <kbd>Ctrl</kbd> + <kbd>K</kbd>, guarda, sal y repite el paso 6.
+
+## Ya lo has visto
+
+- **Webs que se abren en tu idioma sin que lo elijas:** han leído tu `Accept-Language`, como MDN.
+- **Escribes `http://github.com` en Chrome y no hay `301`:** en la pestaña **Red** de DevTools verás un `307 Internal Redirect` con la cabecera `Non-Authoritative-Reason: HSTS`: el navegador cambió la dirección él solo.
+- **Apps que no te piden la contraseña cada vez:** guardan un token y lo envían en cada petición.
+
+Y si programas:
+
+- `fetch(url, { headers: { Authorization: 'Bearer …' } })` añade una cabecera a la petición, y `response.headers.get('content-type')` la lee sin importar las mayúsculas.
+
+## Errores comunes
+
+- **Copiar cabeceras de seguridad sin entenderlas.** Una `Content-Security-Policy` copiada de otra web puede bloquear tus propios scripts. Un HSTS de un año puesto con prisa deja fuera a tus visitantes si un día falla tu HTTPS. Empieza por valores cortos.
+- **Un nombre mal escrito.** `X-Content-Type-Option`, sin la s final, no da ningún error: el navegador la ignora. Después de cada cambio, comprueba con `curl -sI` que la cabecera sale tal cual.
+- **Enseñar la versión del servidor.** `Server: nginx/1.24.0 (Ubuntu)` le ahorra trabajo a quien busca servidores con una versión vulnerable. En nginx, `server_tokens off;` deja solo `nginx`.
+
+## Resumen
+
+- Las cabeceras son líneas `Nombre: valor` delante del contenido. Su nombre no distingue mayúsculas, y las nuevas ya no empiezan por `X-`.
+- El cliente dice quién es y qué prefiere (`User-Agent`, `Accept-Language`, `Accept-Encoding`); el servidor elige y lo dice (`Content-Encoding`). `Vary` avisa a las cachés de qué cabeceras cambian la respuesta.
+- `Authorization: Bearer` lleva un token: quien lo tenga entra como tú. Nunca compartas uno real.
+- Las cuatro cabeceras de seguridad básicas (`Strict-Transport-Security`, `Content-Security-Policy`, `X-Content-Type-Options` y `Referrer-Policy`) protegen en el navegador, no arreglan el servidor.
+- En nginx, `add_header … always` añade una cabecera; en la Fase 3, tu servidor las escribirá él mismo.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Luis descarga la portada de la tienda con curl y ocupa 60 KB. Ana mira la misma petición en DevTools y ocupa 14 KB. ¿Qué pasa?"
+  review="El servidor elige según lo que pides"
+>
+
+<QuizOption text="curl descarga también las imágenes y los estilos de la página.">
+
+`curl` descarga solo la dirección que le das. La diferencia está en las cabeceras de la petición.
+
+</QuizOption>
+
+<QuizOption text="El navegador pide la página comprimida con Accept-Encoding." correct>
+
+`curl` no ofrece ninguna compresión y recibe la página tal cual. El navegador ofrece varias, y el servidor elige una.
+
+</QuizOption>
+
+<QuizOption text="El navegador recorta del HTML lo que no cabe en la pantalla.">
+
+El navegador recibe la página entera, aunque no la veas toda de golpe. Lo que cambia es que llega comprimida.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La API de la tienda solo debería atender a su app móvil, y alguien propone dejar pasar las peticiones cuyo User-Agent sea TiendaApp/2.0. ¿Es buena idea?"
+  review="Las de la petición: quién eres y qué prefieres"
+>
+
+<QuizOption text="No: cualquiera puede enviar ese User-Agent con curl -A." correct>
+
+El `User-Agent` lo escribe el cliente. Para saber quién llama hace falta una credencial, como un token en `Authorization`.
+
+</QuizOption>
+
+<QuizOption text="Sí: el sistema operativo del móvil pone el User-Agent y nadie puede cambiarlo.">
+
+Lo pone el programa que hace la petición, y puede poner el que quiera: `curl -A 'TiendaApp/2.0'` lo imita en un segundo.
+
+</QuizOption>
+
+<QuizOption text="Sí, siempre que la API use HTTPS, porque así el User-Agent no se puede falsificar.">
+
+HTTPS impide que alguien lea o cambie la petición por el camino, pero no impide que quien la envía escriba lo que quiera en ella.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Ana conecta su portátil a la wifi de un aeropuerto y escribe tienda.example, sin https://. Ya visitó la tienda la semana pasada. ¿Qué cabecera evita que esa primera petición salga sin cifrar?"
+  review="Las cabeceras de seguridad"
+>
+
+<QuizOption text="Referrer-Policy, que esconde a la wifi qué web visitas.">
+
+`Referrer-Policy` decide qué les cuenta el navegador a otras webs cuando sigues un enlace. No cambia cómo se pide la página.
+
+</QuizOption>
+
+<QuizOption text="X-Content-Type-Options, porque obliga a que el contenido viaje cifrado.">
+
+`nosniff` solo le dice al navegador que no adivine el tipo de un fichero. No tiene nada que ver con el cifrado.
+
+</QuizOption>
+
+<QuizOption text="Strict-Transport-Security, que el navegador recuerda." correct>
+
+El navegador recuerda que esa web va siempre por HTTPS y cambia la dirección antes de enviar nada.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un compañero te pide la salida de curl -v de una petición a la API de tu empresa para ayudarte con un error. ¿Qué haces antes de pegarla en el chat?"
+  review="Authorization: quién eres"
+>
+
+<QuizOption text="Nada: gracias a HTTPS, nadie puede usar un token que lea en un chat.">
+
+HTTPS cifra la petición mientras viaja. Lo que pegas en el chat es texto normal, y cualquiera que lo lea puede copiar el token.
+
+</QuizOption>
+
+<QuizOption text="Borrar la línea de Authorization, que lleva tu token." correct>
+
+*Bearer* significa que entra quien lo lleve: con tu token, cualquiera entraría como tú. Si ya lo compartiste, revócalo.
+
+</QuizOption>
+
+<QuizOption text="Nada: un token solo funciona desde el ordenador en el que se creó.">
+
+Un token *Bearer* funciona en cualquier petición que lo lleve, venga de donde venga. Protégelo como una contraseña.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Añades add_header X-Content-Type-Options nosniff; (sin always) en el bloque server de nginx. /productos la lleva, pero una página que no existe, no. ¿Por qué?"
+  review="La tienda, con su primera cabecera de seguridad"
+>
+
+<QuizOption text="Sin always, nginx solo la añade a respuestas como 200 o 301, no a los errores." correct>
+
+Un `404` es un error, así que sale sin ella. Con `always`, nginx la pone en todas las respuestas.
+
+</QuizOption>
+
+<QuizOption text="La página de error la genera el navegador, no nginx, y por eso no lleva cabeceras.">
+
+La página de error la genera nginx: llega con su línea de estado y sus cabeceras, como cualquier otra respuesta.
+
+</QuizOption>
+
+<QuizOption text="nginx hay que recargarlo una vez por cada código de estado.">
+
+Una recarga aplica la configuración entera a todas las respuestas. La diferencia está en `always`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Tu nginx envía Content-Type, y la misma web detrás de Cloudflare llega con content-type. ¿Son cabeceras distintas?"
+  review="Mayúsculas, minúsculas y la X"
+>
+
+<QuizOption text="Sí: el cliente tiene que buscarlas tal como las escribió el servidor.">
+
+Un cliente que busca `Content-Type` tiene que encontrar también `content-type`. Así lo dice el estándar.
+
+</QuizOption>
+
+<QuizOption text="Sí: las de minúsculas son las que añade Cloudflare, aparte de las tuyas.">
+
+Cloudflare no añade una cabecera nueva: envía la misma en minúsculas, porque HTTP/2 y HTTP/3 lo exigen.
+
+</QuizOption>
+
+<QuizOption text="No: el nombre de una cabecera no distingue mayúsculas." correct>
+
+Son la misma cabecera. Las mayúsculas solo pueden importar en el valor, como en un token.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Cabeceras HTTP](https://developer.mozilla.org/es/docs/Web/HTTP/Reference/Headers) (MDN): la referencia de todas, una página por cabecera.
+- [HTTP Observatory](https://developer.mozilla.org/en-US/observatory) (MDN, en inglés): un analizador gratuito que revisa las cabeceras de seguridad de cualquier web y explica cada fallo. Prueba con esta.
+- [OWASP Secure Headers Project](https://owasp.org/www-project-secure-headers/) (en inglés): qué cabeceras de seguridad conviene enviar y con qué valores.
+- [Páginas adaptadas a la configuración regional](https://developers.google.com/search/docs/specialty/international/locale-adaptive-pages?hl=es) (Google): por qué Google prefiere una dirección por idioma a negociarlo con `Accept-Language`.

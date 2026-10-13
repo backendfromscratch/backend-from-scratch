@@ -21,10 +21,12 @@ export async function settled(page: Page): Promise<void> {
   // waited for with `hydrate`), and networkidle adds half a second of silence to every test.
   // The fonts are part of `load`, so the code blocks already have their final width.
   await page.waitForLoadState('load');
+  // Only the visible blocks: one inside a closed <details> (a challenge's solution) gets its
+  // tabindex when it is opened, and axe does not check what is hidden.
   await page.waitForFunction(() =>
-    [...document.querySelectorAll<HTMLElement>('.expressive-code pre')].every(
-      (pre) => pre.scrollWidth <= pre.clientWidth || pre.hasAttribute('tabindex'),
-    ),
+    [...document.querySelectorAll<HTMLElement>('.expressive-code pre')]
+      .filter((pre) => pre.checkVisibility())
+      .every((pre) => pre.scrollWidth <= pre.clientWidth || pre.hasAttribute('tabindex')),
   );
 }
 

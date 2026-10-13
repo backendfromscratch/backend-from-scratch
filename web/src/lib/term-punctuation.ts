@@ -12,21 +12,20 @@ export function gluedPrefix(text: string): string {
   return /^\S+/.exec(text)?.[0] ?? '';
 }
 
-/** Markup a term can be the last thing inside: `**<Term>…</Term>**.` keeps the period too. */
+/**
+ * Markup that may hold just the term: `**<Term>…</Term>**.` keeps the period too. Only when the
+ * term is all it holds: wrapping a longer bold phrase would stop the whole phrase from wrapping.
+ */
 const WRAPPERS = new Set(['emphasis', 'strong', 'delete']);
 
 export const satteriTermPunctuation = defineMdastPlugin({
   name: 'term-punctuation',
   mdxJsxTextElement(node, ctx) {
     if (node.name !== 'Term') return;
-    // Climbs out of the bold or italics the term ends.
+    // Climbs out of the bold or italics that hold only the term.
     let target: Readonly<MdastTarget> = node;
     let parent = ctx.parent(target);
-    while (
-      parent &&
-      WRAPPERS.has(parent.type) &&
-      ctx.indexOf(target) === parent.children.length - 1
-    ) {
+    while (parent && WRAPPERS.has(parent.type) && parent.children.length === 1) {
       target = parent;
       parent = ctx.parent(target);
     }
