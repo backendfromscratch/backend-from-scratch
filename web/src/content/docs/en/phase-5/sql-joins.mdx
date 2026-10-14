@@ -1,0 +1,544 @@
+---
+translationKey: joins
+title: "SQL joins explained with examples"
+description: "Join tables in SQL with real examples: primary and foreign keys, INNER JOIN, LEFT JOIN and aliases. And why a JOIN can multiply the rows."
+sidebar:
+  label: "JOIN"
+  order: 2
+lesson:
+  oneLiner: "A JOIN puts together the rows of two tables that match a condition, like each order with the product whose id it carries. It isn't the overlap of a Venn diagram: it pairs up rows, and if a row matches two, it comes out twice."
+  objectives:
+    - Explain why the shop's data is in several tables, linked by primary and foreign keys.
+    - Put orders and products together with INNER JOIN, and use LEFT JOIN to find the products nobody has ordered.
+    - Join three tables through an intermediate table.
+    - Work out how many rows a JOIN returns, and explain why there can be more than in any of its tables.
+  prerequisites: [sql]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+import SqlPlayground from '~/playgrounds/sql-playground/SqlPlayground';
+
+## The problem
+
+The delivery company from [Phase 4](/en/phase-4/) wants to print a label for each order: “Order 1: 2 × Mug.” You ask the database for the orders, and this is what's there:
+
+```sql
+SELECT id, product_id, quantity, status FROM orders ORDER BY id LIMIT 3;
+```
+
+```
+ id | product_id | quantity | status
+----+------------+----------+---------
+  1 |          2 |        2 | shipped
+  2 |          3 |        3 | shipped
+  3 |          1 |        4 | shipped
+(3 rows)
+```
+
+No sign of “Mug.” Order 1 says `product_id` 2, and the name is in another table, `products`. That's on purpose: the Mug appears in 9 of the 25 orders. If each order copied its name and its price, renaming it to “Large mug” would mean changing 9 rows, and if you forgot one, the shop would have two names for the same mug.
+
+Each piece of data lives in a single place, and the order only points to it. For the label, you have to put them back together: that's a <Term id="join">JOIN</Term>.
+
+## The analogy
+
+<Analogy>
+
+Luis writes the orders down in a notebook. Each line says “product no. 2, 2 units.” On the first page he has the price list: “no. 1: T-shirt, €20; no. 2: Mug, €8.50…” To pack a parcel, he looks at the number on the line and finds it on the first page.
+
+If the Mug goes up in price, he changes a single line on the first page, not every order. And if he wants to write next to each order its product's category, and the Mug is in “Home” and in “Gifts,” that order takes up two lines: one per category.
+
+<div slot="limits">
+
+- Luis searches by eye, order by order. The database chooses how to find the pairs and, with an <Term id="database-index">index</Term>, finds them without looking at everything (you'll see it in [lesson 7, “Indexes”](/en/phase-5/database-indexes-explain/)).
+- Luis would notice he had copied an order twice. The database wouldn't: it returns every pair, and whether that's what you wanted is up to you.
+- Nothing stops Luis from writing down “product no. 99,” even if it doesn't exist. The database does stop it, as you'll see in a moment.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+The <Term id="query">queries</Term> in this lesson use the shop's data (`shop.sql`) freshly loaded, as in [lesson 1](/en/phase-5/what-is-sql/). The outputs are from PostgreSQL 18.6.
+
+### Each row has a unique number: the primary key
+
+This is how the `products` table starts in `shop.sql`:
+
+```sql
+CREATE TABLE products (
+  id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+```
+
+`PRIMARY KEY` makes `id` the <Term id="primary-key">primary key</Term>: the column that identifies each row. **Its value is never repeated and can't be missing.** `GENERATED ALWAYS AS IDENTITY` asks PostgreSQL to fill in the number itself, 1, 2, 3…, as each product is inserted.
+
+A primary key can also be two columns. In `product_categories`, which says which categories each product is in, it's the pair `(product_id, category_id)`: the T-shirt can be in Clothing once, not twice. If you try it (with no column list, the values go in the table's order):
+
+```sql
+INSERT INTO product_categories VALUES (1, 1);
+```
+
+```
+ERROR:  duplicate key value violates unique constraint "product_categories_pkey"
+DETAIL:  Key (product_id, category_id)=(1, 1) already exists.
+```
+
+The pair (1, 1) already exists. A <Term id="constraint">constraint</Term> is a rule that PostgreSQL checks on every change, and the primary key is one.
+
+### An order points to its product: the foreign key
+
+In `orders`, the column that points to the product is declared like this:
+
+```sql
+product_id integer NOT NULL REFERENCES products (id),
+```
+
+`REFERENCES products (id)` turns it into a <Term id="foreign-key">foreign key</Term>: its values have to exist in the `id` column of `products`. See what happens if someone creates an order for product 99:
+
+```sql
+INSERT INTO orders (product_id, quantity, status, created_at)
+VALUES (99, 1, 'pending', now());
+```
+
+```
+ERROR:  insert or update on table "orders" violates foreign key constraint "orders_product_id_fkey"
+DETAIL:  Key (product_id)=(99) is not present in table "products".
+```
+
+The database refuses: product 99 isn't in `products`. `now()` is the date and time at this moment.
+
+It works the other way around too. `DELETE FROM products WHERE id = 2;` fails with `Key (id)=(2) is still referenced from table "orders"`: the Mug has orders pointing to it. What to do in that case is chosen when the table is created: forbid it, as here, or delete those rows too, as `shop.sql` does with a product's categories. You'll see it in [lesson 4, “Modeling”](/en/phase-5/data-modeling-normalization/#on-delete-what-happens-when-you-delete-something-others-point-to).
+
+**The foreign key guarantees that every order points to a product that exists.** Without it, a bug in the program would leave orphan orders, and a JOIN wouldn't find their product.
+
+### INNER JOIN puts each order together with its product
+
+This is the query for the labels:
+
+```sql
+SELECT o.id, p.name, o.quantity
+FROM orders AS o
+JOIN products AS p ON p.id = o.product_id
+ORDER BY o.id
+LIMIT 5;
+```
+
+```
+ id |  name   | quantity
+----+---------+----------
+  1 | Mug     |        2
+  2 | Hoodie  |        3
+  3 | T-shirt |        4
+  4 | Mug     |        1
+  5 | Hoodie  |        2
+(5 rows)
+```
+
+Word by word:
+
+- `FROM orders AS o`: the first table, the orders. `AS o` gives it a short name, an alias.
+- `JOIN products AS p`: the second table, with the alias `p`. Plain `JOIN` is `INNER JOIN`; both forms work.
+- `ON p.id = o.product_id`: the condition. A row from orders and one from products go together when the product's `id` is the order's `product_id`.
+- `SELECT o.id, p.name, o.quantity`: the columns, each with the table it comes from in front. `o.id` is the order's id, not the product's.
+- `ORDER BY` and `LIMIT`, the ones from [lesson 1](/en/phase-5/what-is-sql/#order-by-and-limit-in-what-order-and-how-many).
+
+For each order, PostgreSQL looks for the products that meet the condition, and **each pair that matches is a row of the result**. Order 1 carries 2, and product 2 is the Mug: row “1, Mug, 2”.
+
+`INNER` means that only the pairs come out. A product with no orders, like the Cap, doesn't appear.
+
+### Aliases shorten the names of the tables
+
+Both tables have an `id` column. If you don't say which one you mean, PostgreSQL doesn't guess:
+
+```sql
+SELECT id, name, quantity
+FROM orders
+JOIN products ON products.id = orders.product_id;
+```
+
+```
+ERROR:  column reference "id" is ambiguous
+LINE 1: SELECT id, name, quantity
+               ^
+```
+
+PostgreSQL can't tell which `id` you mean, and the `^` points to where. `name` and `quantity` don't cause an error, because each only exists in one of the two. You fix it with the table's name in front: `orders.id`.
+
+With aliases, instead of `orders.id` you write `o.id`. The `AS` is optional (`FROM orders o` works too), but it reads better. **An alias only lasts as long as the query**: it doesn't change the table's name.
+
+### LEFT JOIN also keeps the rows without a match
+
+Which product has nobody ordered? With `INNER JOIN` you can't see it: the product with no orders has no pair, and it disappears. That's what `LEFT JOIN` is for:
+
+```sql
+SELECT p.name, o.id AS order_id
+FROM products AS p
+LEFT JOIN orders AS o ON o.product_id = p.id
+ORDER BY o.id DESC
+LIMIT 3;
+```
+
+```
+  name   | order_id
+---------+----------
+ Cap     |
+ Mug     |       25
+ T-shirt |       24
+(3 rows)
+```
+
+`LEFT JOIN` returns the same pairs as `INNER JOIN` and, on top of that, **each row of the left table that matches nothing, once, with the right table's columns empty**. The left one is the one before the `JOIN`: here, `products`. The Cap has no orders, and it comes out with `order_id` empty: it's `NULL`, [the missing value](/en/phase-5/what-is-sql/#null-the-missing-value) from lesson 1 (the playground writes it `NULL`).
+
+`o.id AS order_id` changes the column's name in the result. `DESC` sorts from highest to lowest, and PostgreSQL puts the `NULL`s first in that order: that's why the Cap tops the list.
+
+To keep only the ones without a match, filter by that empty value:
+
+```sql
+SELECT p.name
+FROM products AS p
+LEFT JOIN orders AS o ON o.product_id = p.id
+WHERE o.id IS NULL;
+```
+
+`WHERE o.id IS NULL` keeps the rows where no order turned up. One comes out: Cap.
+
+There's also `RIGHT JOIN`, the same with the tables the other way around, and `FULL JOIN`, which keeps the unmatched rows on both sides. You almost always write `LEFT JOIN`, with the table you want whole on the left.
+
+### Three tables: the products and their categories
+
+A product can be in several categories, and a category has several products. That's why neither `products` nor `categories` stores the relationship: it's in a third table, `product_categories`, with one row per pair. To read the names, you need two JOINs in a row:
+
+```sql
+SELECT p.name, c.name AS category
+FROM products AS p
+JOIN product_categories AS pc ON pc.product_id = p.id
+JOIN categories AS c ON c.id = pc.category_id
+ORDER BY p.id, c.name;
+```
+
+```
+  name   | category
+---------+----------
+ T-shirt | Clothing
+ Mug     | Gifts
+ Mug     | Home
+ Hoodie  | Clothing
+ Cap     | Clothing
+ Cap     | Gifts
+(6 rows)
+```
+
+- The first `JOIN` pairs each product with its rows in `product_categories`.
+- The second pairs each of those rows with its category, by `category_id`.
+- `ORDER BY p.id, c.name` sorts by product and, within each one, by category.
+
+Four products and six rows: the Mug and the Cap come out twice, once per category. Why this intermediate table is the right way to store the relationship, you'll see in [lesson 4, “Modeling”](/en/phase-5/data-modeling-normalization/#many-to-many-an-intermediate-table).
+
+### A JOIN pairs up rows instead of intersecting sets
+
+If you search for “SQL JOIN” in images, you'll see overlapping circles: two tables, and the `INNER JOIN` is the shared area. That drawing suggests the result never has more rows than the smallest table. It's false. Count the rows of each query in this lesson (`COUNT(*)` counts the rows of the result, and you'll see it in depth in [lesson 3, “GROUP BY”](/en/phase-5/sql-group-by/)):
+
+| Query | Rows |
+|---|---|
+| `orders` alone | 25 |
+| `products` alone | 4 |
+| `orders JOIN products` | 25 |
+| `products LEFT JOIN orders` | 26 |
+| `orders JOIN product_categories` (each order with its product's categories) | 34 |
+
+`orders JOIN products` gives 25, more than the 4 products: each order finds its product, and the Mug comes out in 9 rows. And with the categories, 34, more than either of the two tables:
+
+```sql
+SELECT o.id, p.name, c.name AS category
+FROM orders AS o
+JOIN products AS p ON p.id = o.product_id
+JOIN product_categories AS pc ON pc.product_id = p.id
+JOIN categories AS c ON c.id = pc.category_id
+ORDER BY o.id, c.name
+LIMIT 4;
+```
+
+```
+ id |  name   | category
+----+---------+----------
+  1 | Mug     | Gifts
+  1 | Mug     | Home
+  2 | Hoodie  | Clothing
+  3 | T-shirt | Clothing
+(4 rows)
+```
+
+Order 1 comes out twice. The math: 9 Mug orders times 2 categories, 18 rows; plus 8 Hoodie orders and 8 T-shirt orders, with one each; 34.
+
+**The rule: each row of one table comes out as many times as there are rows in the other that match it.** If it matches none, zero times in an `INNER JOIN` (in a `LEFT JOIN`, once, with empty values); once if it matches one, and several times if it matches several. The Venn diagram only gets right which rows survive, not how many times they come out.
+
+This matters when you count or add up: if someone adds up the units sold after joining orders with categories, each mug counts twice.
+
+## Try it
+
+The goal: prepare the labels for the paid orders, find out which product nobody has bought and predict how many rows a JOIN returns before running it.
+
+Each query appears twice: in the playground, which doesn't need anything installed, and in `psql`, the PostgreSQL on your computer. Open `psql -d shop`. If you deleted or changed data in lesson 1, load `shop.sql` again as in the [introduction](/en/phase-5/#before-you-start-the-shops-data); in the playground, press “Reset data”.
+
+### The labels for the paid orders
+
+<SqlPlayground client:visible lang="en" rows={6} query={`SELECT o.id, o.quantity, p.name
+FROM orders AS o
+JOIN products AS p ON p.id = o.product_id
+WHERE o.status = 'paid'
+ORDER BY o.id;`} />
+
+<TryIt
+  title="1. The labels, in psql"
+  lang="sql"
+  cmd={`SELECT o.id, o.quantity, p.name
+FROM orders AS o
+JOIN products AS p ON p.id = o.product_id
+WHERE o.status = 'paid'
+ORDER BY o.id;`}
+  output={` id | quantity |  name
+----+----------+---------
+ 13 |        2 | Mug
+ 14 |        3 | Hoodie
+ 15 |        4 | T-shirt
+ 16 |        1 | Mug
+ 17 |        2 | Hoodie
+ 18 |        3 | T-shirt
+ 19 |        4 | Mug
+ 20 |        1 | Hoodie
+(8 rows)`}
+>
+
+Type it after the `shop=>` prompt. `psql` doesn't run it until the `;`: if you press Enter before, the prompt changes to `shop->`, which means “I'm still waiting.” Eight paid orders, from 13 to 20, each with its name. The `WHERE` applies to the rows already joined, so it can use columns from both tables. If you get `relation "orders" does not exist`, you haven't loaded `shop.sql` or you're in another database: check that the prompt starts with `shop`.
+
+</TryIt>
+
+Now change it: ask for the `'pending'` ones, or add `p.price_cents` to the columns to put the price on the label.
+
+### The product nobody has bought
+
+<SqlPlayground client:visible lang="en" query={`SELECT p.name
+FROM products AS p
+LEFT JOIN orders AS o ON o.product_id = p.id
+WHERE o.id IS NULL;`} />
+
+<TryIt
+  title="2. The products with no orders, in psql"
+  lang="sql"
+  cmd={`SELECT p.name
+FROM products AS p
+LEFT JOIN orders AS o ON o.product_id = p.id
+WHERE o.id IS NULL;`}
+  output={` name
+------
+ Cap
+(1 row)`}
+>
+
+One row: the Cap. Change `LEFT JOIN` to `JOIN` and run it again: you get `(0 rows)`, because `INNER JOIN` has already removed the Cap before the `WHERE` looks for it.
+
+</TryIt>
+
+<SelfCheck question="Challenge: before running it, work out how many rows the join of products with product_categories returns (without categories). Then check it with SELECT COUNT(*) FROM products AS p JOIN product_categories AS pc ON pc.product_id = p.id;">
+
+Six. Each product comes out as many times as it has categories: T-shirt 1, Mug 2, Hoodie 1 and Cap 2. They're the six rows of `product_categories`, because each one matches a single product:
+
+```
+ count
+-------
+     6
+(1 row)
+```
+
+</SelfCheck>
+
+## You have already seen it
+
+- **The confirmation email for a purchase** carries each product's name and photo, even though the order only stores its number: someone did a JOIN to write it.
+- **VLOOKUP** in a spreadsheet is a JOIN done by hand: for each row, it looks up its value in another table and brings back a column. The difference: VLOOKUP stops at the first match, and a JOIN returns them all.
+- **The shop's API** returns `productId` in each order, and in the [GraphQL lesson](/en/phase-4/graphql-grpc-rest/#the-problem) the app had to make one more request per product. With a JOIN on the server, the name can arrive in the same response.
+
+## Common mistakes
+
+- **Forgetting the condition.** `JOIN` without `ON` is a syntax error in PostgreSQL, but the old form, `FROM orders, products`, without a `WHERE`, pairs every order with every product: 100 rows (25 times 4), almost all of them wrong.
+- **Using `INNER JOIN` when you want them all.** A sales report per product with `INNER JOIN` has no row for the Cap: it looks as if it doesn't exist, when what's happening is that it sells zero.
+- **Filtering the right table of a `LEFT JOIN` in the `WHERE`.** With `LEFT JOIN orders … WHERE o.status = 'pending'`, the Cap disappears again, because its `status` is empty. If you want “each product with its pending orders, if it has any,” put the condition in the `ON`: `ON o.product_id = p.id AND o.status = 'pending'`.
+- **Adding up after a JOIN that multiplies.** If a row comes out twice, its numbers count twice.
+- **Writing `id` when there are two.** Ambiguous column: put the table or its alias in front.
+
+## Summary
+
+- The shop's data is in several tables so that each piece lives in a single place. The primary key identifies each row, and a foreign key points to another table's.
+- `REFERENCES` won't let you save an order for a product that doesn't exist nor, unless something else is said when creating the table, delete a product that has orders.
+- `INNER JOIN` returns the pairs of rows that meet the `ON` condition; `LEFT JOIN`, on top of that, the rows on the left with no match, with empty values.
+- With an intermediate table, two JOINs in a row join products and categories.
+- A JOIN pairs up rows: each row comes out as many times as there are rows in the other table that match it. The result can have more rows than any of its tables.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="Ana wants to rename “Hoodie” to “Zip-up hoodie.” With the shop’s data, how many rows does she have to change?"
+  review="An order points to its product: the foreign key"
+>
+
+<QuizOption text="Nine: the product’s row and the row of each of its eight orders.">
+
+The orders don't store the name: only `product_id`. That's why there's no need to touch them, and that's the reason for splitting the tables.
+
+</QuizOption>
+
+<QuizOption text="One: the product’s row in products." correct>
+
+The name lives in a single place. The eight orders point to product 3 and, in the next JOIN, they'll already come out with the new name.
+
+</QuizOption>
+
+<QuizOption text="None: the database doesn’t let you change a row that other tables point to.">
+
+The foreign key protects the `id`, which is what the orders point to. The name can be changed with no problem.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A program with a bug tries to save an order with product_id 7, and products only has 1 to 4. What happens?"
+  review="An order points to its product: the foreign key"
+>
+
+<QuizOption text="It’s saved, and the order won’t come out in an INNER JOIN with products.">
+
+That would happen without `REFERENCES`. With the foreign key, the order never even gets saved.
+
+</QuizOption>
+
+<QuizOption text="PostgreSQL creates an empty product 7 so the order has something to point to.">
+
+PostgreSQL never makes up rows: without a product 7, it rejects the order.
+
+</QuizOption>
+
+<QuizOption text="PostgreSQL rejects it with an error: 7 isn’t in products." correct>
+
+`REFERENCES products (id)` requires the value to exist. The error says `Key (product_id)=(7) is not present in table "products"`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You ask for each category with its products: categories JOIN product_categories JOIN products. There are 3 categories and 4 products. How many rows come out?"
+  review="A JOIN pairs up rows instead of intersecting sets"
+>
+
+<QuizOption text="Six: one for each row of product_categories." correct>
+
+Each row of the intermediate table is a product-category pair, and it matches a single category and a single product. The order of the tables doesn't change the pairs.
+
+</QuizOption>
+
+<QuizOption text="Three at most: a JOIN doesn’t return more rows than the smallest table.">
+
+That's the idea the Venn diagram gives, and it's false: a JOIN pairs up rows, and each row comes out as many times as it has pairs.
+
+</QuizOption>
+
+<QuizOption text="Twelve: each category with each product, 3 times 4.">
+
+That would be pairing everything with everything, with no condition. The `ON` keeps only the pairs that exist in `product_categories`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You make a report with each product and its number of orders, and the Cap doesn’t appear. What happened?"
+  review="LEFT JOIN also keeps the rows without a match"
+>
+
+<QuizOption text="A JOIN always skips the rows that have a NULL.">
+
+It isn't because of `NULL`s: the Cap has none. It disappears because no order matches it.
+
+</QuizOption>
+
+<QuizOption text="You used INNER JOIN, and the Cap has no orders." correct>
+
+With `products LEFT JOIN orders`, the Cap comes out once, with the order empty: the report will say it sells zero.
+
+</QuizOption>
+
+<QuizOption text="The Cap has no primary key, and without one a JOIN can’t find it.">
+
+Every product has its `id`: the primary key can't be missing. What the Cap is missing is orders.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You write products LEFT JOIN orders … WHERE o.status = 'paid' to see each product with its paid orders, if it has any. Does the Cap come out?"
+  review="LEFT JOIN also keeps the rows without a match"
+>
+
+<QuizOption text="Yes: LEFT JOIN always keeps every row on the left, whatever WHERE you write.">
+
+The `LEFT JOIN` keeps it, but the `WHERE` filters afterward. The Cap's row has an empty `status`, and empty isn't `'paid'`.
+
+</QuizOption>
+
+<QuizOption text="Yes, with its status set to 'paid' to meet the condition.">
+
+PostgreSQL doesn't fill in values so a row can pass a filter: the right table's columns stay empty.
+
+</QuizOption>
+
+<QuizOption text="No: the WHERE removes the row with empty values. The condition has to go in the ON." correct>
+
+With `ON o.product_id = p.id AND o.status = 'paid'`, the Cap stays, with the order empty.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question='You join products, product_categories and categories, and ask for SELECT name. PostgreSQL answers column reference "name" is ambiguous. What do you fix?'
+  review="Aliases shorten the names of the tables"
+>
+
+<QuizOption text="You change JOIN to LEFT JOIN, which knows which table to take each column from.">
+
+The type of JOIN doesn't change where each column comes from: `name` is still in two tables.
+
+</QuizOption>
+
+<QuizOption text="You say which table it’s from: products.name or categories.name." correct>
+
+`products` and `categories` both have a `name` column, and PostgreSQL doesn't guess which one you want. With aliases, `p.name` or `c.name`.
+
+</QuizOption>
+
+<QuizOption text='You write "name" in double quotes, which mark it as a column.'>
+
+Double quotes mark a name, but they don't say which table it's from: the error is the same.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [Joins Between Tables](https://www.postgresql.org/docs/current/tutorial-join.html) (PostgreSQL): the official JOIN tutorial.
+- [Joined Tables](https://www.postgresql.org/docs/current/queries-table-expressions.html#QUERIES-JOIN) (PostgreSQL): every type of JOIN, with examples of `ON` versus `WHERE`.
+- [Foreign Keys](https://www.postgresql.org/docs/current/ddl-constraints.html#DDL-CONSTRAINTS-FK) (PostgreSQL): foreign keys and what to do on delete.
+- [Say NO to Venn Diagrams When Explaining JOINs](https://blog.jooq.org/say-no-to-venn-diagrams-when-explaining-joins/) (Lukas Eder): why the circles mislead, with other drawings that do work.

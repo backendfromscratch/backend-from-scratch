@@ -2,6 +2,10 @@
  * How much JavaScript a page can end up downloading: its scripts and everything they import, dynamic
  * import() included. It is an upper bound (not everything is always downloaded), but it would have
  * caught the 3.4 MB that Mermaid could load on every lesson.
+ *
+ * Workers (`new Worker(new URL(…))`) are not followed: they only start when the reader asks. The SQL
+ * playground's (PGlite, about 530 KB of JavaScript and 5 MB of WebAssembly) starts on its first
+ * «Ejecutar». A worker started when the page loads would escape this rule: don't write one.
  */
 import path from 'node:path';
 

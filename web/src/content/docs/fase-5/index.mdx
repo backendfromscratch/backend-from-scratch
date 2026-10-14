@@ -1,0 +1,433 @@
+---
+translationKey: phase-5
+title: "Qué es una base de datos y para qué sirve"
+description: "Qué es una base de datos, qué es una relacional y por qué PostgreSQL. Instala PostgreSQL 18, conéctate con psql y carga los datos de la tienda."
+sidebar:
+  label: Introducción
+  order: 0
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+
+Al terminar la Fase 4, la <Term id="api">API</Term> de la tienda está bien diseñada, pero tiene un problema serio: todo lo que sabe vive en la memoria del programa. Los productos, los pedidos, las claves de idempotencia y los avisos de pago ya procesados desaparecen en cuanto el servidor se para.
+
+En esta fase le das una **<Term id="database">base de datos</Term>**: un sitio donde los datos duran, se buscan rápido y aguantan a muchos clientes a la vez. Sigues con el mismo proyecto, y al final la API contesta igual que antes, pero ya no olvida nada.
+
+## Qué se pierde cuando los datos viven en memoria
+
+Compruébalo con tu propia API, la del final de la Fase 4. Arráncala con `npm start` en una terminal y, en otra, crea un pedido y pídelo por su número:
+
+<TryIt
+  title="Un pedido nuevo"
+  cmd={`curl -s -w '\\n' -X POST localhost:3000/v2/pedidos -H 'Content-Type: application/json' -d '{"productoId":2,"cantidad":1}'\ncurl -s -w '\\n' localhost:3000/v2/pedidos/26`}
+  output={`{"id":26,"productoId":2,"cantidad":1,"estado":"pendiente","creadoEn":"2026-10-13T22:52:23.971Z"}
+{"id":26,"productoId":2,"cantidad":1,"estado":"pendiente","creadoEn":"2026-10-13T22:52:23.971Z"}`}
+>
+
+El `POST` crea el pedido 26, una taza, y el `GET` lo devuelve. Los 25 anteriores son los de ejemplo. Tu fecha será otra.
+
+</TryIt>
+
+Ahora para el servidor con <kbd>Ctrl</kbd> + <kbd>C</kbd>, arráncalo otra vez con `npm start` y vuelve a pedir el mismo pedido. Después, crea otro:
+
+<TryIt
+  title="Después de reiniciar"
+  cmd={`curl -s -w '\\n' localhost:3000/v2/pedidos/26\ncurl -s -w '\\n' -X POST localhost:3000/v2/pedidos -H 'Content-Type: application/json' -d '{"productoId":3,"cantidad":2}'`}
+  output={`{"type":"about:blank","title":"Not Found","status":404,"detail":"No existe ese pedido"}
+{"id":26,"productoId":3,"cantidad":2,"estado":"pendiente","creadoEn":"2026-10-13T22:52:27.178Z"}`}
+>
+
+El pedido de la taza ya no existe: un `404`, con el formato de <Term id="problem-details">Problem Details</Term> de la [lección 2 de la Fase 4](/fase-4/errores-api-problem-details/). Y el pedido siguiente vuelve a ser el 26, pero de dos sudaderas.
+
+Las salidas son de Node 26 con el proyecto de la última lección de la Fase 4, `17-tiempo-real`.
+
+</TryIt>
+
+Piensa en la empresa de reparto de la Fase 4. Guardó «pedido 26: una taza». Si ahora pregunta por el 26, recibe dos sudaderas. **Perder datos es malo; que un número apunte a otra cosa es peor**, porque nadie se entera.
+
+Y un servidor de verdad se reinicia a menudo: con cada versión nueva, o cuando se cae y [systemd lo levanta](/fase-1/servicios-systemd-apt/).
+
+### ¿Y si lo guardo en un fichero?
+
+Es lo primero que se te ocurre: escribir los pedidos en `pedidos.json` y leerlo al arrancar. Sobrevive al reinicio, pero trae tres problemas:
+
+- **Dos a la vez.** Dos clientes piden a la vez. Tu servidor lee el fichero para cada uno, con 25 pedidos, añade el suyo y lo escribe. El segundo en escribir borra el pedido del primero, sin ningún error.
+- **Buscar.** Para encontrar los pedidos pendientes de la taza, hay que leer el fichero entero y mirarlos uno a uno. Con 25 no se nota; con dos millones, cada búsqueda tarda segundos.
+- **A medio escribir.** Si el programa se cae, o se va la luz, mientras escribe, el fichero queda cortado por la mitad. JSON a medias no se puede leer: pierdes la tienda entera, no solo el último pedido.
+
+Los tres llevan décadas resueltos, y la solución tiene nombre.
+
+## Qué es una base de datos
+
+Una base de datos son tus datos, guardados de forma ordenada. El programa que los guarda y te los da es el **<Term id="dbms">sistema gestor de bases de datos</Term>** (en inglés, *DBMS*). En el día a día se llama «base de datos» a los dos.
+
+Esto hace con los tres problemas del fichero:
+
+| Problema del fichero | Qué hace el sistema gestor | Dónde lo verás |
+|---|---|---|
+| Dos escriben a la vez | Ordena las escrituras: ninguna borra a otra sin que lo sepas | Lección 8 |
+| Buscar es leerlo todo | Mantiene <Term id="database-index">índices</Term>, como los de un libro, para ir directo a lo que buscas | Lección 7 |
+| Un corte a medio escribir | Un cambio se guarda entero o no se guarda: tras un corte, los datos siguen enteros | Lección 8 |
+
+Además, **es un servidor**. PostgreSQL es un programa que se queda en marcha y escucha en un <Term id="port">puerto</Term>, el 5432, como tu API escucha en el 3000. Tu API pasa a ser su <Term id="client">cliente</Term>: le manda preguntas por la red y espera las respuestas, como el navegador hace con ella. Es el [modelo cliente-servidor de la Fase 0](/fase-0/modelo-cliente-servidor/), una capa más adentro.
+
+### Relacional: tablas que se señalan unas a otras
+
+Así se ven los datos de la tienda en una **<Term id="relational-database">base de datos relacional</Term>**. Dos <Term id="table">tablas</Term>, recortadas:
+
+| id | nombre | precio_centimos |
+|---|---|---|
+| 1 | Camiseta | 2000 |
+| 2 | Taza | 850 |
+| 3 | Sudadera | 3500 |
+
+| id | producto_id | cantidad | estado |
+|---|---|---|---|
+| 1 | 2 | 2 | enviado |
+| 2 | 3 | 3 | enviado |
+| 3 | 1 | 4 | enviado |
+
+La primera es `productos` y la segunda, `pedidos`. Cada fila es una cosa y cada columna, un dato de esa cosa, con un tipo fijo: `precio_centimos` siempre es un número entero. El pedido 1 no repite el nombre ni el precio de lo que compra: guarda `producto_id = 2`, y eso **señala** a la fila de la Taza. Esa relación entre tablas, por sus valores, es lo que le da nombre.
+
+A una base de datos relacional se le pregunta en un lenguaje propio, <Term id="sql">SQL</Term>. Las lecciones 1 a 3 te lo enseñan desde cero. Hay otras formas de guardar datos, sin tablas, y la lección 10 te cuenta cuándo ganan.
+
+### Por qué PostgreSQL
+
+Hay varios sistemas relacionales: MySQL, SQLite (un fichero que tu programa abre, sin servidor), SQL Server… El curso usa **PostgreSQL**, libre y gratuito, por tres razones:
+
+- **Es el más usado.** En la [encuesta de Stack Overflow de 2025](https://survey.stackoverflow.co/2025/), es la base de datos que más usa quien programa, por delante de MySQL.
+- **Es el mismo en tu portátil y en producción.** Los servicios que te dan una base de datos ya instalada, de los que hablarás en la Fase 8, ofrecen casi todos PostgreSQL.
+- **Hace más cosas sin cambiar de programa.** Guarda documentos JSON (lección 10) y, con una extensión, los vectores de la Fase 11.
+
+## Las lecciones
+
+1. [SQL](/fase-5/que-es-sql/)
+2. [JOIN](/fase-5/join-sql/)
+3. [GROUP BY](/fase-5/group-by-sql/)
+4. [Modelado](/fase-5/modelado-datos-normalizacion/)
+5. [Node y PostgreSQL](/fase-5/postgresql-node-js/)
+6. [Migraciones](/fase-5/migraciones-base-de-datos/)
+7. [Índices](/fase-5/indices-sql-explain/)
+8. [Transacciones](/fase-5/transacciones-acid/)
+9. [ORM](/fase-5/orm-drizzle-prisma/)
+10. [NoSQL](/fase-5/sql-vs-nosql/)
+
+Las tres primeras son de SQL, con los datos de la tienda. De la cuarta a la novena, cada lección cambia tu proyecto y tiene su carpeta descargable, como en la Fase 4:
+
+| Lección | Lo que gana la API de la tienda | Carpeta |
+|---|---|---|
+| 1 a 3. SQL, JOIN, GROUP BY | Nada todavía: aprendes el lenguaje | — |
+| 4. Modelado | Sus tablas, con sus reglas, y un script que las crea | `18-modelo` |
+| 5. Node y PostgreSQL | Los datos pasan a PostgreSQL: un reinicio ya no borra nada | `19-postgres` |
+| 6. Migraciones | El stock de cada producto, añadido sin perder datos | `20-migraciones` |
+| 7. Índices | La lista de pedidos, rápida con cien mil | `21-indices` |
+| 8. Transacciones | Dos compras de la última taza: una gana y la otra recibe un `409` | `22-transacciones` |
+| 9. ORM | El código de la base de datos, con Drizzle, y las categorías de cada producto | `23-orm` |
+| 10. NoSQL | Nada en el proyecto: comparas con Redis y MongoDB | — |
+
+## Dónde vas a practicar
+
+| Dónde | Para qué | Desde |
+|---|---|---|
+| El playground de SQL, en la propia lección | Probar consultas con los datos de la tienda, sin instalar nada | La lección 1 |
+| `psql`, en tu terminal | Hablar con tu PostgreSQL de verdad | Esta introducción |
+| Tu proyecto, `tienda-api` | Crear sus tablas y conectar la API con ellas | Las lecciones 4 y 5 |
+
+El **playground** es una caja en la lección donde escribes una consulta, pulsas «Ejecutar» y ves el resultado. Por dentro es PostgreSQL 18 de verdad, funcionando en tu navegador, con los mismos datos que vas a cargar aquí. Está en las lecciones 1, 2, 3, 4, 7 y 10.
+
+Pero tu API necesita un PostgreSQL de verdad, con su puerto y sus usuarios. Por eso lo instalas ahora.
+
+- **En Windows,** todo se hace en WSL, como desde la [Fase 0](/fase-0/#antes-de-empezar-la-terminal).
+- **Las salidas** están capturadas con PostgreSQL 18.6 y Node 26. Tus fechas, tiempos y números de versión pueden ser otros.
+- **El idioma:** las salidas de PostgreSQL de las lecciones están en inglés. Si tu sistema está en español, puede que te conteste en español: `(1 fila)` en lugar de `(1 row)`. Significa lo mismo.
+
+## Antes de empezar: instala PostgreSQL 18
+
+PostgreSQL es un servidor, así que se instala como nginx en la [lección 6 de la Fase 1](/fase-1/servicios-systemd-apt/): con el <Term id="package-manager">gestor de paquetes</Term>, y como un servicio que arranca solo. El curso usa la versión 18.
+
+### En el Mac, con Homebrew
+
+Homebrew es el gestor de paquetes del Mac de esa misma lección. Si no lo tienes, instálalo desde [brew.sh](https://brew.sh/).
+
+<TryIt title="Instala PostgreSQL 18" cmd="brew install postgresql@18" />
+
+Al terminar, Homebrew escribe unas notas. Dos te importan:
+
+- **Ha creado la base de datos inicial** con `initdb`, en `/opt/homebrew/var/postgresql@18`. Ahí guardará PostgreSQL tus datos.
+- **`postgresql@18 is keg-only`:** Homebrew no ha puesto sus programas en tu `PATH`, porque podrías tener varias versiones a la vez. Te da la línea que lo arregla, que empieza por `echo 'export PATH=`.
+
+El `PATH` es la lista de carpetas donde la shell busca los programas ([lección 7 de la Fase 1](/fase-1/variables-de-entorno/)). Sin ese paso, `psql` sale como `command not found`. Añade la carpeta a tu `~/.zshrc`, como te dice Homebrew, y abre una terminal nueva:
+
+<TryIt
+  title="Los programas de PostgreSQL, en tu PATH"
+  cmd={`echo 'export PATH="/opt/homebrew/opt/postgresql@18/bin:$PATH"' >> ~/.zshrc`}
+/>
+
+En un Mac con procesador Intel, la carpeta empieza por `/usr/local`: copia la línea que te dé Homebrew.
+
+Ahora arráncalo como servicio, con `brew services`:
+
+<TryIt title="Arranca PostgreSQL" cmd="brew services start postgresql@18" />
+
+Homebrew contesta `Successfully started`. Desde ahora, PostgreSQL arranca solo al entrar en tu Mac; `brew services list` dice si está `started`.
+
+Comprueba con `psql --version` que dice `psql (PostgreSQL) 18.6 (Homebrew)`, o un número mayor.
+
+### En Ubuntu y WSL, con el repositorio de PostgreSQL
+
+Ubuntu 24.04 trae PostgreSQL 16, no 18. El propio proyecto PostgreSQL tiene su repositorio de `apt`, firmado con su clave como el de Ubuntu, y un script que lo añade a tu sistema. El script viene en un paquete, `postgresql-common`; antes, como siempre, `apt update`:
+
+<TryIt
+  title="Añade el repositorio de PostgreSQL"
+  cmd={`sudo apt update\nsudo apt install -y postgresql-common\nsudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh`}
+  output={`…
+Setting up postgresql-common (257build1.1) ...
+…
+This script will enable the PostgreSQL APT repository on apt.postgresql.org on
+your system. The distribution codename used will be noble-pgdg.
+
+Press Enter to continue, or Ctrl-C to abort.
+Using keyring /usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg
+Writing /etc/apt/sources.list.d/pgdg.sources ...
+
+Running apt-get update ...
+…
+You can now start installing packages from apt.postgresql.org.`}
+>
+
+El script te pide <kbd>Enter</kbd> antes de seguir. La clave pública del repositorio ya venía en los paquetes de Ubuntu que acabas de instalar (`keyring`); el script escribe dónde está el repositorio y con qué clave se comprueba (`pgdg.sources`), y descarga su catálogo. Con eso, `apt` comprueba la firma de cada paquete, como viste en la [lección 6 de la Fase 1](/fase-1/servicios-systemd-apt/). `noble` es el nombre de Ubuntu 24.04. Hemos recortado la salida (`…`).
+
+</TryIt>
+
+<TryIt
+  title="Instala PostgreSQL 18"
+  cmd="sudo apt install -y postgresql-18"
+  output={`…
+Setting up postgresql-18 (18.6-1.pgdg24.04+2) ...
+Creating new PostgreSQL cluster 18/main ...
+/usr/lib/postgresql/18/bin/initdb -D /var/lib/postgresql/18/main --auth-local peer --auth-host scram-sha-256 --no-instructions
+…`}
+>
+
+`Creating new PostgreSQL cluster 18/main` es la base de datos inicial (*cluster* es el conjunto de bases de datos de un servidor). La línea de `initdb` dice dónde guarda los datos (`-D`) y cómo comprueba quién eres: `peer` lo verás en el apartado siguiente, y `scram-sha-256` es con contraseña.
+
+</TryIt>
+
+`apt` lo deja instalado como servicio de systemd, y en marcha. Compruébalo:
+
+<TryIt
+  title="¿Está en marcha?"
+  cmd={`pg_lsclusters\npsql --version`}
+  output={`Ver Cluster Port Status Owner    Data directory              Log file
+18  main    5432 online postgres /var/lib/postgresql/18/main /var/log/postgresql/postgresql-18-main.log
+psql (PostgreSQL) 18.6 (Ubuntu 18.6-1.pgdg24.04+2)`}
+>
+
+`pg_lsclusters` lista los servidores PostgreSQL de tu máquina. Fíjate en `5432`, el puerto, y en `online`, en marcha. `Owner postgres` dice que el servidor funciona como el usuario `postgres` del sistema, no como tú: el mínimo privilegio de la [lección 4 de la Fase 1](/fase-1/usuarios-y-permisos-linux/).
+
+Si dice `down`, arráncalo con `sudo pg_ctlcluster 18 main start`.
+
+</TryIt>
+
+## Antes de empezar: tu usuario y tus bases de datos
+
+PostgreSQL tiene sus propios usuarios, que llama **roles**, distintos de los de tu sistema. La instalación ha creado uno con todos los permisos, un superusuario: en el Mac se llama como tú, `ana`, y en Ubuntu, `postgres`.
+
+Tu API no usará ese superusuario, sino un rol propio, `tienda`, dueño solo de sus bases de datos: si alguien se colara en tu API, no podría tocar nada más. Es el mismo <Term id="least-privilege">mínimo privilegio</Term>.
+
+### El rol tienda
+
+Crea el rol `tienda`. Te pedirá su contraseña dos veces; escribe **`tienda`**:
+
+<TryIt
+  title="Crea el rol tienda"
+  cmd="sudo -u postgres createuser --pwprompt tienda"
+  output={`Enter password for new role: 
+Enter it again: `}
+>
+
+`createuser` crea un rol, y `--pwprompt` hace que te pida su contraseña (no se ve mientras la escribes). Si `sudo` te pide antes `[sudo] password for ana`, esa es la tuya, la del sistema; la del rol, las dos veces, es `tienda`. Si todo va bien, no dice nada más.
+
+**En Linux,** `sudo -u postgres` ejecuta la orden como el usuario `postgres` del sistema. PostgreSQL lo deja entrar sin contraseña porque, en una conexión desde la misma máquina, se fía de lo que dice el sistema sobre quién eres: es el `peer` de antes. **En el Mac,** escribe `createuser --pwprompt tienda`, sin `sudo`: allí el superusuario eres tú.
+
+Si en Linux te olvidas del `sudo -u postgres`, PostgreSQL te busca a ti, y no existe: `FATAL:  role "ana" does not exist`.
+
+</TryIt>
+
+¿Una contraseña igual que el nombre? Aquí sí. Tu PostgreSQL solo escucha en <Term id="localhost">localhost</Term>, así que nadie de fuera de tu ordenador llega a él, y los tests del proyecto ya vienen preparados con ella. En un servidor de verdad, en la Fase 8, será larga y secreta.
+
+Falta un ajuste: que el rol vea las fechas en UTC, la hora sin zona horaria.
+
+<TryIt
+  title="Las fechas del rol tienda, en UTC"
+  cmd={`sudo -u postgres psql -c "ALTER ROLE tienda SET timezone = 'UTC';"`}
+  output="ALTER ROLE"
+>
+
+`psql -c` ejecuta una sola orden y sale. Esta le dice a PostgreSQL que, cada vez que entre el rol `tienda`, le enseñe las fechas en UTC. **En el Mac:** `psql -d postgres -c "…"`, con la misma orden entre comillas. `postgres` es una base de datos que trae toda instalación, para conectarte cuando aún no tienes la tuya.
+
+¿Por qué? Los pedidos guardan un instante, y PostgreSQL lo enseña en la zona horaria del servidor, que en el Mac es la tuya: un pedido de las 09:00 en UTC saldría como `11:00:00+02` en Madrid. En UTC, tus salidas coinciden con las de las lecciones y el playground, y con tu API, que ya manda las fechas en UTC ([lección 6 de la Fase 4](/fase-4/json-protobuf/)).
+
+</TryIt>
+
+### Dos bases de datos: tienda y tienda_test
+
+<TryIt
+  title="Crea las dos bases de datos"
+  cmd={`sudo -u postgres createdb --owner tienda tienda\nsudo -u postgres createdb --owner tienda tienda_test`}
+>
+
+`createdb` crea una base de datos, y `--owner tienda` se la da al rol `tienda`. No dicen nada si todo va bien. En el Mac, otra vez, sin `sudo -u postgres`.
+
+- **`tienda`** es la tuya: la de practicar SQL y la que usará tu API.
+- **`tienda_test`** es la de los tests del proyecto. Cada vez que los ejecutas, la vacían y la vuelven a llenar, así que nunca tocan tus datos.
+
+</TryIt>
+
+### Que psql sepa quién eres: PGHOST y PGUSER
+
+`psql` es el cliente de PostgreSQL para la terminal: manda tus preguntas al servidor y te enseña las respuestas. Si no le dices otra cosa, entra con tu usuario del sistema, `ana`: en Linux, ese rol no existe, y en el Mac es el superusuario. Ninguno de los dos te sirve.
+
+`psql` lee dos <Term id="environment-variable">variables de entorno</Term> que lo arreglan: `PGHOST`, el servidor, y `PGUSER`, el rol. Déjalas en el fichero que tu shell lee al arrancar, como en la [lección 7 de la Fase 1](/fase-1/variables-de-entorno/). **Hazlo después de crear el rol y las bases de datos:** en el Mac, `createuser` y `createdb` también las leen, y entrarían como `tienda`, que no puede crear roles ni bases. En Linux y WSL, cambia `~/.zshrc` por `~/.bashrc`:
+
+<TryIt
+  title="Para psql: el servidor y el rol"
+  cmd={`echo 'export PGHOST=localhost PGUSER=tienda' >> ~/.zshrc`}
+/>
+
+Después, **abre una terminal nueva**, que es cuando la shell lee el fichero.
+
+### Conéctate con psql
+
+En todas las lecciones abrirás `psql` igual, con `-d` y la base de datos:
+
+<TryIt
+  title="Tu primera conexión"
+  cmd="psql -d tienda"
+  output={`Password for user tienda: 
+psql (18.6 (Ubuntu 18.6-1.pgdg24.04+2))
+SSL connection (protocol: TLSv1.3, cipher: TLS_AES_256_GCM_SHA384, compression: off, ALPN: postgresql)
+Type "help" for help.
+
+tienda=> SELECT version();
+                                                                  version
+-------------------------------------------------------------------------------------------------------------------------------------------
+ PostgreSQL 18.6 (Ubuntu 18.6-1.pgdg24.04+2) on aarch64-unknown-linux-gnu, compiled by gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0, 64-bit
+(1 row)
+
+tienda=> SHOW timezone;
+ TimeZone
+----------
+ UTC
+(1 row)
+
+tienda=> \\q`}
+>
+
+En Linux te pide la contraseña, `tienda`. **En el Mac no te la pide:** Homebrew se fía de las conexiones desde tu propio ordenador. Tampoco verás la línea `SSL connection`, que es de Ubuntu: allí cifra la conexión con TLS, el de la [lección 8 de la Fase 0](/fase-0/tls-y-https/), aunque no salga de tu máquina.
+
+`tienda=>` es el <Term id="prompt">prompt</Term>: el nombre de la base de datos y `=>`. Un superusuario vería `=#`: si en el Mac te sale `tienda=#`, tu terminal no tiene `PGUSER` y has entrado como `ana`. Abre una nueva.
+
+</TryIt>
+
+Dentro, escribiste dos tipos de cosas muy distintas:
+
+- **`SELECT version();` y `SHOW timezone;`** son SQL: preguntas para el servidor. Terminan en punto y coma; si se te olvida, `psql` espera más líneas y el prompt cambia a `tienda->`. Escribe el `;` y pulsa <kbd>Enter</kbd>. En el Mac, la versión dice `Homebrew` y `apple-darwin`.
+- **`\q`** no es SQL: es una orden del propio `psql`, que no llega al servidor. Todas las de `psql` empiezan por `\`. `\q` sale, y `\?` las lista todas.
+
+Si algo falla, el mensaje te dice qué:
+
+| Mensaje | Qué pasa |
+|---|---|
+| `role "ana" does not exist` | Tu terminal no tiene `PGHOST` ni `PGUSER`: abre una nueva |
+| `password authentication failed for user "tienda"` | La contraseña no es la que diste al crear el rol |
+| `Connection refused` … `Is the server running` | PostgreSQL no está en marcha: arráncalo como arriba |
+| `database "tienda" does not exist` | Falta el `createdb` |
+
+### La dirección, en el .env de tu proyecto
+
+Tu API no lee `PGHOST` ni `PGUSER`: recibe todo junto en una dirección, `DATABASE_URL`. Añade esta línea al `.env` de tu proyecto, en `~/curso-backend/fase-3/tienda-api`:
+
+```sh
+DATABASE_URL=postgres://tienda:tienda@localhost:5432/tienda
+```
+
+Es una <Term id="url">URL</Term>: el protocolo, el rol y su contraseña, el servidor con su puerto y la base de datos. El `.env` es el de la [lección 8 de la Fase 3](/fase-3/errores-y-logs-node/), que nunca se sube a Git porque guarda <Term id="secret">secretos</Term>. El script de la lección 4 la usa para crear las tablas, y tu API, desde la lección 5; los tests traen la suya, que apunta a `tienda_test`.
+
+Si tu proyecto no está al día, empieza con el final de la Fase 4, `17-tiempo-real`, como en [su introducción](/fase-4/#si-prefieres-empezar-limpio).
+
+## Antes de empezar: los datos de la tienda
+
+Las lecciones de SQL usan los datos de la tienda: cuatro productos, tres categorías y 25 pedidos. Están en `tienda.sql`, un fichero con las órdenes que crean las tablas y las llenan. Descárgalo en la carpeta de esta fase:
+
+<TryIt
+  title="Descarga los datos"
+  cmd={`mkdir -p ~/curso-backend/fase-5\ncd ~/curso-backend/fase-5\ncurl -O https://backenddesdecero.com/practicas/tienda.sql`}
+  output={`  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+100  2933  100  2933    0     0   120k      0 --:--:-- --:--:-- --:--:--  124k`}
+>
+
+`curl -O` lo guarda con su nombre, como en la [Fase 2](/fase-2/). Es texto: puedes leerlo con `less tienda.sql`. El tamaño puede cambiar si actualizamos el fichero.
+
+</TryIt>
+
+<TryIt
+  title="Cárgalos en tu base de datos"
+  cmd="psql -d tienda -f tienda.sql"
+  output={`Password for user tienda: 
+psql:tienda.sql:6: NOTICE:  table "pedidos" does not exist, skipping
+psql:tienda.sql:6: NOTICE:  table "productos_categorias" does not exist, skipping
+psql:tienda.sql:6: NOTICE:  table "categorias" does not exist, skipping
+psql:tienda.sql:6: NOTICE:  table "productos" does not exist, skipping
+DROP TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+CREATE TABLE
+INSERT 0 4
+INSERT 0 3
+INSERT 0 6
+INSERT 0 25`}
+>
+
+`-f` le dice a `psql` que lea las órdenes de un fichero. Cada línea de la salida responde a una orden:
+
+- **Los `NOTICE`** son avisos, no errores. El fichero empieza borrando las tablas por si ya existían; la primera vez no existen, y PostgreSQL lo dice y sigue.
+- **`CREATE TABLE`**, cuatro veces: las cuatro tablas.
+- **`INSERT 0 4`**: cuatro filas añadidas, los productos. El `0` es un resto histórico; el número que importa es el segundo.
+
+Como empieza borrando, **puedes cargarlo otra vez cuando quieras** para volver a los datos de partida. Lo agradecerás en la lección 1, cuando cambies datos a propósito.
+
+</TryIt>
+
+<TryIt
+  title="Las cuatro tablas"
+  cmd={`psql -d tienda -c '\\dt'`}
+  output={`                 List of tables
+ Schema |         Name         | Type  | Owner
+--------+----------------------+-------+--------
+ public | categorias           | table | tienda
+ public | pedidos              | table | tienda
+ public | productos            | table | tienda
+ public | productos_categorias | table | tienda
+(4 rows)`}
+>
+
+`\dt` es una orden de `psql` que lista las tablas. Fíjate en `Owner tienda`: son de tu rol, porque las ha creado él. Si las hubiera creado el superusuario, tu API no podría usarlas sin que le dieras permiso.
+
+</TryIt>
+
+## Lista para empezar
+
+Antes de la lección 1, comprueba que tienes todo:
+
+- **PostgreSQL 18 en marcha:** `brew services list` dice `started` en el Mac, y `pg_lsclusters` dice `online` en Linux.
+- **El rol y sus dos bases de datos:** `psql -d tienda` y `psql -d tienda_test` te dan su prompt, con `=>`.
+- **`DATABASE_URL`** en el `.env` de tu proyecto.
+- **Los datos de la tienda:** en `psql -d tienda`, `SELECT count(*) FROM pedidos;` contesta `25`.
+
+Si no puedes instalar nada ahora, las tres primeras lecciones funcionan con el playground.
+
+Empieza por la [lección 1, «SQL»](/fase-5/que-es-sql/): aprenderás a preguntarle cosas a esas cuatro tablas.

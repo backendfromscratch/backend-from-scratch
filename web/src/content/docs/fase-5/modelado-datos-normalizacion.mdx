@@ -1,0 +1,623 @@
+---
+translationKey: data-modeling
+title: "Modelado de datos y normalización"
+description: "Diseña las tablas de una base de datos: relaciones 1:N y N:M, restricciones, normalización 1FN, 2FN y 3FN con ejemplos, y cuándo desnormalizar."
+sidebar:
+  label: Modelado
+  order: 4
+lesson:
+  oneLiner: "Modelar los datos es decidir qué tablas tiene una base de datos, cómo se relacionan y qué reglas cumplen. Normalizar es repartirlos para que cada dato viva en un solo sitio: así un cambio se hace una vez y la base de datos no puede contradecirse."
+  objectives:
+    - Guardar una relación 1:N con una clave foránea y una N:M con una tabla intermedia.
+    - Escribir el esquema con CREATE TABLE y sus restricciones, y elegir qué pasa al borrar con ON DELETE.
+    - Reconocer las anomalías de una tabla mal diseñada y repartirla según la 1FN, la 2FN y la 3FN.
+    - Decidir cuándo conviene copiar un dato a propósito, como el precio de un pedido.
+  prerequisites: [aggregation]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import SqlPlayground from '~/playgrounds/sql-playground/SqlPlayground';
+
+## El problema
+
+Imagina que, antes de tener base de datos, Ana llevaba la tienda en una hoja de cálculo, con una fila por pedido:
+
+| pedido | producto | precio_centimos | categorias | cantidad |
+|---|---|---|---|---|
+| 1 | Taza | 850 | Hogar, Regalos | 2 |
+| 2 | Sudadera | 3500 | Ropa | 3 |
+| 4 | Taza | 850 | Hogar, Regalos | 1 |
+
+Un día sube la taza a 9 €. Cambia el precio en el pedido 4, el que tiene delante, y se olvida del 1. Ahora la hoja dice que la taza cuesta 8,50 € y 9 € a la vez, y no sabe cuál es el bueno.
+
+En las lecciones 1 a 3, las tablas ya estaban diseñadas. Ahora las diseñas tú: qué tablas, qué columnas y qué reglas. Es el **modelo de datos**, y todo lo demás se construye encima. Cambiarlo con la tienda llena de datos cuesta mucho más que pensarlo bien ahora.
+
+## La analogía
+
+<Analogy>
+
+Piensa en una boda. La agenda tiene la dirección de cada invitado, una sola vez. El plano de las mesas («Mesa 3: Marta y Pablo») y la lista de regalos («Marta: la cafetera») solo llevan nombres.
+
+Si Marta se muda, cambias una línea de la agenda y todo lo demás sigue bien. Si hubieras copiado su dirección en cada papel, tendrías que encontrar todas las copias, y la que se te escape mandará algo a la casa vieja.
+
+<div slot="limits">
+
+- La agenda no impide sentar a alguien que no está en ella. Una base de datos sí, con las reglas de esta lección.
+- A veces copiar es lo correcto: la invitación que ya enviaste lleva la dirección de entonces, y así debe quedarse. Con el precio de un pedido pasa lo mismo, como verás al final.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+Las salidas son de PostgreSQL 18.6, con los datos de la tienda. Puedes probar las consultas en `psql -d tienda` o en el playground de [Pruébalo](#pruébalo).
+
+### Primero, las cosas y cómo se relacionan
+
+Modelar empieza en papel. Apunta las cosas de las que la tienda guarda datos, las **entidades**: productos, categorías y pedidos. Cada entidad será una tabla, y cada dato suyo, una columna.
+
+Después, cómo se relacionan. Por cada pareja, pregúntate cuántos de uno puede tener el otro, en los dos sentidos:
+
+| Pareja | En un sentido | En el otro | Relación | Dónde se guarda |
+|---|---|---|---|---|
+| Producto y pedido | Un pedido es de un producto | Un producto tiene muchos pedidos | Uno a muchos (1:N) | `producto_id`, en `pedidos` |
+| Producto y categoría | Un producto está en varias categorías | Una categoría tiene varios productos | Muchos a muchos (N:M) | Una tabla intermedia, `productos_categorias` |
+
+### Uno a muchos: la clave va en el lado de los muchos
+
+En una relación 1:N, la <Term id="foreign-key">clave foránea</Term> de la [lección 2](/fase-5/join-sql/) va en la tabla de los muchos: cada pedido guarda su `producto_id`. Al revés no cabe, porque un producto con 9 pedidos necesitaría 9 valores en una celda.
+
+### Muchos a muchos: una tabla intermedia
+
+Con productos y categorías, ningún lado tiene un solo valor: la Taza está en Hogar y en Regalos, y Ropa tiene tres productos. Las dos primeras ideas fallan:
+
+- **Una columna `categorias` con `'Hogar, Regalos'`:** es un texto, y PostgreSQL ni comprueba que esas categorías existan ni puede unirlo con un JOIN.
+- **Columnas `categoria1` y `categoria2`:** una tercera categoría obliga a cambiar la tabla, y para buscar los productos de Regalos hay que mirar en las dos.
+
+La solución es otra tabla, con **una fila por pareja**: `productos_categorias`, con `(2, 2)` y `(2, 3)` para la Taza. Es la que unías con dos JOIN en la [lección 2](/fase-5/join-sql/).
+
+### El esquema: las tablas, escritas en SQL
+
+El <Term id="database-schema">esquema</Term> de una base de datos es la lista de sus tablas, con sus columnas, sus tipos y sus reglas. Se escribe con `CREATE TABLE`. Este es el de los productos, en tu proyecto:
+
+<ProjectCode file="tienda-api/18-modelo/bd/esquema.sql" region="productos" />
+
+Palabra a palabra:
+
+- `CREATE TABLE productos (…)` crea la tabla, con una columna por línea, separadas por comas: su nombre y su tipo.
+- `id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY` es la clave primaria de la [lección 2](/fase-5/join-sql/).
+- `NOT NULL` hace obligatoria la columna: el `NULL` de la [lección 1](/fase-5/que-es-sql/) no entra.
+- `CHECK (precio_centimos > 0)` es una condición que cada fila tiene que cumplir.
+- `--` empieza un comentario, que PostgreSQL ignora.
+
+No lo confundas con el esquema de Zod de la [Fase 3](/fase-3/validar-datos-zod/), que describe un JSON.
+
+### Las restricciones: reglas que PostgreSQL comprueba siempre
+
+`NOT NULL` y `CHECK` son <Term id="constraint">restricciones</Term>: reglas que la base de datos comprueba en cada `INSERT` y cada `UPDATE`. Las categorías tienen otra:
+
+<ProjectCode file="tienda-api/18-modelo/bd/esquema.sql" region="categorias" />
+
+`UNIQUE` prohíbe repetir un valor en la columna: no puede haber dos «Ropa». Los pedidos juntan casi todas:
+
+<ProjectCode file="tienda-api/18-modelo/bd/esquema.sql" region="pedidos" />
+
+- `REFERENCES productos (id)` es la clave foránea: solo vale el id de un producto que exista.
+- `CHECK (cantidad > 0)`: ningún pedido de cero unidades.
+- `CHECK (estado IN (…))`: `IN` quiere decir «uno de estos».
+
+Un pedido de cero unidades no pasa:
+
+```sql
+INSERT INTO pedidos (producto_id, cantidad, estado, creado_en)
+VALUES (2, 0, 'pendiente', now());
+```
+
+```
+ERROR:  new row for relation "pedidos" violates check constraint "pedidos_cantidad_check"
+DETAIL:  Failing row contains (26, 2, 0, pendiente, 2026-10-13 23:12:43.083681+00).
+```
+
+«La fila nueva de `pedidos` incumple la restricción `pedidos_cantidad_check`», un nombre que PostgreSQL forma con la tabla y la columna.
+
+**¿Por qué en la base de datos, si la API ya valida con Zod?** Porque la API no es la única que escribe. Un script que importa pedidos, alguien en `psql` o un fallo en el código se saltan Zod, pero no a PostgreSQL. Zod le da al cliente un buen mensaje; la restricción es la última puerta.
+
+### ON DELETE: qué pasa al borrar algo que otros señalan
+
+En la [lección 2](/fase-5/join-sql/), borrar la Taza fallaba porque sus pedidos apuntan a ella. Al declarar una clave foránea, eliges qué pasa en ese caso:
+
+| Se escribe | Al borrar el producto, las filas que lo señalan… |
+|---|---|
+| Nada (o `ON DELETE RESTRICT`) | …lo impiden: el borrado falla con un error |
+| `ON DELETE CASCADE` | …se borran con él |
+| `ON DELETE SET NULL` | …se quedan con `NULL` en esa columna, si la admite |
+
+El proyecto elige distinto en cada tabla:
+
+<ProjectCode file="tienda-api/18-modelo/bd/esquema.sql" region="productos-categorias" />
+
+- **`productos_categorias`, con `CASCADE`.** «La Gorra está en Regalos» no significa nada sin la Gorra: si se borra el producto, sus parejas se van con él. La categoría sigue ahí.
+- **`pedidos`, sin `ON DELETE`.** Los pedidos son la historia de la tienda. Borrar un producto no puede borrar sus ventas.
+- `PRIMARY KEY (producto_id, categoria_id)` es la clave primaria de dos columnas de la lección 2: la misma pareja no entra dos veces.
+
+Con estas reglas, la Gorra, sin pedidos, se borra con sus dos categorías; la Taza, no:
+
+```sql
+DELETE FROM productos WHERE id = 4;
+DELETE FROM productos WHERE id = 2;
+```
+
+```
+DELETE 1
+ERROR:  update or delete on table "productos" violates foreign key constraint "pedidos_producto_id_fkey" on table "pedidos"
+DETAIL:  Key (id)=(2) is still referenced from table "pedidos".
+```
+
+En la [lección 5](/fase-5/postgresql-node-js/), la API convertirá ese error en un `409`.
+
+### Normalizar: cada dato en un solo sitio
+
+Vuelve a la hoja de Ana, ahora como tabla de PostgreSQL, `hoja`, con las tres filas de El problema. El cambio de precio a medias:
+
+```sql
+UPDATE hoja SET precio_centimos = 900 WHERE pedido = 4;
+SELECT pedido, producto, precio_centimos FROM hoja WHERE producto = 'Taza';
+```
+
+```
+UPDATE 1
+ pedido | producto | precio_centimos
+--------+----------+-----------------
+      1 | Taza     |             850
+      4 | Taza     |             900
+(2 rows)
+```
+
+Es la primera de tres **anomalías**, errores que provoca el propio diseño:
+
+- **Al cambiar:** un dato copiado en varias filas acaba con dos valores.
+- **Al añadir:** la Gorra, que nadie ha pedido, no cabe. Cada fila es un pedido, y sin pedido falta la clave: `INSERT INTO hoja (producto, precio_centimos) VALUES ('Gorra', 1500);` da `ERROR:  null value in column "pedido"…`.
+- **Al borrar:** si se borra el pedido 2, el único de la Sudadera, la tienda olvida que existe y lo que cuesta.
+
+Las tres tienen la misma causa: la hoja mezcla pedidos, productos y categorías en una tabla. La <Term id="normalization">normalización</Term> los separa para que **cada dato se guarde en un solo sitio**. Sus reglas se llaman formas normales.
+
+### Las tres formas normales, en palabras
+
+| Forma normal | La regla | La rompe | El arreglo |
+|---|---|---|---|
+| Primera (1FN) | Cada celda guarda un solo valor | `categorias` con `'Hogar, Regalos'` | Una fila por pareja, en `productos_categorias` |
+| Segunda (2FN) | Si la clave tiene varias columnas, cada dato depende de toda ella | Un `nombre_producto` en `productos_categorias`: depende solo de `producto_id` | El nombre, en `productos` |
+| Tercera (3FN) | Cada dato depende de la clave, no de otra columna | El precio en la hoja: depende del producto, no del pedido | El precio, en `productos` |
+
+William Kent lo resumió en 1983: cada dato depende **de la clave, de toda la clave y de nada más que la clave**. El resultado son las cuatro tablas del proyecto. El precio vive en `productos` y cada categoría en `categorias`. El pedido guarda solo lo suyo: qué producto, cuántos, en qué estado y cuándo.
+
+Hay más formas normales, más estrictas. Con la tercera, casi todas las aplicaciones van bien.
+
+### Desnormalizar: copiar a propósito
+
+A veces conviene copiar un dato a propósito: es **desnormalizar**. Hay dos casos típicos.
+
+**El precio del momento.** Los pedidos de la tienda no guardan el precio. El informe de ingresos de la [lección 3](/fase-5/group-by-sql/) multiplica cada cantidad por el precio de hoy:
+
+```sql
+SELECT p.nombre, SUM(ped.cantidad * p.precio_centimos) AS ingresos_centimos
+FROM pedidos AS ped
+JOIN productos AS p ON p.id = ped.producto_id
+WHERE p.nombre = 'Taza'
+GROUP BY p.id, p.nombre;
+```
+
+```
+ nombre | ingresos_centimos
+--------+-------------------
+ Taza   |             18700
+(1 row)
+```
+
+Ana sube la taza a 9 € con `UPDATE productos SET precio_centimos = 900 WHERE nombre = 'Taza';`, y la misma consulta da `19800`. Las 22 tazas se cobraron a 8,50 €, pero el informe dice que dejaron 198 €: **ha cambiado el pasado**. Por eso las tiendas de verdad guardan en cada pedido el precio al que se vendió. Parece una copia, pero es otro dato: lo que se cobró, que no cambia con el producto.
+
+La tienda del curso no lo guarda, para que los pedidos sigan como en la API de la Fase 4, así que sus informes usan el precio de hoy. Añadirlo sería un campo nuevo en el JSON del pedido, un cambio que no rompe.
+
+**Un total guardado.** Una columna `total_centimos` en cada pedido ahorra la multiplicación al leer. Pero si alguien cambia la cantidad y olvida el total, la base de datos se contradice. Copia solo cuando hayas medido que leer es lento (la [lección 7](/fase-5/indices-sql-explain/) enseña a medirlo).
+
+La regla: **normaliza por defecto, y desnormaliza con una razón**, sabiendo qué copia se puede quedar vieja.
+
+### Un pedido con varios productos rompería la API
+
+En la tienda del curso, un pedido es de un solo producto. Una tienda de verdad deja comprar una taza y una gorra juntas. Entonces `pedidos` se quedaría con `estado` y `creado_en`, y una tabla nueva, `lineas_pedido`, tendría una fila por producto de cada pedido: otra relación 1:N. Y con las tablas cambiaría el JSON:
+
+```text
+Antes:   {"id":26,"productoId":2,"cantidad":1,"estado":"pendiente",…}
+Después: {"id":26,"lineas":[{"productoId":2,"cantidad":1},{"productoId":4,"cantidad":1}],"estado":"pendiente",…}
+```
+
+La empresa de reparto lee `productoId` y `cantidad`, y dejarían de estar. Es un <Term id="breaking-change">cambio que rompe</Term>: haría falta una `/v3` ([lección 4 de la Fase 4](/fase-4/versionado-api/)). Por eso, en esta fase, la tienda sigue con un producto por pedido y su API solo crece añadiendo. **El modelo de datos acaba siendo la forma de tu API**: piénsalo antes de que otros dependan de ella.
+
+## Pruébalo
+
+El objetivo: crear las tablas de la tienda desde tu proyecto, leer sus reglas en `psql`, intentar colar datos malos y romper una tabla mal diseñada.
+
+### Las tablas, en tu proyecto
+
+Partes de tu proyecto de la Fase 4, en `~/curso-backend/fase-3/tienda-api`, con la `DATABASE_URL` de la introducción en el `.env`. Primero, instala `pg`:
+
+<TryIt
+  title="1. Instala pg y sus tipos"
+  cmd={`npm install pg@8.23.1
+npm install --save-dev @types/pg@8.23.1`}
+  output={`added 13 packages, and audited 52 packages in 2s
+
+6 packages are looking for funding
+  run \`npm fund\` for details
+
+found 0 vulnerabilities
+
+added 1 package, and audited 53 packages in 908ms
+
+6 packages are looking for funding
+  run \`npm fund\` for details
+
+found 0 vulnerabilities`}
+>
+
+`pg` es el <Term id="driver">driver</Term> de PostgreSQL para Node: el paquete con el que tu código habla con la base de datos. Lo verás a fondo en la [lección 5](/fase-5/postgresql-node-js/). Las salidas son de Node 26 y PostgreSQL 18.6: tus tiempos y fechas serán otros.
+
+</TryIt>
+
+Crea `bd/esquema.sql` con las cuatro tablas de «Cómo funciona de verdad», en ese orden: una tabla tiene que existir antes de que otra la señale. Los datos, el script y las pruebas vienen en la carpeta de la lección:
+
+```sh
+cd ~/curso-backend/fase-3
+curl -O https://backenddesdecero.com/practicas/tienda-api/18-modelo.tar.gz
+tar -xzf 18-modelo.tar.gz
+cd tienda-api
+cp ../18-modelo/bd/datos.sql bd/
+cp ../18-modelo/scripts/crear-bd.ts scripts/
+cp ../18-modelo/test/bd.ts ../18-modelo/test/modelo.test.ts ../18-modelo/test/.env test/
+```
+
+`bd/datos.sql` son los `INSERT` de `tienda.sql`, y `test/.env` trae la `DATABASE_URL` de los tests, la de `tienda_test`. Añade la línea `DATABASE_URL` a tu `.env.ejemplo`, como en la carpeta de la lección, y las dos líneas marcadas a tu `package.json`:
+
+<ProjectCode file="tienda-api/18-modelo/package.json" mark={[12, 15]} />
+
+- `bd:crear` ejecuta el script.
+- `--test-concurrency=1` ejecuta los ficheros de pruebas de uno en uno: desde ahora comparten `tienda_test`, y cada uno la vacía al empezar.
+
+Esto hace `scripts/crear-bd.ts`:
+
+<ProjectCode file="tienda-api/18-modelo/scripts/crear-bd.ts" region="crear" />
+
+- `new Client(…)` y `connect()` abren una conexión con PostgreSQL, con la `DATABASE_URL` del `.env`.
+- `DROP TABLE IF EXISTS` borra las cuatro tablas, **con todos sus datos**. Sirve mientras diseñas; en la [lección 6](/fase-5/migraciones-base-de-datos/) lo sustituye algo que no borra nada.
+- Después ejecuta `esquema.sql` y `datos.sql` y cuenta las filas. `finally` cierra la conexión, falle lo que falle.
+
+<TryIt
+  title="2. Crea las tablas"
+  cmd="npm run bd:crear"
+  output={`> tienda-api@1.0.0 bd:crear
+> node --env-file-if-exists=.env scripts/crear-bd.ts
+
+Tablas creadas: 4 productos, 3 categorías y 25 pedidos`}
+>
+
+Tu base de datos `tienda` tiene ahora las tablas del proyecto, con los datos de siempre. Ejecútalo cuando quieras volver al principio. Si sale `Falta DATABASE_URL`, tu `.env` no la tiene; si sale `password authentication failed`, mira la tabla de errores de la [introducción](/fase-5/#conéctate-con-psql).
+
+Tu API todavía no usa estas tablas: sigue con sus datos en memoria hasta la [lección 5](/fase-5/postgresql-node-js/).
+
+</TryIt>
+
+Termina con `npm test`, que debería acabar con `fail 0`. Las diez pruebas de `test/modelo.test.ts` intentan romper cada regla, como vas a hacer tú ahora.
+
+### Las reglas, en psql
+
+<TryIt
+  title="3. Lo que sabe PostgreSQL de los pedidos"
+  cmd={`psql -d tienda -c '\\d pedidos'`}
+  output={`                                    Table "public.pedidos"
+   Column    |           Type           | Collation | Nullable |           Default
+-------------+--------------------------+-----------+----------+------------------------------
+ id          | integer                  |           | not null | generated always as identity
+ producto_id | integer                  |           | not null |
+ cantidad    | integer                  |           | not null |
+ estado      | text                     |           | not null |
+ creado_en   | timestamp with time zone |           | not null |
+Indexes:
+    "pedidos_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "pedidos_cantidad_check" CHECK (cantidad > 0)
+    "pedidos_estado_check" CHECK (estado = ANY (ARRAY['pendiente'::text, 'pagado'::text, 'enviado'::text, 'cancelado'::text]))
+Foreign-key constraints:
+    "pedidos_producto_id_fkey" FOREIGN KEY (producto_id) REFERENCES productos(id)`}
+>
+
+`\d` describe una tabla. Fíjate en `Nullable` y en las restricciones, con su nombre. PostgreSQL ha reescrito tu `IN (…)` como `= ANY (ARRAY[…])`, que significa lo mismo. La línea `Indexes` la entenderás en la [lección 7](/fase-5/indices-sql-explain/). Prueba también `\d productos`: al final dice qué tablas lo señalan.
+
+</TryIt>
+
+### Intenta colar datos malos
+
+Este pedido cumple todas las reglas. Ejecútalo, y después rompe una cada vez: la cantidad a `0`, el estado a `'Pendiente'`, con mayúscula, o el producto a `99`. Al final, cambia todo lo de la caja por `DELETE FROM productos WHERE id = 4;`, y después por `id = 2`: la Gorra se va con sus categorías, y la Taza no se deja. «Restaurar datos» lo devuelve todo.
+
+<SqlPlayground client:visible lang="es" rows={4} query={`INSERT INTO pedidos (producto_id, cantidad, estado, creado_en)
+VALUES (2, 1, 'pendiente', now());
+SELECT id, producto_id, cantidad, estado FROM pedidos WHERE id = 26;`} />
+
+Lo mismo en `psql -d tienda`, con los tres datos malos:
+
+<TryIt
+  title="4. Tres pedidos que no entran"
+  lang="sql"
+  cmd={`INSERT INTO pedidos (producto_id, cantidad, estado, creado_en) VALUES (2, 0, 'pendiente', now());
+INSERT INTO pedidos (producto_id, cantidad, estado, creado_en) VALUES (2, 1, 'Pendiente', now());
+INSERT INTO pedidos (producto_id, cantidad, estado, creado_en) VALUES (99, 1, 'pendiente', now());`}
+  output={`ERROR:  new row for relation "pedidos" violates check constraint "pedidos_cantidad_check"
+DETAIL:  Failing row contains (26, 2, 0, pendiente, 2026-10-13 23:12:43.083681+00).
+ERROR:  new row for relation "pedidos" violates check constraint "pedidos_estado_check"
+DETAIL:  Failing row contains (27, 2, 1, Pendiente, 2026-10-13 23:12:43.0844+00).
+ERROR:  insert or update on table "pedidos" violates foreign key constraint "pedidos_producto_id_fkey"
+DETAIL:  Key (producto_id)=(99) is not present in table "productos".`}
+>
+
+Cada error nombra la restricción que lo ha parado, y `\d pedidos` te dice cuál es. Ninguno entra, así que tus datos no cambian. Tus fechas serán otras.
+
+</TryIt>
+
+### Rompe una tabla mal diseñada
+
+La hoja de Ana, en el playground. Ejecútalo y verás la taza con dos precios. La tabla se queda creada: para las otras dos anomalías, cambia todo lo de la caja por la Gorra sin pedido (`INSERT INTO hoja (producto, precio_centimos) VALUES ('Gorra', 1500);`), o por `DELETE FROM hoja WHERE pedido = 2;` y busca después el precio de la Sudadera.
+
+<SqlPlayground client:visible lang="es" rows={10} query={`CREATE TABLE hoja (
+  pedido integer PRIMARY KEY,
+  producto text,
+  precio_centimos integer,
+  categorias text,
+  cantidad integer
+);
+INSERT INTO hoja VALUES
+  (1, 'Taza', 850, 'Hogar, Regalos', 2),
+  (2, 'Sudadera', 3500, 'Ropa', 3),
+  (4, 'Taza', 850, 'Hogar, Regalos', 1);
+UPDATE hoja SET precio_centimos = 900 WHERE pedido = 4;
+SELECT pedido, producto, precio_centimos FROM hoja WHERE producto = 'Taza';`} />
+
+En `psql -d tienda`, lo mismo, y al final `DROP TABLE hoja;` para borrarla, porque no es parte de la tienda:
+
+<TryIt
+  title="5. La hoja, en psql"
+  lang="sql"
+  cmd={`CREATE TABLE hoja (pedido integer PRIMARY KEY, producto text, precio_centimos integer, categorias text, cantidad integer);
+INSERT INTO hoja VALUES (1, 'Taza', 850, 'Hogar, Regalos', 2), (2, 'Sudadera', 3500, 'Ropa', 3), (4, 'Taza', 850, 'Hogar, Regalos', 1);
+UPDATE hoja SET precio_centimos = 900 WHERE pedido = 4;
+SELECT pedido, producto, precio_centimos FROM hoja WHERE producto = 'Taza';
+DROP TABLE hoja;`}
+  output={`CREATE TABLE
+INSERT 0 3
+UPDATE 1
+ pedido | producto | precio_centimos
+--------+----------+-----------------
+      1 | Taza     |             850
+      4 | Taza     |             900
+(2 rows)
+
+DROP TABLE`}
+>
+
+`UPDATE 1`: PostgreSQL ha hecho justo lo que le pediste. El fallo no es de la orden, es del diseño.
+
+</TryIt>
+
+<SelfCheck question="Reto: diseña la tabla de reseñas. Cada reseña es de un producto, con una nota obligatoria del 1 al 5 y un texto obligatorio. ¿Qué pasa con las reseñas si se borra su producto?">
+
+Es una relación 1:N, así que la clave foránea va en `resenas`:
+
+```sql
+CREATE TABLE resenas (
+  id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  producto_id integer NOT NULL REFERENCES productos (id) ON DELETE CASCADE,
+  nota integer NOT NULL CHECK (nota >= 1 AND nota <= 5),
+  texto text NOT NULL
+);
+INSERT INTO resenas (producto_id, nota, texto) VALUES (2, 6, 'La mejor taza');
+```
+
+```
+CREATE TABLE
+ERROR:  new row for relation "resenas" violates check constraint "resenas_nota_check"
+DETAIL:  Failing row contains (1, 2, 6, La mejor taza).
+```
+
+Una reseña no tiene sentido sin su producto, así que `CASCADE` es razonable; sin `ON DELETE` tampoco estaría mal. Bórrala después con `DROP TABLE resenas;`.
+
+</SelfCheck>
+
+## Ya lo has visto
+
+- **Un formulario de Google con casillas** guarda «Hogar, Regalos» en una sola celda de su hoja de respuestas: la primera forma normal, rota.
+- **Un tique de compra** lleva el precio que pagaste, aunque mañana suba: el precio del momento, copiado a propósito.
+- **«Este correo ya está registrado»** al crear una cuenta: detrás suele haber una columna `UNIQUE`.
+
+## Errores comunes
+
+- **Guardar una lista en una celda.** Usa una tabla intermedia.
+- **Validar solo en la API.** Cualquier otro programa, o tú en `psql`, escribe sin pasar por ella.
+- **`ON DELETE CASCADE` en todas las claves foráneas.** Borrar un producto borraría sus ventas.
+- **Copiar el nombre del producto en cada pedido «para ahorrarse el JOIN».** Al renombrarlo, los pedidos se contradicen.
+- **No guardar el precio al que se vendió**, si tus informes lo necesitan: cada subida cambia el pasado.
+
+## Resumen
+
+- Modelar empieza por las entidades y sus relaciones: en una 1:N, la clave foránea va en el lado de los muchos; una N:M necesita una tabla intermedia.
+- El esquema se escribe con `CREATE TABLE`, y sus restricciones paran los datos malos, vengan de donde vengan.
+- `ON DELETE` decide qué pasa al borrar algo que otros señalan.
+- Normalizar es guardar cada dato en un solo sitio, para evitar las anomalías al cambiar, añadir y borrar.
+- Desnormalizar es copiar a propósito, con una razón y sabiendo qué copia puede quedarse vieja.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="La tienda va a guardar sus proveedores. Cada producto lo fabrica un proveedor, y un proveedor fabrica muchos productos. ¿Dónde guardas la relación?"
+  review="Uno a muchos: la clave va en el lado de los muchos"
+>
+
+<QuizOption text="En una tabla intermedia, productos_proveedores: toda relación entre dos tablas necesita una.">
+
+La tabla intermedia es para N:M. Aquí cada producto tiene un solo proveedor: es 1:N.
+
+</QuizOption>
+
+<QuizOption text="En una columna proveedor_id en productos, con REFERENCES." correct>
+
+En una relación 1:N, la clave foránea va en el lado de los muchos: cada producto guarda su proveedor.
+
+</QuizOption>
+
+<QuizOption text="En una columna productos en proveedores, con los ids separados por comas.">
+
+Es una lista en una celda: rompe la primera forma normal, y PostgreSQL no puede comprobar esos ids ni unirlos con un JOIN.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Luis escribe un script que importa pedidos desde un Excel, sin pasar por la API. Una fila tiene cantidad 0. ¿Qué pasa?"
+  review="Las restricciones: reglas que PostgreSQL comprueba siempre"
+>
+
+<QuizOption text="PostgreSQL la rechaza, venga de donde venga." correct>
+
+El `CHECK (cantidad > 0)` está en la tabla, no en la API, y PostgreSQL lo comprueba en cada `INSERT`.
+
+</QuizOption>
+
+<QuizOption text="Entra: las reglas solo las comprueba Zod, en la API.">
+
+Zod solo protege la API. La restricción de la tabla para la fila igualmente.
+
+</QuizOption>
+
+<QuizOption text="Entra con cantidad 1: PostgreSQL cambia el valor por el más cercano que cumple la regla.">
+
+PostgreSQL nunca arregla un dato por su cuenta: o la fila cumple todas las reglas, o no entra.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Con el esquema del proyecto, Ana intenta borrar la Taza, que tiene 9 pedidos. ¿Qué pasa?"
+  review="ON DELETE: qué pasa al borrar algo que otros señalan"
+>
+
+<QuizOption text="Se borra la Taza, y sus 9 pedidos se van con ella en cascada.">
+
+Eso pasaría con `ON DELETE CASCADE`, y la clave foránea de `pedidos` no lo lleva, para no borrar ventas.
+
+</QuizOption>
+
+<QuizOption text="Se borra la Taza, y sus 9 pedidos se quedan con producto_id vacío.">
+
+Eso sería `ON DELETE SET NULL`, que además no cabe: `producto_id` es `NOT NULL`.
+
+</QuizOption>
+
+<QuizOption text="PostgreSQL se niega: hay pedidos que la señalan." correct>
+
+Sin `ON DELETE`, una clave foránea prohíbe borrar una fila a la que otras apuntan.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un compañero propone una tabla pedidos con id, producto_id, nombre_producto y cantidad, para no hacer JOIN. ¿Qué problema tiene?"
+  review="Las tres formas normales, en palabras"
+>
+
+<QuizOption text="Ninguno: copiar el nombre en cada pedido es más rápido y no tiene inconvenientes.">
+
+Al renombrar el producto, alguna copia se quedará con el nombre viejo. Copiar tiene ese coste, siempre.
+
+</QuizOption>
+
+<QuizOption text="El nombre es del producto: al renombrarlo, unos pedidos dirán el viejo." correct>
+
+Rompe la tercera forma normal: el nombre depende de `producto_id`, no del pedido. Vive en `productos`.
+
+</QuizOption>
+
+<QuizOption text="Rompe la primera forma normal, porque dos columnas hablan del producto.">
+
+La primera forma normal pide un solo valor por celda, y aquí cada celda tiene uno.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Ana sube la Sudadera de 35 € a 40 €. ¿Qué pasa con el informe de ingresos por producto de la lección 3?"
+  review="Desnormalizar: copiar a propósito"
+>
+
+<QuizOption text="Sube: el informe multiplica por el precio de hoy." correct>
+
+Los pedidos no guardan el precio, así que las 20 sudaderas vendidas pasan a contar a 40 €.
+
+</QuizOption>
+
+<QuizOption text="Nada: cada pedido de la tienda guarda el precio que se cobró.">
+
+Los pedidos del curso guardan `producto_id`, `cantidad`, `estado` y `creado_en`. El precio está en `productos`.
+
+</QuizOption>
+
+<QuizOption text="Nada: PostgreSQL no deja cambiar el precio de un producto que tiene pedidos.">
+
+La clave foránea protege el `id` del producto, no su precio.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La tienda decide que un pedido pueda llevar varios productos, con una tabla lineas_pedido. La empresa de reparto lee productoId y cantidad de cada pedido. ¿Le afecta?"
+  review="Un pedido con varios productos rompería la API"
+>
+
+<QuizOption text="No: lo que cambia en las tablas nunca llega a la API.">
+
+La API sirve lo que hay en las tablas. Si el pedido ya no tiene un producto, su JSON tampoco.
+
+</QuizOption>
+
+<QuizOption text="No: el cambio solo añade un campo, lineas, y añadir no rompe.">
+
+También quita `productoId` y `cantidad`, y quitar rompe a quien los lee.
+
+</QuizOption>
+
+<QuizOption text="Sí: productoId y cantidad desaparecen del pedido." correct>
+
+Es un cambio que rompe: iría en una `/v3`, con la `/v2` funcionando mientras los socios se pasan.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Constraints](https://www.postgresql.org/docs/18/ddl-constraints.html) (documentación de PostgreSQL, en inglés): todas las restricciones y las opciones de `ON DELETE`.
+- [A Simple Guide to Five Normal Forms in Relational Database Theory](https://www.bkent.net/Doc/simple5.htm) (William Kent, 1983, en inglés): el artículo de «la clave, toda la clave y nada más que la clave».
+- [Normalización de bases de datos](https://es.wikipedia.org/wiki/Normalizaci%C3%B3n_de_bases_de_datos) (Wikipedia): las formas normales, con sus definiciones formales.

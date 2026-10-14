@@ -79,4 +79,18 @@ export const playgrounds: Playground[] = [
       en: 'Send a request to another origin and follow, step by step, what the browser does: whether it asks first, whether it reaches the server, whether the cookie goes along and whether the page can read the response.',
     },
   },
+  {
+    id: 'sql-playground',
+    phase: 5,
+    level: 'playground',
+    lesson: 'sql',
+    title: {
+      es: 'PostgreSQL en tu navegador',
+      en: 'PostgreSQL in your browser',
+    },
+    summary: {
+      es: 'Un PostgreSQL de verdad con los datos de la tienda: escribe SQL, mira el resultado o el error tal como lo da psql, y restaura los datos cuando quieras.',
+      en: 'A real PostgreSQL with the shop’s data: write SQL, see the result or the error just as psql shows it, and reset the data whenever you like.',
+    },
+  },
 ];

@@ -50,8 +50,8 @@ describe('the guided projects', () => {
         const regions = (project: string, step: string) =>
           JSON.stringify(
             readdirSync(join(root, project, step), { recursive: true, encoding: 'utf8' })
-              .filter((file) => /\.[jt]s$/.test(file) && !file.startsWith('node_modules'))
-              .map((file) => read(project, step, file).match(/\/\/ #region /g)?.length ?? 0)
+              .filter((file) => /\.([jt]s|sql)$/.test(file) && !file.startsWith('node_modules'))
+              .map((file) => read(project, step, file).match(/(\/\/|--) #region /g)?.length ?? 0)
               .reduce((sum, n) => sum + n, 0),
           );
         expect(regions(languages.en, en)).toBe(regions(languages.es, es));

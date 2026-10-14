@@ -1,0 +1,623 @@
+---
+translationKey: data-modeling
+title: "Data modeling and database normalization"
+description: "Design a database’s tables: 1:N and N:M relationships, constraints, normalization into 1NF, 2NF and 3NF with examples, and when to denormalize."
+sidebar:
+  label: Modeling
+  order: 4
+lesson:
+  oneLiner: "Modeling data is deciding which tables a database has, how they relate and what rules they follow. Normalizing is splitting the data so each piece of it lives in a single place: that way a change is made once and the database can’t contradict itself."
+  objectives:
+    - Store a 1:N relationship with a foreign key and an N:M one with an intermediate table.
+    - Write the schema with CREATE TABLE and its constraints, and choose what happens on delete with ON DELETE.
+    - Recognize the anomalies of a badly designed table and split it following 1NF, 2NF and 3NF.
+    - Decide when it pays to copy a piece of data on purpose, like the price of an order.
+  prerequisites: [aggregation]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import SqlPlayground from '~/playgrounds/sql-playground/SqlPlayground';
+
+## The problem
+
+Imagine that, before having a database, Ana ran the shop in a spreadsheet, with one row per order:
+
+| order_no | product | price_cents | categories | quantity |
+|---|---|---|---|---|
+| 1 | Mug | 850 | Home, Gifts | 2 |
+| 2 | Hoodie | 3500 | Clothing | 3 |
+| 4 | Mug | 850 | Home, Gifts | 1 |
+
+One day she raises the mug to €9. She changes the price in order 4, the one in front of her, and forgets about order 1. Now the sheet says the mug costs €8.50 and €9 at the same time, and she doesn't know which one is right.
+
+In lessons 1 to 3, the tables were already designed. Now you design them: which tables, which columns and which rules. That's the **data model**, and everything else is built on top of it. Changing it once the shop is full of data costs much more than thinking it through now.
+
+## The analogy
+
+<Analogy>
+
+Think of a wedding. The address book has each guest's address, just once. The seating plan (“Table 3: Marta and Pablo”) and the gift list (“Marta: the coffee maker”) only have names.
+
+If Marta moves, you change one line in the address book and everything else is still right. If you had copied her address onto every piece of paper, you'd have to find all the copies, and the one you miss will send something to her old house.
+
+<div slot="limits">
+
+- The address book doesn't stop you from seating someone who isn't in it. A database does, with the rules in this lesson.
+- Sometimes copying is the right thing: the invitation you already sent has the address from back then, and that's how it should stay. The same goes for the price of an order, as you'll see at the end.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+The outputs are from PostgreSQL 18.6, with the shop's data. You can try the queries in `psql -d shop` or in the playground in [Try it](#try-it).
+
+### First, the things and how they relate
+
+Modeling starts on paper. Write down the things the shop keeps data about, the **entities**: products, categories and orders. Each entity will be a table, and each piece of its data, a column.
+
+Next, how they relate. For each pair, ask yourself how many of one the other can have, both ways:
+
+| Pair | One way | The other way | Relationship | Where it's stored |
+|---|---|---|---|---|
+| Product and order | An order is for one product | A product has many orders | One to many (1:N) | `product_id`, in `orders` |
+| Product and category | A product is in several categories | A category has several products | Many to many (N:M) | An intermediate table, `product_categories` |
+
+### One to many: the key goes on the many side
+
+In a 1:N relationship, the <Term id="foreign-key">foreign key</Term> from [lesson 2](/en/phase-5/sql-joins/) goes in the table on the many side: each order stores its `product_id`. The other way around doesn't fit, because a product with 9 orders would need 9 values in one cell.
+
+### Many to many: an intermediate table
+
+With products and categories, neither side has a single value: the Mug is in Home and in Gifts, and Clothing has three products. The first two ideas fail:
+
+- **A `categories` column with `'Home, Gifts'`:** it's text, and PostgreSQL neither checks that those categories exist nor can join it with a JOIN.
+- **Columns `category1` and `category2`:** a third category forces you to change the table, and to find the products in Gifts you have to look in both.
+
+The solution is another table, with **one row per pair**: `product_categories`, with `(2, 2)` and `(2, 3)` for the Mug. It's the one you joined with two JOINs in [lesson 2](/en/phase-5/sql-joins/).
+
+### The schema: the tables, written in SQL
+
+A database's <Term id="database-schema">schema</Term> is the list of its tables, with their columns, their types and their rules. It's written with `CREATE TABLE`. This is the one for products, in your project:
+
+<ProjectCode file="shop-api/18-modeling/db/schema.sql" region="products" />
+
+Word by word:
+
+- `CREATE TABLE products (…)` creates the table, with one column per line, separated by commas: its name and its type.
+- `id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY` is the primary key from [lesson 2](/en/phase-5/sql-joins/).
+- `NOT NULL` makes the column required: the `NULL` from [lesson 1](/en/phase-5/what-is-sql/) doesn't get in.
+- `CHECK (price_cents > 0)` is a condition every row has to meet.
+- `--` starts a comment, which PostgreSQL ignores.
+
+Don't confuse it with the Zod schema from [Phase 3](/en/phase-3/zod-validation/), which describes a JSON.
+
+### Constraints: rules that PostgreSQL always checks
+
+`NOT NULL` and `CHECK` are <Term id="constraint">constraints</Term>: rules the database checks on every `INSERT` and every `UPDATE`. Categories have another one:
+
+<ProjectCode file="shop-api/18-modeling/db/schema.sql" region="categories" />
+
+`UNIQUE` forbids repeating a value in the column: there can't be two “Clothing” categories. Orders bring almost all of them together:
+
+<ProjectCode file="shop-api/18-modeling/db/schema.sql" region="orders" />
+
+- `REFERENCES products (id)` is the foreign key: only the id of a product that exists is valid.
+- `CHECK (quantity > 0)`: no order of zero units.
+- `CHECK (status IN (…))`: `IN` means “one of these.”
+
+An order of zero units doesn't get in:
+
+```sql
+INSERT INTO orders (product_id, quantity, status, created_at)
+VALUES (2, 0, 'pending', now());
+```
+
+```
+ERROR:  new row for relation "orders" violates check constraint "orders_quantity_check"
+DETAIL:  Failing row contains (26, 2, 0, pending, 2026-10-13 23:46:07.403364+00).
+```
+
+“The new row in `orders` breaks the constraint `orders_quantity_check`,” a name PostgreSQL builds from the table and the column.
+
+**Why in the database, if the API already validates with Zod?** Because the API isn't the only one that writes. A script that imports orders, someone in `psql` or a bug in the code all skip Zod, but not PostgreSQL. Zod gives the client a good message; the constraint is the last door.
+
+### ON DELETE: what happens when you delete something others point to
+
+In [lesson 2](/en/phase-5/sql-joins/), deleting the Mug failed because its orders point to it. When you declare a foreign key, you choose what happens in that case:
+
+| You write | When the product is deleted, the rows that point to it… |
+|---|---|
+| Nothing (or `ON DELETE RESTRICT`) | …prevent it: the delete fails with an error |
+| `ON DELETE CASCADE` | …are deleted with it |
+| `ON DELETE SET NULL` | …are left with `NULL` in that column, if it allows it |
+
+The project chooses differently in each table:
+
+<ProjectCode file="shop-api/18-modeling/db/schema.sql" region="product-categories" />
+
+- **`product_categories`, with `CASCADE`.** “The Cap is in Gifts” means nothing without the Cap: if the product is deleted, its pairs go with it. The category stays.
+- **`orders`, without `ON DELETE`.** The orders are the shop's history. Deleting a product can't delete its sales.
+- `PRIMARY KEY (product_id, category_id)` is the two-column primary key from lesson 2: the same pair can't get in twice.
+
+With these rules, the Cap, which has no orders, is deleted along with its two categories; the Mug isn't:
+
+```sql
+DELETE FROM products WHERE id = 4;
+DELETE FROM products WHERE id = 2;
+```
+
+```
+DELETE 1
+ERROR:  update or delete on table "products" violates foreign key constraint "orders_product_id_fkey" on table "orders"
+DETAIL:  Key (id)=(2) is still referenced from table "orders".
+```
+
+In [lesson 5](/en/phase-5/node-postgres/), the API will turn that error into a `409`.
+
+### Normalizing: each piece of data in one place
+
+Go back to Ana's spreadsheet, now as a PostgreSQL table, `sheet`, with the three rows from “The problem.” The half-done price change:
+
+```sql
+UPDATE sheet SET price_cents = 900 WHERE order_no = 4;
+SELECT order_no, product, price_cents FROM sheet WHERE product = 'Mug';
+```
+
+```
+UPDATE 1
+ order_no | product | price_cents
+----------+---------+-------------
+        1 | Mug     |         850
+        4 | Mug     |         900
+(2 rows)
+```
+
+It's the first of three **anomalies**, errors caused by the design itself:
+
+- **On update:** a piece of data copied into several rows ends up with two values.
+- **On insert:** the Cap, which nobody has ordered, doesn't fit. Each row is an order, and without an order the key is missing: `INSERT INTO sheet (product, price_cents) VALUES ('Cap', 1500);` gives `ERROR:  null value in column "order_no"…`.
+- **On delete:** if order 2 is deleted, the Hoodie's only one, the shop forgets that it exists and what it costs.
+
+All three have the same cause: the sheet mixes orders, products and categories in one table. <Term id="normalization">Normalization</Term> separates them so that **each piece of data is stored in a single place**. Its rules are called normal forms.
+
+### The three normal forms, in words
+
+| Normal form | The rule | Broken by | The fix |
+|---|---|---|---|
+| First (1NF) | Each cell holds a single value | `categories` with `'Home, Gifts'` | One row per pair, in `product_categories` |
+| Second (2NF) | If the key has several columns, each piece of data depends on all of it | A `product_name` in `product_categories`: it depends only on `product_id` | The name, in `products` |
+| Third (3NF) | Each piece of data depends on the key, not on another column | The price in the sheet: it depends on the product, not on the order | The price, in `products` |
+
+William Kent summed it up in 1983: each piece of data depends **on the key, the whole key and nothing but the key**. The result is the project's four tables. The price lives in `products` and each category in `categories`. The order stores only what's its own: which product, how many, in what status and when.
+
+There are more normal forms, stricter ones. With the third, almost every application does fine.
+
+### Denormalizing: copying on purpose
+
+Sometimes it pays to copy a piece of data on purpose: that's **denormalizing**. There are two typical cases.
+
+**The price at the time.** The shop's orders don't store the price. The revenue report from [lesson 3](/en/phase-5/sql-group-by/) multiplies each quantity by today's price:
+
+```sql
+SELECT p.name, SUM(o.quantity * p.price_cents) AS revenue_cents
+FROM orders AS o
+JOIN products AS p ON p.id = o.product_id
+WHERE p.name = 'Mug'
+GROUP BY p.id, p.name;
+```
+
+```
+ name | revenue_cents
+------+---------------
+ Mug  |         18700
+(1 row)
+```
+
+Ana raises the mug to €9 with `UPDATE products SET price_cents = 900 WHERE name = 'Mug';`, and the same query gives `19800`. The 22 mugs were charged at €8.50, but the report says they brought in €198: **it has changed the past**. That's why real shops store in each order the price it was sold at. It looks like a copy, but it's a different piece of data: what was charged, which doesn't change with the product.
+
+The course's shop doesn't store it, so the orders stay as they were in the Phase 4 API, and that's why its reports use today's price. Adding it would be a new field in the order's JSON, a change that doesn't break anything.
+
+**A stored total.** A `total_cents` column in each order saves the multiplication when reading. But if someone changes the quantity and forgets the total, the database contradicts itself. Only copy when you've measured that reading is slow ([lesson 7](/en/phase-5/database-indexes-explain/) teaches you how to measure it).
+
+The rule: **normalize by default, and denormalize with a reason**, knowing which copy can go stale.
+
+### An order with several products would break the API
+
+In the course's shop, an order is for a single product. A real shop lets you buy a mug and a cap together. Then `orders` would be left with `status` and `created_at`, and a new table, `order_lines`, would have one row per product in each order: another 1:N relationship. And along with the tables, the JSON would change:
+
+```text
+Before: {"id":26,"productId":2,"quantity":1,"status":"pending",…}
+After:  {"id":26,"lines":[{"productId":2,"quantity":1},{"productId":4,"quantity":1}],"status":"pending",…}
+```
+
+The delivery company reads `productId` and `quantity`, and they'd be gone. It's a <Term id="breaking-change">breaking change</Term>: it would need a `/v3` ([lesson 4 of Phase 4](/en/phase-4/api-versioning/)). That's why, in this phase, the shop keeps one product per order and its API only grows by adding. **The data model ends up being the shape of your API**: think it through before others depend on it.
+
+## Try it
+
+The goal: create the shop's tables from your project, read their rules in `psql`, try to sneak in bad data and break a badly designed table.
+
+### The tables, in your project
+
+You start from your Phase 4 project, in `~/backend-course/phase-3/shop-api`, with the `DATABASE_URL` from the introduction in its `.env`. First, install `pg`:
+
+<TryIt
+  title="1. Install pg and its types"
+  cmd={`npm install pg@8.23.1
+npm install --save-dev @types/pg@8.23.1`}
+  output={`added 13 packages, and audited 52 packages in 2s
+
+6 packages are looking for funding
+  run \`npm fund\` for details
+
+found 0 vulnerabilities
+
+added 1 package, and audited 53 packages in 908ms
+
+6 packages are looking for funding
+  run \`npm fund\` for details
+
+found 0 vulnerabilities`}
+>
+
+`pg` is the PostgreSQL <Term id="driver">driver</Term> for Node: the package your code uses to talk to the database. You'll see it in depth in [lesson 5](/en/phase-5/node-postgres/). The outputs are from Node 26 and PostgreSQL 18.6: your times and dates will be different.
+
+</TryIt>
+
+Create `db/schema.sql` with the four tables from “How it really works,” in that order: a table has to exist before another one points to it. The data, the script and the tests come in the lesson's folder:
+
+```sh
+cd ~/backend-course/phase-3
+curl -O https://backenddesdecero.com/practicas/shop-api/18-modeling.tar.gz
+tar -xzf 18-modeling.tar.gz
+cd shop-api
+cp ../18-modeling/db/seed.sql db/
+cp ../18-modeling/scripts/create-db.ts scripts/
+cp ../18-modeling/test/db.ts ../18-modeling/test/modeling.test.ts ../18-modeling/test/.env test/
+```
+
+`db/seed.sql` is the `INSERT`s from `shop.sql`, and `test/.env` brings the tests' `DATABASE_URL`, the one for `shop_test`. Add the `DATABASE_URL` line to your `.env.example`, as in the lesson's folder, and the two marked lines to your `package.json`:
+
+<ProjectCode file="shop-api/18-modeling/package.json" mark={[12, 15]} />
+
+- `db:create` runs the script.
+- `--test-concurrency=1` runs the test files one at a time: from now on they share `shop_test`, and each one empties it when it starts.
+
+This is what `scripts/create-db.ts` does:
+
+<ProjectCode file="shop-api/18-modeling/scripts/create-db.ts" region="create" />
+
+- `new Client(…)` and `connect()` open a connection to PostgreSQL, with the `DATABASE_URL` from `.env`.
+- `DROP TABLE IF EXISTS` drops the four tables, **with all their data**. That's fine while you design; in [lesson 6](/en/phase-5/database-migrations/) it's replaced by something that deletes nothing.
+- Then it runs `schema.sql` and `seed.sql` and counts the rows. `finally` closes the connection, whatever fails.
+
+<TryIt
+  title="2. Create the tables"
+  cmd="npm run db:create"
+  output={`> shop-api@1.0.0 db:create
+> node --env-file-if-exists=.env scripts/create-db.ts
+
+Tables created: 4 products, 3 categories and 25 orders`}
+>
+
+Your `shop` database now has the project's tables, with the usual data. Run it whenever you want to go back to the start. If you get `DATABASE_URL is missing`, your `.env` doesn't have it; if you get `password authentication failed`, look at the table of errors in the [introduction](/en/phase-5/#connect-with-psql).
+
+Your API doesn't use these tables yet: it keeps its data in memory until [lesson 5](/en/phase-5/node-postgres/).
+
+</TryIt>
+
+Finish with `npm test`, which should end with `fail 0`. The ten tests in `test/modeling.test.ts` try to break each rule, as you're about to do now.
+
+### The rules, in psql
+
+<TryIt
+  title="3. What PostgreSQL knows about orders"
+  cmd={`psql -d shop -c '\\d orders'`}
+  output={`                                    Table "public.orders"
+   Column   |           Type           | Collation | Nullable |           Default
+------------+--------------------------+-----------+----------+------------------------------
+ id         | integer                  |           | not null | generated always as identity
+ product_id | integer                  |           | not null |
+ quantity   | integer                  |           | not null |
+ status     | text                     |           | not null |
+ created_at | timestamp with time zone |           | not null |
+Indexes:
+    "orders_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "orders_quantity_check" CHECK (quantity > 0)
+    "orders_status_check" CHECK (status = ANY (ARRAY['pending'::text, 'paid'::text, 'shipped'::text, 'cancelled'::text]))
+Foreign-key constraints:
+    "orders_product_id_fkey" FOREIGN KEY (product_id) REFERENCES products(id)`}
+>
+
+`\d` describes a table. Look at `Nullable` and at the constraints, with their names. PostgreSQL has rewritten your `IN (…)` as `= ANY (ARRAY[…])`, which means the same. You'll understand the `Indexes` line in [lesson 7](/en/phase-5/database-indexes-explain/). Try `\d products` too: at the end it says which tables point to it.
+
+</TryIt>
+
+### Try to sneak in bad data
+
+This order meets every rule. Run it, and then break one rule at a time: the quantity to `0`, the status to `'Pending'`, with a capital letter, or the product to `99`. At the end, replace everything in the box with `DELETE FROM products WHERE id = 4;`, and then with `id = 2`: the Cap goes with its categories, and the Mug won't let you. “Reset data” brings everything back.
+
+<SqlPlayground client:visible lang="en" rows={4} query={`INSERT INTO orders (product_id, quantity, status, created_at)
+VALUES (2, 1, 'pending', now());
+SELECT id, product_id, quantity, status FROM orders WHERE id = 26;`} />
+
+The same in `psql -d shop`, with the three pieces of bad data:
+
+<TryIt
+  title="4. Three orders that don't get in"
+  lang="sql"
+  cmd={`INSERT INTO orders (product_id, quantity, status, created_at) VALUES (2, 0, 'pending', now());
+INSERT INTO orders (product_id, quantity, status, created_at) VALUES (2, 1, 'Pending', now());
+INSERT INTO orders (product_id, quantity, status, created_at) VALUES (99, 1, 'pending', now());`}
+  output={`ERROR:  new row for relation "orders" violates check constraint "orders_quantity_check"
+DETAIL:  Failing row contains (26, 2, 0, pending, 2026-10-13 23:46:07.403364+00).
+ERROR:  new row for relation "orders" violates check constraint "orders_status_check"
+DETAIL:  Failing row contains (27, 2, 1, Pending, 2026-10-13 23:46:07.403933+00).
+ERROR:  insert or update on table "orders" violates foreign key constraint "orders_product_id_fkey"
+DETAIL:  Key (product_id)=(99) is not present in table "products".`}
+>
+
+Each error names the constraint that stopped it, and `\d orders` tells you which one it is. None of them gets in, so your data doesn't change. Your dates will be different.
+
+</TryIt>
+
+### Break a badly designed table
+
+Ana's spreadsheet, in the playground. Run it and you'll see the mug with two prices. The table stays created: for the other two anomalies, replace everything in the box with the Cap without an order (`INSERT INTO sheet (product, price_cents) VALUES ('Cap', 1500);`), or with `DELETE FROM sheet WHERE order_no = 2;` and then look for the Hoodie's price.
+
+<SqlPlayground client:visible lang="en" rows={10} query={`CREATE TABLE sheet (
+  order_no integer PRIMARY KEY,
+  product text,
+  price_cents integer,
+  categories text,
+  quantity integer
+);
+INSERT INTO sheet VALUES
+  (1, 'Mug', 850, 'Home, Gifts', 2),
+  (2, 'Hoodie', 3500, 'Clothing', 3),
+  (4, 'Mug', 850, 'Home, Gifts', 1);
+UPDATE sheet SET price_cents = 900 WHERE order_no = 4;
+SELECT order_no, product, price_cents FROM sheet WHERE product = 'Mug';`} />
+
+In `psql -d shop`, the same, and at the end `DROP TABLE sheet;` to delete it, because it isn't part of the shop:
+
+<TryIt
+  title="5. The spreadsheet, in psql"
+  lang="sql"
+  cmd={`CREATE TABLE sheet (order_no integer PRIMARY KEY, product text, price_cents integer, categories text, quantity integer);
+INSERT INTO sheet VALUES (1, 'Mug', 850, 'Home, Gifts', 2), (2, 'Hoodie', 3500, 'Clothing', 3), (4, 'Mug', 850, 'Home, Gifts', 1);
+UPDATE sheet SET price_cents = 900 WHERE order_no = 4;
+SELECT order_no, product, price_cents FROM sheet WHERE product = 'Mug';
+DROP TABLE sheet;`}
+  output={`CREATE TABLE
+INSERT 0 3
+UPDATE 1
+ order_no | product | price_cents
+----------+---------+-------------
+        1 | Mug     |         850
+        4 | Mug     |         900
+(2 rows)
+
+DROP TABLE`}
+>
+
+`UPDATE 1`: PostgreSQL did exactly what you asked. The fault isn't in the command, it's in the design.
+
+</TryIt>
+
+<SelfCheck question="Challenge: design the reviews table. Each review is of one product, with a required rating from 1 to 5 and a required text. What happens to the reviews if their product is deleted?">
+
+It's a 1:N relationship, so the foreign key goes in `reviews`:
+
+```sql
+CREATE TABLE reviews (
+  id integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  product_id integer NOT NULL REFERENCES products (id) ON DELETE CASCADE,
+  rating integer NOT NULL CHECK (rating >= 1 AND rating <= 5),
+  body text NOT NULL
+);
+INSERT INTO reviews (product_id, rating, body) VALUES (2, 6, 'The best mug');
+```
+
+```
+CREATE TABLE
+ERROR:  new row for relation "reviews" violates check constraint "reviews_rating_check"
+DETAIL:  Failing row contains (1, 2, 6, The best mug).
+```
+
+A review makes no sense without its product, so `CASCADE` is reasonable; leaving out `ON DELETE` wouldn't be wrong either. Delete it afterward with `DROP TABLE reviews;`.
+
+</SelfCheck>
+
+## You have already seen it
+
+- **A Google Form with checkboxes** stores “Home, Gifts” in a single cell of its responses sheet: the first normal form, broken.
+- **A store receipt** has the price you paid, even if it goes up tomorrow: the price at the time, copied on purpose.
+- **“This email is already registered”** when you create an account: behind it there's usually a `UNIQUE` column.
+
+## Common mistakes
+
+- **Storing a list in a cell.** Use an intermediate table.
+- **Validating only in the API.** Any other program, or you in `psql`, writes without going through it.
+- **`ON DELETE CASCADE` on every foreign key.** Deleting a product would delete its sales.
+- **Copying the product's name into each order “to save the JOIN.”** When it's renamed, the orders contradict each other.
+- **Not storing the price it was sold at**, if your reports need it: every price rise changes the past.
+
+## Summary
+
+- Modeling starts with the entities and their relationships: in a 1:N, the foreign key goes on the many side; an N:M needs an intermediate table.
+- The schema is written with `CREATE TABLE`, and its constraints stop bad data, wherever it comes from.
+- `ON DELETE` decides what happens when you delete something others point to.
+- Normalizing is storing each piece of data in a single place, to avoid the anomalies on update, insert and delete.
+- Denormalizing is copying on purpose, with a reason and knowing which copy can go stale.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="The shop is going to store its suppliers. Each product is made by one supplier, and a supplier makes many products. Where do you store the relationship?"
+  review="One to many: the key goes on the many side"
+>
+
+<QuizOption text="In an intermediate table, product_suppliers: every relationship between two tables needs one.">
+
+The intermediate table is for N:M. Here each product has a single supplier: it's 1:N.
+
+</QuizOption>
+
+<QuizOption text="In a supplier_id column in products, with REFERENCES." correct>
+
+In a 1:N relationship, the foreign key goes on the many side: each product stores its supplier.
+
+</QuizOption>
+
+<QuizOption text="In a products column in suppliers, with the ids separated by commas.">
+
+It's a list in a cell: it breaks the first normal form, and PostgreSQL can neither check those ids nor join them with a JOIN.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Luis writes a script that imports orders from an Excel file, without going through the API. One row has quantity 0. What happens?"
+  review="Constraints: rules that PostgreSQL always checks"
+>
+
+<QuizOption text="PostgreSQL rejects it, wherever it comes from." correct>
+
+The `CHECK (quantity > 0)` is in the table, not in the API, and PostgreSQL checks it on every `INSERT`.
+
+</QuizOption>
+
+<QuizOption text="It gets in: only Zod checks the rules, in the API.">
+
+Zod only protects the API. The table's constraint stops the row anyway.
+
+</QuizOption>
+
+<QuizOption text="It gets in with quantity 1: PostgreSQL changes the value to the closest one that meets the rule.">
+
+PostgreSQL never fixes a piece of data on its own: either the row meets every rule, or it doesn't get in.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="With the project’s schema, Ana tries to delete the Mug, which has 9 orders. What happens?"
+  review="ON DELETE: what happens when you delete something others point to"
+>
+
+<QuizOption text="The Mug is deleted, and its 9 orders go with it in cascade.">
+
+That would happen with `ON DELETE CASCADE`, and the foreign key in `orders` doesn't have it, so that sales aren't deleted.
+
+</QuizOption>
+
+<QuizOption text="The Mug is deleted, and its 9 orders are left with an empty product_id.">
+
+That would be `ON DELETE SET NULL`, which doesn't fit anyway: `product_id` is `NOT NULL`.
+
+</QuizOption>
+
+<QuizOption text="PostgreSQL refuses: there are orders pointing to it." correct>
+
+Without `ON DELETE`, a foreign key forbids deleting a row that others point to.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A teammate proposes an orders table with id, product_id, product_name and quantity, to avoid a JOIN. What’s the problem with it?"
+  review="The three normal forms, in words"
+>
+
+<QuizOption text="None: copying the name into each order is faster and has no downsides.">
+
+When the product is renamed, some copy will keep the old name. Copying always has that cost.
+
+</QuizOption>
+
+<QuizOption text="The name belongs to the product: when it’s renamed, some orders will show the old one." correct>
+
+It breaks the third normal form: the name depends on `product_id`, not on the order. It lives in `products`.
+
+</QuizOption>
+
+<QuizOption text="It breaks the first normal form, because two columns are about the product.">
+
+The first normal form asks for a single value per cell, and here each cell has one.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Ana raises the Hoodie from €35 to €40. What happens to the revenue per product report from lesson 3?"
+  review="Denormalizing: copying on purpose"
+>
+
+<QuizOption text="It goes up: the report multiplies by today’s price." correct>
+
+The orders don't store the price, so the 20 hoodies sold now count at €40.
+
+</QuizOption>
+
+<QuizOption text="Nothing: each of the shop’s orders stores the price that was charged.">
+
+The course's orders store `product_id`, `quantity`, `status` and `created_at`. The price is in `products`.
+
+</QuizOption>
+
+<QuizOption text="Nothing: PostgreSQL doesn’t let you change the price of a product that has orders.">
+
+The foreign key protects the product's `id`, not its price.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="The shop decides an order can have several products, with an order_lines table. The delivery company reads productId and quantity from each order. Does it affect them?"
+  review="An order with several products would break the API"
+>
+
+<QuizOption text="No: what changes in the tables never reaches the API.">
+
+The API serves what's in the tables. If the order no longer has one product, neither does its JSON.
+
+</QuizOption>
+
+<QuizOption text="No: the change only adds a field, lines, and adding doesn’t break anything.">
+
+It also removes `productId` and `quantity`, and removing breaks whoever reads them.
+
+</QuizOption>
+
+<QuizOption text="Yes: productId and quantity disappear from the order." correct>
+
+It's a breaking change: it would go in a `/v3`, with `/v2` still working while the partners move over.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [Constraints](https://www.postgresql.org/docs/18/ddl-constraints.html) (PostgreSQL documentation): every constraint and the `ON DELETE` options.
+- [A Simple Guide to Five Normal Forms in Relational Database Theory](https://www.bkent.net/Doc/simple5.htm) (William Kent, 1983): the article of “the key, the whole key and nothing but the key.”
+- [Database normalization](https://en.wikipedia.org/wiki/Database_normalization) (Wikipedia): the normal forms, with their formal definitions.

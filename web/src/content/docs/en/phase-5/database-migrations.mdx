@@ -1,0 +1,642 @@
+---
+translationKey: migrations
+title: "Database migrations without losing data"
+description: "What a database migration is: change your tables without losing data, with numbered files, a table that records them and one transaction per change."
+sidebar:
+  label: Migrations
+  order: 6
+lesson:
+  oneLiner: "A migration is a numbered file with one change to your tables, applied only once and in order. The database records the applied ones in a table, and each one goes in whole or not at all: the data that was already there stays."
+  objectives:
+    - Explain why dropping the tables and creating them again stops working once there is real data.
+    - Write a migration runner of about 35 lines, with a table that records the applied ones and one transaction per migration.
+    - Add a NOT NULL column to a table with rows, in three steps, and plan a rename with expand and contract.
+    - Explain why an applied migration is never edited.
+  prerequisites: [node-postgres]
+---
+
+import { FileTree } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+Ana wants the API to say how many units of each product are left: a new column, `stock`, in `products`. In [lesson 4](/en/phase-5/data-modeling-normalization/) and [lesson 5](/en/phase-5/node-postgres/), to change a table you edited `db/schema.sql` and ran `npm run db:create`, which drops the tables and creates them again.
+
+Look at what that script does to a real order. With the API running, create one. Then stop the server with <kbd>Ctrl</kbd> + <kbd>C</kbd>, run `db:create`, start it again and ask for the order:
+
+<TryIt
+  title="An order, before and after db:create"
+  cmd={`curl -s -w '\\n' --json '{"productId":2,"quantity":1}' localhost:3000/v2/orders\nnpm run db:create\ncurl -s -w '\\n' localhost:3000/v2/orders/26`}
+  output={`{"id":26,"productId":2,"quantity":1,"status":"pending","createdAt":"2026-10-13T23:47:16.201Z"}
+
+> shop-api@1.0.0 db:create
+> node --env-file-if-exists=.env scripts/create-db.ts
+
+Tables created: 4 products, 3 categories and 25 orders
+{"type":"about:blank","title":"Not Found","status":404,"detail":"No such order"}`}
+>
+
+Order 26 no longer exists: `db:create` leaves the shop as it was on day one.
+
+</TryIt>
+
+With sample data it didn't matter. With customers' orders, you can't delete them to add a column. And there's another question: your database, the tests' database and the production one need the same change. How does each one know which changes it's missing?
+
+## The analogy
+
+<Analogy>
+
+Imagine renovating a house with the family living in it. Nobody tears it down to add an outlet. Each job goes on a numbered sheet: “1. Put up the walls,” “2. An outlet in the kitchen.” On the fridge, a list of the jobs already done.
+
+The contractor looks at the list, does the missing jobs in order and writes each one down when it's finished. If a job that was done turns out wrong, its sheet isn't rewritten: another one is added, “3. Move the outlet.”
+
+<div slot="limits">
+
+- A job can be left half-done. A migration in your runner can't: if it fails, nothing of it is left.
+- In a house you can see whether the outlet is there. In a database you can't: that's why the list of what's done lives inside it, in a table.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### A migration is a change, not the whole schema
+
+`db/schema.sql` goes away. In its place, a folder with two files:
+
+<FileTree>
+
+- db/
+  - migrations/
+    - 001-shop.sql the tables from lessons 4 and 5
+    - 002-stock.sql the stock column
+  - seed.sql
+
+</FileTree>
+
+Each file is a **<Term id="migration">migration</Term>**: one change to your tables, in <Term id="sql">SQL</Term>. 001 is your `schema.sql` with `IF NOT EXISTS` after each `CREATE TABLE`:
+
+<ProjectCode file="shop-api/20-migrations/db/migrations/001-shop.sql" region="products" />
+
+In an empty database, it creates the table. In yours, which already has it, it does nothing, and your data stays. From here on, **tables only change with new migrations**: 002, 003…
+
+### Only forward, and a table that records it
+
+A program, the **migration runner**, applies the missing ones. To know which, it keeps a table in the database itself, `migrations`, with one row for each one applied:
+
+```
+     name      |          applied_at
+---------------+-------------------------------
+ 001-shop.sql  | 2026-10-13 23:47:47.898577+00
+ 002-stock.sql | 2026-10-13 23:47:47.902611+00
+(2 rows)
+```
+
+Three rules make it work:
+
+- **The number decides the order.** 002 adds a column to a table that 001 creates: the other way around wouldn't work.
+- **Each one is applied only once.** If its name is in the table, it's skipped.
+- **Only forward.** To undo a change, you write another migration. The history of your tables is the list of files, and it travels in Git with the code ([Phase 1](/en/phase-1/git-internals/)).
+
+Why `001` and not `1`? The runner sorts the names as text, character by character, and that way `10-…` comes before `2-…`. With three digits, `002` comes before `010`.
+
+### Each migration, all or nothing
+
+A migration with several commands can fail halfway. If the first one had already changed the table, your database would be left in a state that isn't in any file. That's why the runner puts each migration in a **<Term id="transaction">transaction</Term>**: a group of commands that PostgreSQL saves all together or not at all.
+
+- `BEGIN` opens the transaction.
+- `COMMIT` saves everything done since the `BEGIN`.
+- `ROLLBACK` undoes all of it, as if it had never happened.
+
+In PostgreSQL, even an `ALTER TABLE` is undone with `ROLLBACK`; in MySQL, it isn't: it's saved on the spot. You'll see transactions in depth in [lesson 8](/en/phase-5/acid-transactions/).
+
+### The runner, piece by piece
+
+The runner is `scripts/migrate.ts`, and you write it yourself, without libraries, to see there's no magic: like [`node:http` before Hono](/en/phase-3/node-http-server/) in Phase 3. The beginning:
+
+<ProjectCode file="shop-api/20-migrations/scripts/migrate.ts" region="folder" />
+
+- `pool` is the <Term id="connection-pool">connection pool</Term> from `src/db.ts`, the one from [lesson 5](/en/phase-5/node-postgres/).
+- `process.argv[2]` is whatever you write after the script's name. If you write nothing, it's `undefined`, and `??` uses what's on its right: the `db/migrations` folder. `join` joins the pieces of the path starting from `import.meta.dirname`, this file's folder.
+
+Next, what's left to apply:
+
+<ProjectCode file="shop-api/20-migrations/scripts/migrate.ts" region="record" />
+
+- `CREATE TABLE IF NOT EXISTS migrations` creates the record table the first time. `name` is the <Term id="primary-key">primary key</Term>, so it doesn't repeat, and `applied_at` fills itself in with the time (`DEFAULT now()`).
+- `SELECT name FROM migrations` reads the applied ones, and `new Set(…)` keeps them in a set: a list you can ask “is this one here?” with `.has()`.
+- `readdir` reads the names of the files in the folder. `filter` keeps the `.sql` ones, `sort()` sorts them by name, and the second `filter` keeps the ones that aren't in the set ([`filter` and `map`, in Phase 3](/en/phase-3/javascript-for-backend/#choosing-and-transforming-a-list-filter-and-map)).
+
+And applying them, each one in its own transaction:
+
+<ProjectCode file="shop-api/20-migrations/scripts/migrate.ts" region="apply" mark={[6, 10, 14]} />
+
+- `pool.connect()` asks the pool for a connection and keeps it: a transaction lives on a single connection.
+- Inside the `for`, it reads each file, sends it whole to PostgreSQL and writes its name down in `migrations`, with a parameter (`$1`), as in lesson 5.
+- **The change and its record go in the same transaction:** both stay, or neither does.
+- If something fails, the `catch` does a `ROLLBACK`, writes the error, leaves an <Term id="exit-code">exit code</Term> of 1 and stops with `break`: the next one may depend on the one that failed.
+- `finally` runs no matter what: it gives the connection back (`release`) and closes the pool, so the program ends. `try` and `catch` are the ones from [lesson 8 of Phase 3](/en/phase-3/node-errors-and-logging/#throw-throws-an-error-try-and-catch-catch-it).
+
+About 35 lines, without the comments. In `package.json`, `db:create` makes way for `"db:migrate": "node --env-file-if-exists=.env scripts/migrate.ts"`.
+
+### Adding stock to a table that already has rows
+
+The first thing anyone thinks of is a single command: the `stock` column, a whole number (`integer`) that can't be missing (`NOT NULL`). Try it: since it fails, it changes nothing:
+
+<TryIt
+  title="A NOT NULL column, all at once"
+  lang="sql"
+  cmd="ALTER TABLE products ADD COLUMN stock integer NOT NULL;"
+  output={`ERROR:  column "stock" of relation "products" contains null values`}
+>
+
+Inside `psql -d shop`, as in the [introduction](/en/phase-5/). The `stock` column of the table (“*relation*”) `products` would have `NULL` values.
+
+</TryIt>
+
+A new column reaches the four products with no value, `NULL`, and `NOT NULL` forbids it. The treacherous part: on an empty table, like your tests' one, the same command works. **It fails where there's data, which is usually production.**
+
+The safe way is three steps, in `002-stock.sql`. First, the column without the rule:
+
+<ProjectCode file="shop-api/20-migrations/db/migrations/002-stock.sql" region="column" />
+
+`ALTER TABLE products` (“change the products table”) and `ADD COLUMN stock integer` (“add the stock column, a whole number”). The rows already there get it empty, and for now that's allowed.
+
+Second, a value for each row that was already there:
+
+<ProjectCode file="shop-api/20-migrations/db/migrations/002-stock.sql" region="backfill" />
+
+The `UPDATE` from [lesson 1](/en/phase-5/what-is-sql/), only on the rows without a value. Ten is a starting stock, until Ana counts her warehouse.
+
+Third, now that no row is empty, the rules:
+
+<ProjectCode file="shop-api/20-migrations/db/migrations/002-stock.sql" region="rules" />
+
+Word by word:
+
+- `ALTER COLUMN stock SET DEFAULT 0`: a new product starts with 0 unless someone says otherwise.
+- `ALTER COLUMN stock SET NOT NULL`: from now on it can't be missing. PostgreSQL checks it on every row, and it passes: step 2 filled them in.
+- `ADD CONSTRAINT stock_not_negative CHECK (stock >= 0)`: a <Term id="constraint">constraint</Term> with a name: the stock is never negative.
+- All three go in one command, separated by commas.
+
+What about `ADD COLUMN stock integer NOT NULL DEFAULT 10`, in one go? In PostgreSQL it works, but new products would also start with 10. The three steps always work, even if each row's value is calculated from other columns.
+
+### A new database: migrate and load the data
+
+A colleague clones your project, with her database empty. She migrates, and another script, `db:seed`, loads the sample data:
+
+<TryIt
+  title="An empty database, up to date"
+  cmd={`npm run db:migrate\nnpm run db:seed`}
+  output={`> shop-api@1.0.0 db:migrate
+> node --env-file-if-exists=.env scripts/migrate.ts
+
+Applied: 001-shop.sql
+Applied: 002-stock.sql
+
+> shop-api@1.0.0 db:seed
+> node --env-file-if-exists=.env scripts/seed.ts
+
+Sample data loaded`}
+>
+
+Here 002 has no rows to fill in: the products go in with their stock from `db/seed.sql`, 40 T-shirts, 60 mugs, 25 hoodies and 15 caps.
+
+</TryIt>
+
+`db:seed` is `scripts/seed.ts`:
+
+<ProjectCode file="shop-api/20-migrations/scripts/seed.ts" />
+
+If there are products already, it refuses, because it would repeat them: unlike `db:create`, **it never deletes anything**. On your database, it answers `The database already has products: npm run db:seed is only for an empty one`.
+
+### The API shows the stock, only in version 2
+
+In `src/data.ts`, `stock` goes into the `Product` type (`stock: number;`) and into the columns requested for each product:
+
+<ProjectCode file="shop-api/20-migrations/src/data.ts" region="columns" mark={5} />
+
+And in `src/schemas.ts`, the version 2 contract documents it:
+
+<ProjectCode file="shop-api/20-migrations/src/schemas.ts" region="product" />
+
+Version 1 doesn't change: its adapter, `productV1` in `src/v1.ts`, copies only `id`, `name` and the price in euros. In version 2, a new field doesn't break anyone: it's [changing by adding](/en/phase-4/api-versioning/#first-change-by-adding).
+
+### Renaming without breaking: expand and contract
+
+Renaming a column is something else: `ALTER TABLE products RENAME COLUMN name TO title` takes an instant, but the running server keeps asking for `name`, and fails until the new code arrives. With two servers that are updated one after the other, the old code and the new code live side by side for a while.
+
+The solution is **expand and contract**: first you widen, then you trim, and each step is a different migration or <Term id="deployment">deployment</Term>:
+
+| Step | What changes | Who works |
+|---|---|---|
+| 1. Expand | A migration adds `title` and copies each `name` into it | The old code, which doesn't see it |
+| 2. New code | It reads `title` (if it's empty, `name`) and writes to both columns | The old and the new, at the same time |
+| 3. Contract | With no old code running, a migration copies into `title` whatever the old code wrote only in `name`, and drops `name` | The new code |
+
+There's never code asking for a column that doesn't exist.
+
+### An applied migration is never edited
+
+Imagine that, after migrating, you change the `DEFAULT 0` in `002-stock.sql` to `DEFAULT 5`. Your database doesn't notice: 002 is already recorded, and the runner skips it. Your colleague's, freshly created, does apply it, with 5. **Same files, different databases**, and nothing warns you.
+
+That's why a migration that has left your computer is never touched: if it was wrong, you write another one, 003.
+
+### What the tools add
+
+Migration tools do the same as your runner, and a bit more:
+
+- **Generating the SQL.** drizzle-kit compares your tables, described in TypeScript, with their previous version and writes the migration. You'll see it in [lesson 9](/en/phase-5/orm-drizzle-prisma/), with your runner applying it.
+- **Detecting edits.** Flyway, widely used with Java, keeps a fingerprint of each applied migration and refuses to go on if a file has changed.
+- **Undoing and waiting their turn.** node-pg-migrate, for Node, lets you write how to undo each migration, and uses a lock so that two servers starting at the same time don't apply the same one.
+
+## Try it
+
+The goal: add the stock to your shop without losing your orders, and check that a migration that fails leaves nothing half-done.
+
+### Before changing anything
+
+<TryIt
+  title="1. products, without stock"
+  cmd={`psql -d shop -c '\\d products'`}
+  output={`                           Table "public.products"
+   Column    |  Type   | Collation | Nullable |           Default
+-------------+---------+-----------+----------+------------------------------
+ id          | integer |           | not null | generated always as identity
+ name        | text    |           | not null |
+ price_cents | integer |           | not null |
+Indexes:
+    "products_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "products_price_cents_check" CHECK (price_cents > 0)
+Referenced by:
+    TABLE "orders" CONSTRAINT "orders_product_id_fkey" FOREIGN KEY (product_id) REFERENCES products(id)
+    TABLE "product_categories" CONSTRAINT "product_categories_product_id_fkey" FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE`}
+>
+
+`\d` (for “*describe*”) is a `psql` command that shows what a table looks like: each column with its type, whether it allows `NULL` (`Nullable`) and its default value; below, its keys and constraints. None of the columns is `stock`.
+
+</TryIt>
+
+With the server from lesson 5 running, create an order with the `POST` from the beginning and write down its number: it's the data you don't want to lose. Do it now, because the new code asks for a column that doesn't exist yet.
+
+### Prepare the project
+
+You're still in `~/backend-course/phase-3/shop-api`, with the code from lesson 5. Write the changes:
+
+1. Create the `db/migrations/` folder and move `db/schema.sql` into it as `001-shop.sql`. Add `IF NOT EXISTS` after each `CREATE TABLE`.
+2. Create `db/migrations/002-stock.sql`, `scripts/migrate.ts` and `scripts/seed.ts` with the blocks you've seen.
+3. Delete `scripts/create-db.ts`. In `package.json`, replace `db:create` with `db:migrate` and add `"db:seed": "node --env-file-if-exists=.env scripts/seed.ts"`.
+4. In `db/seed.sql`, add `stock` to the products: 40, 60, 25 and 15.
+5. Add `stock` in `src/data.ts` and in `src/schemas.ts`, as above.
+
+The tests now prepare their database with the migrations. They come in this lesson's folder:
+
+```sh
+cd ~/backend-course/phase-3
+curl -O https://backenddesdecero.com/practicas/shop-api/20-migrations.tar.gz
+tar -xzf 20-migrations.tar.gz
+cd shop-api
+cp ../20-migrations/test/*.ts test/
+```
+
+If you get stuck, compare your code with `20-migrations`.
+
+### Migrate, twice
+
+<TryIt
+  title="2. The missing migrations"
+  cmd="npm run db:migrate"
+  output={`> shop-api@1.0.0 db:migrate
+> node --env-file-if-exists=.env scripts/migrate.ts
+
+Applied: 001-shop.sql
+Applied: 002-stock.sql`}
+>
+
+With no `migrations` table, both were missing as far as the runner knew. 001 did nothing, because your tables already existed; 002 added the column. If you get an SQL error, compare with the download. The outputs are from PostgreSQL 18.6 and Node 26.11.1; your dates will be different.
+
+</TryIt>
+
+<TryIt
+  title="3. Again"
+  cmd="npm run db:migrate"
+  output={`> shop-api@1.0.0 db:migrate
+> node --env-file-if-exists=.env scripts/migrate.ts
+
+No new migrations: the database is up to date`}
+>
+
+Both are recorded: nothing to do. That's why it can go in every deployment, before starting the server.
+
+</TryIt>
+
+### Look at the table afterward
+
+<TryIt
+  title="4. products, with stock"
+  cmd={`psql -d shop -c '\\d products'\npsql -d shop -c 'SELECT id, name, stock FROM products;'`}
+  output={`                           Table "public.products"
+   Column    |  Type   | Collation | Nullable |           Default
+-------------+---------+-----------+----------+------------------------------
+ id          | integer |           | not null | generated always as identity
+ name        | text    |           | not null |
+ price_cents | integer |           | not null |
+ stock       | integer |           | not null | 0
+Indexes:
+    "products_pkey" PRIMARY KEY, btree (id)
+Check constraints:
+    "products_price_cents_check" CHECK (price_cents > 0)
+    "stock_not_negative" CHECK (stock >= 0)
+Referenced by:
+    TABLE "orders" CONSTRAINT "orders_product_id_fkey" FOREIGN KEY (product_id) REFERENCES products(id)
+    TABLE "product_categories" CONSTRAINT "product_categories_product_id_fkey" FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
+
+ id |  name   | stock
+----+---------+-------
+  1 | T-shirt |    10
+  2 | Mug     |    10
+  3 | Hoodie  |    10
+  4 | Cap     |    10
+(4 rows)`}
+>
+
+Notice `stock`, `not null` and `0` by default, and `stock_not_negative`. The products have 10, the starting stock from step 2: they already existed, so they didn't go through `seed.sql`.
+
+</TryIt>
+
+In `psql -d shop`, try to leave the mug in negative:
+
+<TryIt
+  title="5. A negative stock"
+  lang="sql"
+  cmd="UPDATE products SET stock = -1 WHERE id = 2;"
+  output={`ERROR:  new row for relation "products" violates check constraint "stock_not_negative"
+DETAIL:  Failing row contains (2, Mug, 850, -1).`}
+>
+
+The resulting row (the “*failing row*”) would have `-1`, and `stock_not_negative` doesn't let it in.
+
+</TryIt>
+
+### The API, with and without stock
+
+Start the server and ask for the products in both versions, and for your order:
+
+<TryIt
+  title="6. /v2 and /v1"
+  cmd={`curl -s -w '\\n' localhost:3000/v2/products\ncurl -s -w '\\n' localhost:3000/v1/products\ncurl -s -w '\\n' localhost:3000/v2/orders/26`}
+  output={`[{"id":1,"name":"T-shirt","priceCents":2000,"stock":10},{"id":2,"name":"Mug","priceCents":850,"stock":10},{"id":3,"name":"Hoodie","priceCents":3500,"stock":10},{"id":4,"name":"Cap","priceCents":1500,"stock":10}]
+[{"id":1,"name":"T-shirt","price":20},{"id":2,"name":"Mug","price":8.5},{"id":3,"name":"Hoodie","price":35},{"id":4,"name":"Cap","price":15}]
+{"id":26,"productId":2,"quantity":1,"status":"pending","createdAt":"2026-10-13T23:47:46.437Z"}`}
+>
+
+Version 2 brings `stock`; version 1, the usual. And your order is still there (replace 26 with your number). If `/v2` doesn't bring `stock`, it's missing from the columns in `src/data.ts`.
+
+</TryIt>
+
+### Make a migration fail
+
+Create `db/migrations/003-color.sql` with two commands. The first would work; the second has a typo, `product` without the `s`:
+
+```sql
+ALTER TABLE products ADD COLUMN color text;
+UPDATE product SET color = 'black' WHERE id = 1;
+```
+
+<TryIt
+  title="7. A migration that fails"
+  cmd={`npm run db:migrate\npsql -d shop -c 'SELECT color FROM products;'`}
+  output={`> shop-api@1.0.0 db:migrate
+> node --env-file-if-exists=.env scripts/migrate.ts
+
+003-color.sql was not applied: relation "product" does not exist
+ERROR:  column "color" does not exist
+LINE 1: SELECT color FROM products;
+               ^`}
+>
+
+The `UPDATE` failed, and the `ROLLBACK` also took away the `ALTER TABLE` that worked: `color` doesn't exist. It isn't recorded either: `migrations` still has two rows. **Delete `003-color.sql`**: it was an experiment.
+
+</TryIt>
+
+### The tests
+
+<TryIt
+  title="8. The migration tests"
+  cmd="npm test -- test/migrations.test.ts"
+  output={`> shop-api@1.0.0 test
+> node --env-file=test/.env --test --test-concurrency=1 test/migrations.test.ts
+
+✔ on an empty database they are all applied, in order, and recorded (107.716094ms)
+✔ migrating again applies nothing: the database is already up to date (76.402778ms)
+✔ a migration that fails leaves nothing half-done, and is not recorded (86.048603ms)
+✔ 002 on a table that already has rows: the ones there get the starting stock (173.188346ms)
+✔ db:seed only loads the data into an empty database (83.117211ms)
+✔ v2 shows the stock of each product, and documents it; v1 stays the same (15.414086ms)
+ℹ tests 6
+ℹ suites 0
+ℹ pass 6
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 776.271161`}
+>
+
+They use `shop_test`, never your database: they empty it and migrate it every time. If you get `Can't use the tests' database`, PostgreSQL isn't running. Your times will be different.
+
+</TryIt>
+
+## You have already seen it
+
+- **The apps on your phone** keep your data in a small database inside the phone. If an update changes their tables, it brings migrations, and your notes are still there.
+- **WordPress**, after updating, sometimes asks you to press a button to update the database: those are its migrations.
+- **Rails, Django or Laravel**, frameworks for other languages, have their migrations folder and a command to apply them.
+
+## Common mistakes
+
+- **Editing a migration that's already applied.** The databases that already had it don't change: write another one.
+- **Adding a `NOT NULL` column without a value to a table with rows.** It works on your empty table and fails in production: three steps.
+- **Renaming or dropping a column at the same time the new code arrives.** The old code, still running, asks for it: expand and contract.
+- **Changing the tables by hand with `psql` in production.** That change isn't in any file: no other database will have it.
+- **Numbering `1`, `2`… `10`.** Sorted as text, `10` comes before `2`: use three digits.
+
+## Summary
+
+- Dropping the tables and creating them again only works when there's no data to keep.
+- A migration is a numbered file with one change. The runner applies the missing ones, in order, and records them in a table in the database itself.
+- Each migration goes in a transaction, together with its record: if something fails, `ROLLBACK`, and nothing is left half-done.
+- A `NOT NULL` column on a table with rows takes three steps: the column, a value for each row and the rules. A rename, expand and contract.
+- An applied migration is never edited: you write another one.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="You write a migration with ALTER TABLE orders ADD COLUMN country text NOT NULL. Your tests pass, but when you deploy, the migration fails in production. Why?"
+  review="Adding stock to a table that already has rows"
+>
+
+<QuizOption text="In production, PostgreSQL won’t let you change a table while the server is using it.">
+
+It does let you: the change waits for the running queries to finish and goes ahead. The problem is the rows that are already there.
+
+</QuizOption>
+
+<QuizOption text="Production has orders, which would get the column without a country: NOT NULL prevents it." correct>
+
+In the tests' database, the table is empty when it's migrated: there are no rows to break the rule. In production, there are.
+
+</QuizOption>
+
+<QuizOption text="Adding columns in production requires connecting as a superuser.">
+
+Being the table's owner is enough, like the `shop` role. And the error says `contains null values`: it says nothing about permissions.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="002-stock.sql is already applied on your laptop and in production, and you find out the starting stock should have been 20. What do you do?"
+  review="An applied migration is never edited"
+>
+
+<QuizOption text="You change the 10 to 20 in 002-stock.sql and run npm run db:migrate.">
+
+The runner sees `002-stock.sql` recorded and skips it: your products still have 10, on the laptop and in production.
+
+</QuizOption>
+
+<QuizOption text="You delete the 002-stock.sql row from the migrations table and migrate again, so it’s applied with 20.">
+
+002 starts with `ADD COLUMN stock`, and the column already exists: it fails, `ROLLBACK`, and you're where you were, with the record broken.
+
+</QuizOption>
+
+<QuizOption text="You write 003, a new migration with the UPDATE that fixes it." correct>
+
+Only forward: 003 reaches every database the same way, whether they've had 002 for a month or since today.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="The runner says “004-prices.sql was not applied” and exits with an error. 004 had an ALTER TABLE that worked and an UPDATE that failed. What’s in your database now?"
+  review="Each migration, all or nothing"
+>
+
+<QuizOption text="Nothing from 004: neither the ALTER TABLE’s change nor its name in migrations." correct>
+
+`ROLLBACK` undoes everything the transaction did, and the record was inside it. When you fix it, it will be applied whole.
+
+</QuizOption>
+
+<QuizOption text="The ALTER TABLE’s change, but not the UPDATE’s: you have to undo it by hand before migrating again.">
+
+That would happen without a transaction. With one, PostgreSQL undoes the `ALTER TABLE` too.
+
+</QuizOption>
+
+<QuizOption text="004, recorded as failed in migrations, and the runner will never try it again.">
+
+The table only keeps the applied ones, and the record is undone with the rest. Next time, 004 is still pending.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Your API runs on two servers that are updated one after the other, and you want the name column to be called title. Which plan doesn’t break any request?"
+  review="Renaming without breaking: expand and contract"
+>
+
+<QuizOption text="A migration with RENAME COLUMN and, right after, the new code: the rename is instant.">
+
+The change is instant, but the old code keeps running for a while and asks for `name`, which no longer exists.
+
+</QuizOption>
+
+<QuizOption text="Add title, code that reads title and writes to both, and drop name at the end." correct>
+
+It's expand and contract: at every moment, the columns the running code asks for exist.
+
+</QuizOption>
+
+<QuizOption text="Stop the API, rename and start it with the new code: it’s the only way not to break anything.">
+
+While the API is stopped, every request fails: it does break things. And it's not the only way: expand and contract stops nothing.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A teammate names his migrations 1-shop.sql, 2-stock.sql… and reaches 10-shipping.sql. What happens with this runner on an empty database?"
+  review="Only forward, and a table that records it"
+>
+
+<QuizOption text="Nothing strange: sort() understands the number at the start of each name.">
+
+`sort()` compares texts, character by character. It doesn't know `10` is a number.
+
+</QuizOption>
+
+<QuizOption text="The runner refuses: the names have to start with three digits.">
+
+This runner doesn't check the names: it accepts any `.sql`. That's why the mistake goes unnoticed.
+
+</QuizOption>
+
+<QuizOption text="10 is applied right after 1, before 2." correct>
+
+As text, `10-…` comes before `2-…`, because `1` comes before `2`. With three digits, `002` comes before `010`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A colleague clones the project and has her PostgreSQL with an empty shop database. What does she run to have the shop with its sample data?"
+  review="A new database: migrate and load the data"
+>
+
+<QuizOption text="Only npm run db:seed: it creates the tables and fills them.">
+
+`db:seed` only adds rows: without the tables, it fails with `relation "products" does not exist`. The migrations create the tables.
+
+</QuizOption>
+
+<QuizOption text="npm run db:migrate and then npm run db:seed." correct>
+
+The migrations create the tables starting from 001, and `db:seed` fills them, because they're still empty.
+
+</QuizOption>
+
+<QuizOption text="A copy of your database: migrations only work for one that already has tables.">
+
+In an empty one, 001 creates the tables: that's how the tests and any new server start from scratch.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [ALTER TABLE](https://www.postgresql.org/docs/18/sql-altertable.html) (PostgreSQL): everything you can change about a table.
+- [Modifying Tables](https://www.postgresql.org/docs/18/ddl-alter.html) (PostgreSQL): columns and constraints, with examples.
+- [Evolutionary Database Design](https://martinfowler.com/articles/evodb.html) (Martin Fowler and Pramod Sadalage): small migrations, next to the code.
+- [Parallel Change](https://martinfowler.com/bliki/ParallelChange.html) (Martin Fowler): expand and contract, step by step.
+- [node-pg-migrate](https://salsita.github.io/node-pg-migrate/): a migration runner for Node and PostgreSQL.
