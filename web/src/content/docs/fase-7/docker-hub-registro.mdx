@@ -1,0 +1,640 @@
+---
+translationKey: registry
+title: "Docker Hub y registros: publicar y fijar imágenes"
+description: "Qué es un registro de Docker como Docker Hub o ghcr.io, etiquetas frente a huellas sha256, y cómo publicar una imagen, fijarla por su digest y escanearla."
+sidebar:
+  label: Registros
+  order: 8
+lesson:
+  oneLiner: "Un registro es el almacén de donde se descargan las imágenes y adonde subes las tuyas, como Docker Hub o ghcr.io. Una etiqueta, como latest, puede apuntar mañana a otra imagen; una huella (sha256) nombra siempre el mismo contenido. Por eso las imágenes se fijan por su huella."
+  objectives:
+    - Leer el nombre completo de una imagen, pieza a pieza, del registro a la huella.
+    - Explicar por qué una etiqueta como latest puede cambiar y una huella no.
+    - Publicar una imagen en un registro con docker tag y docker push, y descargarla por su huella.
+    - Buscar fallos conocidos en una imagen con Trivy y leer su informe.
+  prerequisites: [compose]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+El 19 de marzo de 2026, unos atacantes con credenciales robadas movieron 76 de las 77 etiquetas de versión de `trivy-action`, una acción de GitHub para buscar fallos en imágenes. Quien la usaba con un número de versión recibió, con el nombre de siempre, un código hecho para robar los secretos del CI ([Aqua Security](https://www.aquasec.com/blog/trivy-supply-chain-attack-what-you-need-to-know), en inglés). También publicaron versiones infectadas de Trivy, entre ellas imágenes en Docker Hub.
+
+A quien había fijado la acción por el SHA de su commit, las etiquetas movidas no le afectaron: ese nombre no se puede mover.
+
+Con las imágenes pasa lo mismo: `node:26-slim` o `latest` son nombres que su dueño, o quien le robe la contraseña, puede apuntar mañana a otra imagen. Esta lección te enseña a nombrarlas para que no cambien, y a publicar la tuya.
+
+## La analogía
+
+<Analogy>
+
+Llamas a una clínica y pides cita con «el médico de guardia del lunes». Te atiende quien esté de guardia ese día: esta semana, la doctora Ruiz; la que viene, quizá otro. Las palabras no cambian; la persona, sí.
+
+Si pides cita con la doctora Ruiz por su número de colegiada, te atiende ella, sea el día que sea.
+
+La clínica es el registro; «el médico de guardia», la etiqueta; el número de colegiada, la huella.
+
+<div slot="limits">
+
+- El número de colegiada lo asigna alguien. La huella se calcula del contenido: no puede tenerla otra imagen, y Docker la comprueba al descargar.
+- En un registro, cualquiera con permiso de escritura mueve una etiqueta, incluido quien te robe el token.
+- La imagen de una huella no cambia nunca, tampoco para recibir arreglos: para tenerlos, cambias de huella.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Un registro es un almacén de imágenes que habla HTTP
+
+Un <Term id="registry">registro</Term> guarda imágenes para que se descarguen con `docker pull` y se suban con `docker push`. Los que más verás:
+
+- **Docker Hub** (`docker.io`): el que Docker usa si no dices otro. Las imágenes oficiales, como `node` o `postgres`, viven en su carpeta `library`.
+- **GitHub Container Registry** (`ghcr.io`): el de GitHub, junto a tu código.
+- **Los de cada nube** (Amazon, Google, Azure) y otros, como el de GitLab. El `gcr.io` de la imagen distroless de la [lección 4](/fase-7/docker-multi-stage/) es de Google.
+
+Todos hablan el mismo idioma: una API HTTP con rutas que empiezan por `/v2/`. Lo verás con `curl` en «Pruébalo».
+
+### El nombre de una imagen, pieza a pieza
+
+Un nombre completo, con todas sus piezas:
+
+```text
+ghcr.io/ana/tienda-api:1.0.0@sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e
+```
+
+| Pieza | Aquí | Qué es | Si no la escribes |
+|---|---|---|---|
+| Registro | `ghcr.io` | Dónde está guardada | `docker.io`, Docker Hub |
+| Usuario u organización | `ana` | De quién es | `library`, las oficiales (en Docker Hub) |
+| Nombre | `tienda-api` | Qué imagen es | Es obligatorio |
+| Etiqueta | `:1.0.0` | Qué versión, según su dueño | `latest` |
+| Huella | `@sha256:ea6b…` | Exactamente qué contenido | Docker usa la etiqueta |
+
+Por eso `nginx:1.31`, en la [lección 1](/fase-7/imagen-contenedor-docker/), era `docker.io/library/nginx:1.31`. Docker sabe que la primera pieza es un registro porque lleva un punto (`ghcr.io`), un puerto (`localhost:5000`) o es `localhost`.
+
+### La etiqueta se mueve; la huella, no
+
+Una <Term id="tag">etiqueta</Term> (*tag*) es un nombre que el dueño de la imagen pone y quita cuando quiere. En Node, `26.1.0-slim` es una versión exacta; `26-slim`, la última de Node 26.
+
+Pero **`latest` es una etiqueta como cualquier otra**: apunta a lo último que alguien subió con ese nombre, que no tiene por qué ser lo más nuevo. Y es la que recibe una imagen sin etiqueta: tu `tienda-api` es `tienda-api:latest`.
+
+`26-slim` se mueve con cada Node 26 nuevo y con cada arreglo de Debian. Lo que no se mueve es la <Term id="image-digest">huella</Term> (*digest*), el <Term id="hash">hash</Term> SHA-256 de la [lección 2](/fase-7/capas-docker/). Pregúntale a Docker por la de tu `node:26-slim`:
+
+<TryIt
+  title="La huella de una imagen que ya tienes"
+  cmd="docker image inspect --format '{{index .RepoDigests 0}}' node:26-slim"
+  output="node@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0"
+>
+
+`RepoDigests` es la lista de huellas con las que el registro conoce la imagen, y `index … 0` toma la primera. Si descargaste `node:26-slim` más tarde que nosotros, tu huella será otra: la etiqueta se habrá movido.
+
+</TryIt>
+
+**Mismo contenido, misma huella.** Al descargar por huella, Docker calcula la de lo que recibe y la compara: si alguien cambia un byte en el registro, la descarga falla.
+
+### Una huella para cada procesador
+
+Tu portátil puede tener un procesador ARM (un Mac con chip de Apple) y tu servidor uno Intel. ¿Cómo sirve la misma huella para los dos?
+
+<TryIt
+  title="Lo que hay detrás de una etiqueta"
+  cmd="docker buildx imagetools inspect node:26-slim | grep -E '^(Name|Digest)|Platform'"
+  output={`Name:      docker.io/library/node:26-slim
+Digest:    sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0
+  Platform:    linux/amd64
+  Platform:    unknown/unknown
+  Platform:    linux/arm64/v8
+  Platform:    unknown/unknown
+  Platform:    linux/ppc64le
+  Platform:    unknown/unknown
+  Platform:    linux/s390x
+  Platform:    unknown/unknown`}
+>
+
+`docker buildx imagetools inspect` lee la imagen en el registro, sin descargarla; el `grep` deja las líneas que importan.
+
+La huella `193f…` es de un **índice**: una lista con una imagen por procesador (`amd64` para Intel y AMD, `arm64` para ARM…), cada una con su huella. Cada `unknown/unknown` es una nota que acompaña a la imagen de encima: con qué código y cómo se construyó.
+
+</TryIt>
+
+Con la huella del índice, cada máquina descarga la imagen de su procesador. Es la que llevan los `FROM` de tu Dockerfile.
+
+### Publicar en Docker Hub o en ghcr.io
+
+Subir una imagen son dos órdenes:
+
+```sh
+docker tag tienda-api ghcr.io/ana/tienda-api:1.0.0
+docker push ghcr.io/ana/tienda-api:1.0.0
+```
+
+- **`docker tag`** le da a la imagen otro nombre, con el registro delante, sin copiarla. Es el `docker image tag` de la lección 4.
+- **`docker push`** sube las capas que faltan en el registro, que contesta con la huella.
+
+Antes, el registro tiene que saber quién eres, con `docker login`. Usa un **token**, no tu contraseña: se crea en la web del registro con los permisos justos y se borra sin tocar nada más. Es el <Term id="least-privilege">mínimo privilegio</Term> de la Fase 6.
+
+- **Docker Hub:** en tu cuenta, *Personal access tokens*. Para un servidor que solo descarga, uno de lectura.
+- **ghcr.io:** un token de GitHub con el permiso `write:packages`. En GitHub Actions, cada ejecución trae uno propio, el `GITHUB_TOKEN` (Fase 8).
+
+```sh
+docker login ghcr.io -u ana --password-stdin < token.txt
+```
+
+**`--password-stdin`** lee el token de la entrada estándar: escrito en la orden, se quedaría en el historial de tu terminal. Después, borra el fichero.
+
+Un token es un <Term id="secret">secreto</Term>: fuera de Git, y se rota si se filtra ([lección 8 de la Fase 6](/fase-6/rate-limiting-secretos/#generar-un-secreto-y-rotarlo)). Docker Desktop lo guarda en el llavero del sistema; Docker Engine en Linux, por defecto, sin cifrar en `~/.docker/config.json`, y te avisa con un `WARNING!`.
+
+Y mira **quién la verá**: en Docker Hub, un repositorio nuevo es público; en ghcr.io, privado.
+
+### Fijar por huella, y que un robot la actualice
+
+Fijar una imagen es escribir su huella detrás de la etiqueta: `node:26-slim@sha256:193f…`. Docker descarga la de la huella, y la etiqueta queda como nota para quien lee. Este curso lo hace en todas partes:
+
+- **Tu Dockerfile:** los `FROM` llevan `node:26-slim@sha256:193f…` ([lección 3](/fase-7/dockerfile/)).
+- **Tu `compose.yaml`:** `postgres:18@sha256:7493…` y `redis:8@sha256:2c2d…` ([lección 7](/fase-7/docker-compose/)).
+- **El CI de este curso:** prueba los proyectos guiados con PostgreSQL y Redis fijados por las mismas huellas, y fija cada acción de GitHub por el SHA de su commit, la defensa que funcionó contra el ataque a Trivy.
+
+Es el `save-exact` de la [Fase 3](/fase-3/que-es-node-js/#el-npmrc-tres-líneas-contra-los-ataques-de-2025): **la versión cambia cuando tú decides**. El precio: los arreglos tampoco llegan solos.
+
+Por eso fijar va con un robot que propone las huellas nuevas:
+
+- **Dependabot**, de GitHub, revisa los `FROM` de tus Dockerfile (`package-ecosystem: docker` en su configuración) y las imágenes de tu `compose.yaml` (`docker-compose`). Cuando la etiqueta se mueve, abre una *pull request* con la huella nueva. El repositorio del curso lo usa para npm y las acciones de GitHub.
+- **Renovate** hace lo mismo, también con las imágenes de los ficheros de GitHub Actions.
+
+Tu CI prueba la huella nueva, y tú decides si la aceptas.
+
+### Buscar fallos conocidos en una imagen
+
+`npm audit`, en la [lección de OWASP de la Fase 6](/fase-6/owasp-top-10/#npm-audit-paquetes-con-fallos-conocidos), miraba tus paquetes de npm. Una imagen lleva además un Debian entero y el propio npm. Dos herramientas lo comparan todo con las bases de datos públicas de fallos conocidos (los CVE):
+
+- **Docker Scout**, que viene con Docker Desktop: `docker scout cves tienda-api`.
+- **Trivy**, de Aqua Security, libre: lo usarás en «Pruébalo», desde su imagen.
+
+Sí, Trivy es la herramienta del ataque del principio. Por eso la usarás fijada por su huella.
+
+### Lo que un registro no es
+
+**Un registro no es una copia de seguridad de tu código.** Tu imagen lleva lo que copió la etapa final (`src/`, `bd/`, dos scripts y `node_modules`), sin tests, sin `Dockerfile` y sin la historia de Git. El código vive en Git, y la imagen se vuelve a construir a partir de él. Tampoco es sitio para secretos: lo que entra en una imagen lo lee quien la descarga.
+
+## Pruébalo
+
+El objetivo: publicar tu tienda en un registro propio, mover una etiqueta y demostrar que la huella sigue dando la versión de antes. Después, buscar fallos conocidos en tu imagen. Necesitas la imagen `tienda-api` de la lección 7.
+
+Tu registro será un contenedor de `registry:3`, la imagen oficial de Distribution, un registro libre: sin cuenta, y sin que tu imagen salga de tu ordenador.
+
+Las salidas son de Docker Engine 29 en un Mac, dentro de una máquina virtual con Linux. Las capturamos con el puerto 15000 y otros nombres, cambiados por los de la lección; nada más cambia. Tus IDs, huellas, tamaños y fechas serán otros.
+
+<TryIt
+  title="1. Arranca tu registro"
+  cmd="docker run -d --name registro -p 127.0.0.1:5000:5000 -v registro-datos:/var/lib/registry registry:3"
+  output={`Unable to find image 'registry:3' locally
+3: Pulling from library/registry
+…
+Digest: sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8
+Status: Downloaded newer image for registry:3
+02b4667d2a9b3181f411217a75002fbdff031a69a3d9a5c74722d2bb813a011d`}
+>
+
+El registro escucha en el 5000, solo para tu ordenador (`127.0.0.1`, [lección 6](/fase-7/redes-docker/)), y guarda las imágenes en el volumen `registro-datos` ([lección 5](/fase-7/volumenes-docker/)). Hemos quitado las líneas de las capas. Si sale `address already in use` en un Mac, mira «Errores comunes».
+
+</TryIt>
+
+<TryIt
+  title="2. Pregúntale qué guarda"
+  cmd="curl -s localhost:5000/v2/_catalog"
+  output={`{"repositories":[]}`}
+>
+
+Un `GET` a la API del registro: no guarda ninguna imagen.
+
+</TryIt>
+
+<TryIt
+  title="3. Dos nombres para tu imagen"
+  cmd={`docker tag tienda-api localhost:5000/tienda-api:1.0.0\ndocker tag tienda-api localhost:5000/tienda-api:latest\ndocker image ls localhost:5000/tienda-api`}
+  output={`IMAGE                              ID             DISK USAGE   CONTENT SIZE   EXTRA
+localhost:5000/tienda-api:1.0.0    ea6bb4a7c53f        452MB         93.1MB        
+localhost:5000/tienda-api:latest   ea6bb4a7c53f        452MB         93.1MB        `}
+>
+
+`localhost:5000` delante dice a qué registro irá. El mismo `ID`: una imagen con dos etiquetas.
+
+</TryIt>
+
+<TryIt
+  title="4. Súbela"
+  cmd="docker push --all-tags localhost:5000/tienda-api"
+  output={`The push refers to repository [localhost:5000/tienda-api]
+2bad53a95952: Pushed
+2f688e8399e9: Pushed
+20faae0343cb: Pushed
+35a80f60bd99: Pushed
+a524832f0c5c: Pushed
+0960870f6312: Pushed
+739a1ecac45a: Pushed
+feac787dfc24: Pushed
+940c9b797533: Pushed
+bbeda6b4abb7: Pushed
+251dfd226801: Pushed
+1.0.0: digest: sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e size: 856
+2bad53a95952: Already exists
+0960870f6312: Layer already exists
+251dfd226801: Layer already exists
+35a80f60bd99: Layer already exists
+739a1ecac45a: Layer already exists
+940c9b797533: Layer already exists
+a524832f0c5c: Layer already exists
+bbeda6b4abb7: Layer already exists
+20faae0343cb: Layer already exists
+2f688e8399e9: Layer already exists
+feac787dfc24: Layer already exists
+latest: digest: sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e size: 856`}
+>
+
+`--all-tags` sube todas las etiquetas de ese nombre. Cada código es una pieza, casi todas capas (lección 2):
+
+- **`1.0.0`** las sube (`Pushed`), y el registro contesta con la huella, `ea6b…`. `size: 856` son los bytes del índice.
+- **`latest`** no sube nada (`already exists`): el registro guarda cada capa una vez. Su huella es la misma.
+
+</TryIt>
+
+<TryIt
+  title="5. Lo que sabe el registro"
+  cmd={`curl -s localhost:5000/v2/tienda-api/tags/list\ncurl -sI localhost:5000/v2/tienda-api/manifests/1.0.0`}
+  output={`{"name":"tienda-api","tags":["1.0.0","latest"]}
+HTTP/1.1 200 OK
+Content-Length: 856
+Content-Type: application/vnd.oci.image.index.v1+json
+Docker-Content-Digest: sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e
+Docker-Distribution-Api-Version: registry/2.0
+Etag: "sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e"
+Date: Wed, 14 Oct 2026 04:52:59 GMT`}
+>
+
+Las dos etiquetas, y las cabeceras de `1.0.0`: un índice (`image.index`), como el de `node:26-slim`. `Docker-Content-Digest` es la huella, y el `Etag`, también.
+
+</TryIt>
+
+### Mueve la etiqueta latest
+
+Imagina que arreglas algo. Para no tocar la API, añade un comentario al final de `src/servidor.ts`, en la carpeta de tu proyecto, y reconstruye:
+
+```sh
+echo '// versión 1.0.1' >> src/servidor.ts
+docker build -t tienda-api .
+```
+
+Gracias a la caché (lección 2), tarda unos segundos. Ahora sube la imagen nueva como `latest`:
+
+<TryIt
+  title="6. latest apunta a otra imagen"
+  cmd={`docker tag tienda-api localhost:5000/tienda-api:latest\ndocker push localhost:5000/tienda-api:latest`}
+  output={`The push refers to repository [localhost:5000/tienda-api]
+79dd24156e06: Pushed
+ac263848b6e1: Pushed
+f0ebe9029796: Pushed
+20faae0343cb: Layer already exists
+940c9b797533: Layer already exists
+0960870f6312: Layer already exists
+251dfd226801: Layer already exists
+92ed31409685: Pushed
+35a80f60bd99: Layer already exists
+739a1ecac45a: Layer already exists
+bbeda6b4abb7: Layer already exists
+latest: digest: sha256:991da06c259b2d2ba87c79364b4427e27f44101024298fb180f280bb1af21a2d size: 856`}
+>
+
+Suben cuatro piezas: las capas de `src/`, `bd/` y `scripts/`, que salen de la etapa `comprobar` y cambian con ella, y la nota de cómo se construyó. Debian, Node y `node_modules` ya estaban.
+
+**`latest` tiene otra huella, `991d…`**: el registro no protege las etiquetas. Algunos, como el de Amazon, se pueden configurar para impedirlo.
+
+</TryIt>
+
+Ahora eres Luis, en otro ordenador: borra tus nombres locales y descarga la versión 1.0.0 por su huella.
+
+<TryIt
+  title="7. Descarga por la huella"
+  cmd={`docker image rm localhost:5000/tienda-api:1.0.0 localhost:5000/tienda-api:latest\ndocker pull localhost:5000/tienda-api@sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e`}
+  output={`Untagged: localhost:5000/tienda-api:1.0.0
+Deleted: sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e
+Untagged: localhost:5000/tienda-api:latest
+localhost:5000/tienda-api@sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e: Pulling from tienda-api
+2bad53a95952: Download complete
+Digest: sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e
+Status: Downloaded newer image for localhost:5000/tienda-api@sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e
+localhost:5000/tienda-api@sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e`}
+>
+
+Sin su último nombre, la imagen `ea6b…` se borra (`Deleted`); la nueva sigue, como `tienda-api`. Al descargar por la huella casi nada baja, porque Docker aún tiene sus piezas; en el ordenador de Luis bajarían todas.
+
+</TryIt>
+
+<TryIt
+  title="8. ¿Qué versión es cada una?"
+  cmd={`docker run --rm localhost:5000/tienda-api@sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e tail -1 src/servidor.ts\ndocker run --rm localhost:5000/tienda-api:latest tail -1 src/servidor.ts`}
+  output={`// #endregion apagar
+Unable to find image 'localhost:5000/tienda-api:latest' locally
+latest: Pulling from tienda-api
+Digest: sha256:991da06c259b2d2ba87c79364b4427e27f44101024298fb180f280bb1af21a2d
+Status: Downloaded newer image for localhost:5000/tienda-api:latest
+// versión 1.0.1`}
+>
+
+`tail -1` enseña la última línea de un fichero. Por la huella, la versión de antes; por `latest`, la nueva. Quien escribe la huella recibe la misma imagen, siempre.
+
+</TryIt>
+
+Borra el comentario de `src/servidor.ts`, que era solo para probar, y reconstruye con `docker build -t tienda-api .`: `tienda-api` vuelve a ser tu API sin cambios.
+
+<SelfCheck question="Reto: alguien sube otra imagen con la etiqueta 1.0.0. ¿Qué descarga un compose.yaml con image: localhost:5000/tienda-api:1.0.0? ¿Y uno con image: localhost:5000/tienda-api:1.0.0@sha256:ea6b…?">
+
+El primero, en una máquina que la descargue ahora, la imagen nueva: `1.0.0` se ha movido, como `latest` en el paso 6. Un número de versión no hace fija una etiqueta.
+
+El segundo, la de siempre: con la huella, Docker ignora la etiqueta. Si esa huella ya no estuviera en el registro, la descarga fallaría; nunca le daría otra imagen.
+
+</SelfCheck>
+
+### Busca fallos conocidos con Trivy
+
+No instalas Trivy: lo arrancas desde su imagen, fijada por su huella, y le das acceso a tu Docker para que lea la tuya.
+
+<TryIt
+  title="9. Analiza tu imagen"
+  cmd={`docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa image --scanners vuln localhost:5000/tienda-api:latest`}
+  output={`…
+2026-10-14T04:54:45Z  INFO  Detected OS  family="debian" version="13.7"
+2026-10-14T04:54:45Z  INFO  [debian] Detecting vulnerabilities...  os_version="13" pkg_num=80
+…
+
+Report Summary
+
+┌──────────────────────────────────────────────────────────────────────────────────┬──────────┬─────────────────┐
+│                                      Target                                      │   Type   │ Vulnerabilities │
+├──────────────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ localhost:5000/tienda-api:latest (debian 13.7)                                   │  debian  │       164       │
+├──────────────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/@hono/node-server/package.json                                  │ node-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+…
+│ usr/local/lib/node_modules/npm/node_modules/undici/package.json                  │ node-pkg │        3        │
+…
+
+localhost:5000/tienda-api:latest (debian 13.7)
+==============================================
+Total: 164 (UNKNOWN: 1, LOW: 60, MEDIUM: 60, HIGH: 43, CRITICAL: 0)
+…
+
+Node.js (node-pkg)
+==================
+Total: 12 (UNKNOWN: 0, LOW: 1, MEDIUM: 7, HIGH: 4, CRITICAL: 0)
+…`}
+>
+
+Palabra a palabra:
+
+- **`-v /var/run/docker.sock:/var/run/docker.sock`** le da a Trivy el *socket* por el que la orden `docker` habla con el motor. **Quien lo tiene manda en tu Docker**, casi como `root`: dáselo solo a imágenes en las que confías, fijadas por su huella.
+- **`-v trivy-cache:/root/.cache`** guarda en un volumen su base de datos de fallos: baja unos 130 MB y ocupa 1,5 GB.
+- **`image --scanners vuln`** busca fallos conocidos en una imagen. Sin `--scanners`, busca también secretos olvidados en sus ficheros.
+
+La primera vez tarda medio minuto. Hemos quitado (`…`) la descarga, la tabla de cada fallo y unas 200 filas del resumen.
+
+</TryIt>
+
+El informe, leído con calma:
+
+- **Los paquetes de tu tienda** (`app/node_modules`): ningún fallo conocido, como dijo `npm audit --omit=dev` en la Fase 6.
+- **Debian:** 164 fallos, 43 graves (`HIGH`) y ningún crítico. Ninguno tiene arreglo hoy: en su tabla, `Status` dice `affected` (Debian aún no lo ha corregido) o `fix_deferred` (lo deja para más adelante). Y 36 de los 43 graves son 4 fallos de `util-linux` contados en sus 9 paquetes: herramientas para montar discos o iniciar sesión, que tu API no usa.
+- **npm:** 12 fallos, 4 graves, en el npm que trae `node:26-slim`. Tu servidor arranca con `node`, pero npm está en la imagen.
+
+Tus números serán otros: la base de datos cambia cada pocas horas. Para ver solo lo grave que tiene arreglo:
+
+<TryIt
+  title="10. Solo lo grave que tiene arreglo"
+  cmd={`docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed localhost:5000/tienda-api:latest`}
+  output={`…
+│ localhost:5000/tienda-api:latest (debian 13.7)                                   │  debian  │        0        │
+…
+Node.js (node-pkg)
+==================
+Total: 3 (HIGH: 3, CRITICAL: 0)
+…`}
+>
+
+Quedan tres, en el npm de la imagen base (`brace-expansion` y `undici`), y su columna `Fixed Version` dice qué versiones los corrigen.
+
+</TryIt>
+
+¿Y entonces? Hoy, nada que puedas cambiar tú: el arreglo llegará con un `node:26-slim` nuevo, y Dependabot te propondrá su huella. Lo que importa no es el número, sino si un fallo tiene arreglo y alcanza a lo que tu servidor ejecuta.
+
+Para terminar, limpia. La imagen `tienda-api` se queda:
+
+<TryIt
+  title="11. Limpia"
+  cmd={`docker rm -f registro\ndocker volume rm registro-datos trivy-cache\ndocker image rm localhost:5000/tienda-api:latest localhost:5000/tienda-api@sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e`}
+  output={`registro
+registro-datos
+trivy-cache
+Untagged: localhost:5000/tienda-api:latest
+Deleted: sha256:991da06c259b2d2ba87c79364b4427e27f44101024298fb180f280bb1af21a2d
+Untagged: localhost:5000/tienda-api@sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e
+Deleted: sha256:ea6bb4a7c53fdaaaf522f8751f45d14768e11c387a74cce3164845cb4a0c4e7e`}
+>
+
+Las dos imágenes de la prueba se borran (`Deleted`) al perder su último nombre. Si no vas a usarlas más, borra también `registry:3` y la imagen de Trivy.
+
+</TryIt>
+
+## Ya lo has visto
+
+- **Git.** En la [Fase 1](/fase-1/git-por-dentro/), un commit se nombra por su hash, y una etiqueta de Git apunta a uno. El ataque a Trivy movió etiquetas de Git: con permiso de escritura, también se mueven.
+- **El lockfile.** `package-lock.json` apunta la huella de cada paquete. Fijar una imagen es lo mismo, para todo el sistema.
+- **El `ETag` de la [Fase 2](/fase-2/cache-http/).** El registro usa la huella como `Etag`: nombrar un contenido por su huella.
+
+## Errores comunes
+
+- **`latest` en un servidor.** Cada servidor nuevo, o cada `docker compose pull`, baja lo último que alguien subió: dos servidores con el mismo fichero pueden ejecutar imágenes distintas. En producción, una versión exacta y su huella.
+- **Fijar y olvidarse.** Una huella de hace un año es una imagen con un año de fallos sin arreglar. Deja que un robot proponga las nuevas.
+- **Subir sin el registro en el nombre.** `docker push tienda-api` intenta subir a `docker.io/library/tienda-api`, que no es tuyo, y Docker Hub lo rechaza (`denied`). Ponle nombre con `docker tag`.
+- **Iniciar sesión con tu contraseña.** Usa un token con los permisos justos, y nunca en Git ni en un `ENV` del Dockerfile.
+- **El puerto 5000 en un Mac.** El receptor de AirPlay de macOS lo usa. Si sale `address already in use`, o `curl` contesta `403 Forbidden` con `AirTunes` en la cabecera `Server`, usa otro puerto de fuera: `-p 127.0.0.1:5001:5000` y `localhost:5001/…`.
+
+## Resumen
+
+- Un registro guarda imágenes y habla HTTP: Docker Hub (`docker.io`), ghcr.io y otros. `docker push` sube; `docker pull` descarga.
+- El nombre completo es `registro/usuario/nombre:etiqueta@sha256:…`; sin registro, es Docker Hub, y sin usuario, `library`.
+- Una etiqueta, sea `latest` o `1.0.0`, la mueve quien puede escribir en el registro. Una huella nombra un contenido exacto, y Docker la comprueba.
+- Fija tus imágenes por su huella, y deja que Dependabot o Renovate propongan las nuevas.
+- Trivy o Docker Scout buscan fallos conocidos en toda la imagen: mira primero los que tienen arreglo y alcanzan a lo que ejecutas.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Tu compose.yaml dice image: ana/tienda-api:latest. Lo despliegas en un servidor nuevo y la API no arranca; en el viejo, con el mismo fichero, sí. ¿Qué es lo más probable?"
+  review="La etiqueta se mueve; la huella, no"
+>
+
+<QuizOption text="Alguien subió otra imagen como latest, y el nuevo bajó esa." correct>
+
+`latest` apunta a lo último que se subió con ese nombre. El viejo sigue con la que bajó hace tiempo; el nuevo bajó otra. Con la huella, tendrían la misma.
+
+</QuizOption>
+
+<QuizOption text="La huella de la imagen caducó, y el servidor nuevo descargó otra.">
+
+Una huella no caduca: nombra un contenido, y mientras esté en el registro, se descarga igual.
+
+</QuizOption>
+
+<QuizOption text="Docker Hub renueva cada semana las imágenes latest con lo más nuevo.">
+
+Docker Hub no toca tus etiquetas: `latest` cambia cuando alguien sube otra imagen con ese nombre.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Escribes docker pull redis:8. ¿De dónde la descarga Docker?"
+  review="El nombre de una imagen, pieza a pieza"
+>
+
+<QuizOption text="Del último registro en el que iniciaste sesión con docker login.">
+
+Iniciar sesión solo te identifica ante un registro. A cuál va Docker lo dice el nombre de la imagen.
+
+</QuizOption>
+
+<QuizOption text="De ghcr.io, porque el código de Redis está en GitHub.">
+
+Dónde está el código no decide dónde está la imagen. Sin registro en el nombre, Docker va a Docker Hub.
+
+</QuizOption>
+
+<QuizOption text="De Docker Hub: es docker.io/library/redis:8." correct>
+
+Sin registro, Docker usa `docker.io`; sin usuario, `library`, la carpeta de las imágenes oficiales.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Ana construye con FROM node:26-slim@sha256:193fe51b… en su Mac con chip de Apple, y el CI en un servidor Intel. ¿Funciona en los dos?"
+  review="Una huella para cada procesador"
+>
+
+<QuizOption text="No: esa huella es la de la imagen ARM que descargó el Mac de Ana.">
+
+`193f…` es la huella del índice, la lista con una imagen por procesador, no la de una de ellas.
+
+</QuizOption>
+
+<QuizOption text="Sí: es la de un índice, y cada máquina toma la de su procesador." correct>
+
+Fijar el índice fija cada una de sus imágenes. El Mac descarga la `arm64`; el servidor, la `amd64`.
+
+</QuizOption>
+
+<QuizOption text="Sí: si la huella no es de su procesador, Docker la ignora y usa la etiqueta.">
+
+Docker nunca cambia una huella por una etiqueta. Si no encontrara una imagen para su procesador, fallaría.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Tu CI tiene que publicar la imagen de la tienda en ghcr.io. ¿Qué le das para docker login?"
+  review="Publicar en Docker Hub o en ghcr.io"
+>
+
+<QuizOption text="Tu contraseña de GitHub, en una variable de entorno del CI.">
+
+Tu contraseña abre toda tu cuenta. Un token tiene solo el permiso que necesita.
+
+</QuizOption>
+
+<QuizOption text="Un token con write:packages en un ENV del Dockerfile, para que docker push lo lea.">
+
+`docker push` no lee el Dockerfile, y un `ENV` se queda dentro de la imagen, a la vista de quien la descargue.
+
+</QuizOption>
+
+<QuizOption text="Un token con solo el permiso write:packages, guardado como secreto del CI." correct>
+
+Mínimo privilegio: publica paquetes y nada más. Si se filtra, lo borras y creas otro.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Trivy encuentra 43 fallos graves en los paquetes de Debian de tu imagen, todos affected y sin Fixed Version. ¿Qué haces?"
+  review="Busca fallos conocidos con Trivy"
+>
+
+<QuizOption text="Mirar si tocan lo que ejecuta tu API y esperar a otra base." correct>
+
+Sin versión corregida, no hay nada que instalar hoy. El arreglo llegará con una imagen base nueva, y Dependabot te propondrá su huella.
+
+</QuizOption>
+
+<QuizOption text="Quitar la huella del FROM, para recibir siempre la última node:26-slim.">
+
+La última tampoco trae un arreglo que no existe, y dejas de saber qué imagen corre.
+
+</QuizOption>
+
+<QuizOption text="Añadir RUN apt-get upgrade al Dockerfile, que los arregla todos.">
+
+`apt-get upgrade` instala versiones corregidas que ya existen. Sin `Fixed Version`, no hay ninguna.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Luis borra el repositorio de la tienda en GitHub: «la imagen está en Docker Hub, ahí lo tenemos todo». ¿Tiene razón?"
+  review="Lo que un registro no es"
+>
+
+<QuizOption text="Sí: con docker pull recuperas el proyecto entero.">
+
+La imagen lleva lo que copió la etapa final. Los tests, el `Dockerfile` y la historia de Git se quedaron fuera.
+
+</QuizOption>
+
+<QuizOption text="No: la imagen solo lleva lo que la API necesita para ejecutarse." correct>
+
+Un registro guarda lo construido, no cómo se construye. El código vive en Git, y la imagen sale de él.
+
+</QuizOption>
+
+<QuizOption text="Sí: docker history reconstruye los ficheros del proyecto a partir de las capas.">
+
+`docker history` enseña las instrucciones y el tamaño de cada capa. Y lo que nunca entró en la imagen no está en ninguna capa.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [What is a registry?](https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-a-registry/), de la documentación de Docker, en inglés.
+- [Working with the Container registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry), de GitHub, en inglés: `ghcr.io` y sus tokens.
+- [Image index](https://github.com/opencontainers/image-spec/blob/main/image-index.md), de la especificación de imágenes de OCI, en inglés: el índice de una imagen para varios procesadores.
+- [Ecosistemas de Dependabot](https://docs.github.com/en/code-security/dependabot/ecosystems-supported-by-dependabot/supported-ecosystems-and-repositories), en inglés: `docker` y `docker-compose`, entre otros.
+- [Trivy](https://trivy.dev/), en inglés: cómo analizar imágenes.

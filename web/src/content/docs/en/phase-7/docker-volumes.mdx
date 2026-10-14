@@ -1,0 +1,566 @@
+---
+translationKey: volumes
+title: "Docker volumes vs bind mounts: data that lasts"
+description: "What Docker volumes and bind mounts are: PostgreSQL 18 in a container without losing data, code that reloads itself, and backups with pg_dump."
+sidebar:
+  label: Volumes
+  order: 5
+lesson:
+  oneLiner: "A volume is a folder Docker keeps outside the containers and mounts inside them: what's written there survives when you delete the container. A bind mount puts a folder from your computer into the container. Volumes are for data, like PostgreSQL's; bind mounts, for your code while you develop."
+  objectives:
+    - Create, list, inspect and delete volumes, and mount them with -v.
+    - Run PostgreSQL 18 in a container with its volume, and check that the data survives docker rm.
+    - Develop with a bind mount, with node --watch seeing your changes, and know what happens to node_modules.
+    - Back up the database with pg_dump through docker exec, and explain why not by copying the volume.
+  prerequisites: [small-images]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+Picture Ana starting PostgreSQL in a <Term id="container">container</Term>, like the nginx from [lesson 1](/en/phase-7/docker-image-vs-container/). She loads the products, creates her account and tries the shop for a week. One day she wants to change the port: she deletes the container with `docker rm -f` and creates it again with the new port.
+
+PostgreSQL starts empty, and the API fails with `relation "products" does not exist`: the table doesn't exist.
+
+It's what you saw with nginx's home page: **what a container writes goes away with it**. A database needs to keep its files somewhere that doesn't depend on the container.
+
+## The analogy
+
+<Analogy>
+
+Think of a furnished rental apartment. When you leave, the owner puts it back the way it was for the next tenant: your things disappear.
+
+So you don't lose your things, you rent a **storage unit** on the side. You move to another apartment and the storage unit is still there, with your key.
+
+There's another way: a door in the apartment that opens onto **a room in your own house**. What you leave there, you see from both sides.
+
+The apartment is the container; the storage unit, a volume; and the door to your house, a bind mount.
+
+<div slot="limits">
+
+- On a Mac or on Windows, a volume lives inside Docker's virtual machine, not among your usual folders.
+- Two apartments can share a storage unit. Two PostgreSQL servers writing the same files at the same time ruin the database.
+- The storage unit isn't a copy: if you empty it (`docker volume rm`), you lose everything.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### Two ways to keep things outside the container
+
+A container writes to its own layer, on top of the image's ([lesson 1](/en/phase-7/docker-image-vs-container/#stopping-starting-and-deleting)). `docker stop` keeps it; `docker rm` deletes it.
+
+For something to survive, Docker mounts a folder from outside at a path in the container. There are two kinds:
+
+| | <Term id="volume">Volume</Term> | <Term id="bind-mount">Bind mount</Term> |
+|---|---|---|
+| What it is | A folder Docker creates and keeps | A folder of yours, whichever you choose |
+| How you write it | `-v data:/var/lib/postgresql` | `-v "$PWD":/app` |
+| Where it lives | Inside Docker (on a Mac and Windows, in its virtual machine) | On your disk, where it already was |
+| What for | Data: a database, uploaded files | Your code while you develop |
+
+Docker tells them apart by what comes before the colon: **a name is a volume; a path**, which starts with `/` or `.`, **is a folder of yours**. After the colon always comes the path inside the container.
+
+### A volume: a folder Docker manages
+
+Volumes have their own family of commands, `docker volume`:
+
+| Command | What it does |
+|---|---|
+| `docker volume create data` | Creates an empty volume called `data` |
+| `docker volume ls` | Lists the volumes |
+| `docker volume inspect data` | Shows its details, among them where Docker keeps the files |
+| `docker volume rm data` | Deletes it, **with everything in it**. It refuses if any container, even a stopped one, uses it |
+
+You don't need to create it first: if `-v data:/path` names a volume that doesn't exist, `docker run` creates it. And deleting the container doesn't delete the volume: if you don't need it, you delete it yourself.
+
+### A bind mount: a folder from your computer
+
+With `-v "$PWD":/app`, the folder you're in shows up at `/app` inside the container. `$PWD` is the variable with your current folder, the one `pwd` writes; the quotes protect it if its name has spaces.
+
+Nothing gets copied: **both see the same files**. What you save in your editor, the container reads right away, and what the container writes shows up on your disk. If `/app` already had something in the image, the bind mount covers it for as long as it lasts.
+
+That's what it's for: developing in a container with Node 26, with `node --watch` restarting the server every time you save.
+
+**On a Mac, a bind mount is slower:** every read crosses from macOS to Docker's virtual machine. On our Mac, reading the more than 7,000 files in the shop's `node_modules` took 2.1 seconds from a bind mount and 0.1 from a volume. On Linux there's nothing to cross, and neither is there on WSL with the project in your Linux folder (`~`).
+
+### Where PostgreSQL 18 keeps its data
+
+Each <Term id="image">image</Term> decides where its program writes, and the volume has to go right there. In the `postgres:18` image, **the volume goes at `/var/lib/postgresql`**. Inside, PostgreSQL creates its folder with the version number, `18/docker`. The [image's documentation](https://hub.docker.com/_/postgres) says so, and it changed in 18: up to 17 it went at `/var/lib/postgresql/data`, the path you'll see in almost every tutorial.
+
+The image knows that folder is for data: it declares a volume there. If you start PostgreSQL without `-v`, Docker creates an **anonymous volume**, with a name of 64 random letters and numbers, like the ones you may see in your `docker volume ls`. A new container doesn't reuse it: it creates another one, empty. That's what happened to Ana.
+
+The variables `POSTGRES_USER`, `POSTGRES_PASSWORD` and `POSTGRES_DB` **are only used when the volume is empty**: they create the user and its database, which stay saved in it.
+
+### Port 5432 may be taken
+
+Your PostgreSQL from [Phase 5](/en/phase-5/#before-you-start-install-postgresql-18) listens on <Term id="port">port</Term> 5432 of your computer. If you publish the container on the same one, Docker can't use it. You have two ways out:
+
+- **Stop yours:** on a Mac, `brew services stop postgresql@18`; on Ubuntu and WSL, `sudo pg_ctlcluster 18 main stop`. You start it again with `start`. That way you can publish on `127.0.0.1:5432`.
+- **<Term id="port-publishing">Publish</Term> on another port:** `-p 127.0.0.1:5433:5432`. Outside, 5433; inside, PostgreSQL stays on its 5432. Both live side by side, and it's what this lesson does.
+
+### Backups with pg_dump
+
+A volume isn't a backup: it's the only place your data is. The backup is made with **`pg_dump`**, the PostgreSQL program that writes a whole database as SQL commands, like the ones in [`shop.sql`](/en/phase-5/#before-you-start-the-shops-data). The image includes it, and you run it inside with `docker exec`.
+
+And copying the volume's folder? **Not with PostgreSQL running.** Its files change while you copy them: you'd take some from before a change and others from after it, a copy that might not start. `pg_dump` reads everything from a single <Term id="transaction">transaction</Term>, a consistent snapshot, while the shop keeps serving. Copying the files is only safe with the container stopped.
+
+## Try it
+
+The goal: PostgreSQL in a container, with the shop's data, which survives deleting the container; then, your code in a container that sees your changes; and a backup of the database.
+
+You work in `~/backend-course/phase-3/shop-api`, with the project from [lesson 4](/en/phase-7/docker-multi-stage-build/). The outputs are from Docker Engine 29 on a Mac, inside a virtual machine running Linux, like Docker Desktop's. We captured them with other ports and names, swapped for the lesson's: nothing else changes. Your IDs, dates and times will be different.
+
+<TryIt
+  title="1. Create the volume"
+  cmd={`docker volume create data\ndocker volume ls`}
+  output={`data
+DRIVER    VOLUME NAME
+local     data`}
+>
+
+`create` answers with the name. `DRIVER local`: the files go to the disk of the machine where Docker runs. We've removed our other volumes; yours would show up too.
+
+</TryIt>
+
+<TryIt
+  title="2. See where Docker keeps it"
+  cmd="docker volume inspect data"
+  output={`[
+    {
+        "CreatedAt": "2026-10-14T07:46:39+02:00",
+        "Driver": "local",
+        "Labels": null,
+        "Mountpoint": "/var/lib/docker/volumes/data/_data",
+        "Name": "data",
+        "Options": null,
+        "Scope": "local"
+    }
+]`}
+>
+
+**`Mountpoint`** is the real folder. On Linux it's on your disk, and only `root` can read it. On a Mac and on Windows, inside Docker's virtual machine.
+
+</TryIt>
+
+Now, PostgreSQL. Choose a password for the `shop` user and put it where it says `YOUR-PASSWORD`: `openssl rand -hex 24` gives you one that fits in a URL ([lesson 7](/en/phase-7/docker-compose/#the-variables-come-from-your-env) tells you why). Keep it for [lesson 6](/en/phase-7/docker-networking/).
+
+<TryIt
+  title="3. PostgreSQL 18 with its volume"
+  cmd={`docker run -d --name db \\\n  -v data:/var/lib/postgresql \\\n  -e POSTGRES_USER=shop -e POSTGRES_PASSWORD=YOUR-PASSWORD -e POSTGRES_DB=shop \\\n  -p 127.0.0.1:5433:5432 \\\n  postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336`}
+  output="1bf81649d836e0ec2f13ddf1c94eba4c0dcbe2e0e315f5ac0e93fd8c85f20b76"
+>
+
+Word by word:
+
+- **`--name db`**: the container's name, the same one [lesson 6](/en/phase-7/docker-networking/) will use. The `\` at the end of a line continues the command on the next one.
+- **`-v data:/var/lib/postgresql`**: mounts the `data` volume where PostgreSQL 18 keeps its files.
+- **`-e POSTGRES_USER=shop`**, **`POSTGRES_PASSWORD`** and **`POSTGRES_DB=shop`**: the user, its password and its database, which are created this first time.
+- **`-p 127.0.0.1:5433:5432`**: the container's 5432, on your computer's 5433 and [only for you](/en/phase-7/docker-networking/#with-no-ip-in-front-the-port-opens-to-your-whole-network).
+- **`postgres:18@sha256:…`**: the image pinned by its <Term id="image-digest">digest</Term>, like the `FROM` in [lesson 3](/en/phase-7/dockerfile/#from-the-starting-image-pinned-by-its-fingerprint): the same PostgreSQL 18.6 as ours. [Lesson 8](/en/phase-7/docker-registry/#pinning-by-digest-and-letting-a-robot-update-it) tells you why the course pins images this way.
+
+If you get `address already in use`, port 5433 is taken: see “Common mistakes.”
+
+</TryIt>
+
+<TryIt
+  title="4. What it did the first time"
+  cmd="docker logs db"
+  output={`The files belonging to this database system will be owned by user "postgres".
+…
+fixing permissions on existing directory /var/lib/postgresql/18/docker ... ok
+…
+CREATE DATABASE
+…
+PostgreSQL init process complete; ready for start up.
+…
+2026-10-14 05:46:45.997 UTC [1] LOG:  database system is ready to accept connections`}
+>
+
+We've trimmed the output (`…`). Look at `/var/lib/postgresql/18/docker`, the version's folder inside the volume, and at the last line: it's already accepting connections. If it isn't there yet, wait a few seconds.
+
+</TryIt>
+
+The database is empty. Fill it with your project's <Term id="migration">migrations</Term> and data, as in [Phase 5](/en/phase-5/database-migrations/), with Node on your computer. Only the address changes, `DATABASE_URL`, which points to 5433 with your new password. So you don't touch your `.env`, put it in an [environment variable](/en/phase-1/environment-variables/) of your terminal for the time being:
+
+<TryIt
+  title="5. The shop's tables and data"
+  cmd={`export DATABASE_URL=postgres://shop:YOUR-PASSWORD@localhost:5433/shop\nnpm run db:migrate && npm run db:seed\nunset DATABASE_URL`}
+  output={`> shop-api@1.0.0 db:migrate
+> node --env-file-if-exists=.env scripts/migrate.ts
+
+Applied: 001-shop.sql
+Applied: 002-stock.sql
+Applied: 003-orders-index.sql
+Applied: 004-categories-index.sql
+Applied: 005-users.sql
+Applied: 006-sessions.sql
+Applied: 007-api-keys.sql
+Applied: 008-provider.sql
+Applied: 009-roles.sql
+Applied: 010-notifications.sql
+
+> shop-api@1.0.0 db:seed
+> node --env-file-if-exists=.env scripts/seed.ts
+
+Practice accounts ready (their passwords are in the README)
+Sample data loaded`}
+>
+
+`export` leaves the variable in your terminal for both commands, and `unset` removes it at the end. `node --env-file-if-exists` doesn't overwrite a variable that already exists: yours wins, not the one in `.env`.
+
+If you get `password authentication failed`, check the password; if you get `ECONNREFUSED`, the port.
+
+</TryIt>
+
+<TryIt
+  title="6. A product that only exists here"
+  cmd={`docker exec db psql -U shop -c "INSERT INTO products (name, price_cents, stock) VALUES ('Sticker', 300, 100);"`}
+  output="INSERT 0 1"
+>
+
+`docker exec db psql` runs `psql` inside the container: you don't need yours. `-U shop` logs in as that user, with no password, because the image trusts connections from inside. Without `-d`, it opens the database with the same name as the user.
+
+</TryIt>
+
+<TryIt
+  title="7. Delete the container and create another"
+  cmd={`docker rm -f db\ndocker run -d --name db \\\n  -v data:/var/lib/postgresql \\\n  -e POSTGRES_USER=shop -e POSTGRES_PASSWORD=YOUR-PASSWORD -e POSTGRES_DB=shop \\\n  -p 127.0.0.1:5433:5432 \\\n  postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336\ndocker logs db`}
+  output={`db
+ac5d38e959c38bcf80138a30d13a8f969cb79576c4bb2ae480276eb79eecb639
+
+PostgreSQL Database directory appears to contain a database; Skipping initialization
+…
+2026-10-14 05:47:00.747 UTC [32] LOG:  database system was not properly shut down; automatic recovery in progress
+…
+2026-10-14 05:47:00.780 UTC [1] LOG:  database system is ready to accept connections`}
+>
+
+A new container, with another ID, on the same volume. Two lines matter:
+
+- **`Skipping initialization`**: the volume already has a database, so the image creates nothing and doesn't read the `POSTGRES_…` variables.
+- **`not properly shut down; automatic recovery`**: `docker rm -f` killed PostgreSQL without letting it finish, and when it started it went over its journal, the *WAL* from the [transactions lesson](/en/phase-5/acid-transactions/#acid-letter-by-letter). The right way is `docker stop db` and then `docker rm db`.
+
+</TryIt>
+
+<TryIt
+  title="8. Is the sticker still there?"
+  cmd={`docker exec db psql -U shop -c 'SELECT id, name, stock FROM products ORDER BY id;'`}
+  output={` id |  name   | stock 
+----+---------+-------
+  1 | T-shirt |    40
+  2 | Mug     |    60
+  3 | Hoodie  |    25
+  4 | Cap     |    15
+  5 | Sticker |   100
+(5 rows)`}
+>
+
+The four products from `db:seed` and your sticker: **the data was in the volume**, not in the container. If you get `relation "products" does not exist`, the `-v` in step 7 isn't the same as the one in step 3.
+
+</TryIt>
+
+<SelfCheck question="Challenge: with db running, try to delete the volume with docker volume rm data. What happens, and why is it good news?">
+
+```
+Error response from daemon: remove data: volume is in use - [ac5d38e959c38bcf80138a30d13a8f969cb79576c4bb2ae480276eb79eecb639]
+```
+
+Docker refuses while there's a container using it, and tells you which one, by its ID. To delete the data you have to delete the container first: two steps, hard to do by accident.
+
+</SelfCheck>
+
+### Your code, in a bind mount
+
+Now, the API in a `node:26` container that reads your folder. If you still have the `shop` container from [lesson 4](/en/phase-7/docker-multi-stage-build/), delete it (`docker rm -f shop`): it uses the same port.
+
+<TryIt
+  title="9. npm run dev, inside a container"
+  cmd={`docker run --rm -it --name shop-dev -v "$PWD":/app -w /app \\\n  -e HOST=0.0.0.0 -p 127.0.0.1:3000:3000 node:26 npm run dev`}
+  output={`> shop-api@1.0.0 dev
+> node --env-file-if-exists=.env --watch src/server.ts
+
+{"level":30,"time":1791956837427,"pid":26,"hostname":"c67501ea2818","msg":"The shop is listening on http://localhost:3000"}`}
+>
+
+- **`-v "$PWD":/app`**: your project, with your `.env` and your `node_modules`, at `/app`.
+- **`-w /app`** (*workdir*): the folder where the command starts, like `WORKDIR`.
+- **`-e HOST=0.0.0.0`**: the server listens on every address of the container, as in [lesson 3](/en/phase-7/dockerfile/#env-host0000-listening-on-every-address).
+- **`node:26 npm run dev`**: the Node 26 image and the command, which starts `node --watch` ([Phase 3](/en/phase-3/node-http-server/)).
+
+The terminal stays with the server: open another one.
+
+</TryIt>
+
+Open `src/app.ts` in your editor and, in the `/` route, change `"API for Ana and Luis's shop"` to `"Ana and Luis's shop, with a bind mount"`. Save. In the first terminal, `node --watch` clears the screen and restarts:
+
+<TryIt
+  title="10. Your change, inside the container"
+  cmd="curl -s localhost:3000/"
+  output={`{"name":"Ana and Luis's shop, with a bind mount","versions":[{"version":"v2","url":"/v2","status":"current"},{"version":"v1","url":"/v1","status":"deprecated","sunset":"2027-04-13T00:00:00.000Z"}]}`}
+>
+
+In the first terminal you'll have seen:
+
+```
+Change detected in '/app/src/app.ts'
+Restarting 'src/server.ts'
+{"level":30,…,"msg":"SIGTERM: the shop is shutting down"}
+{"level":30,…,"msg":"The shop is listening on http://localhost:3000"}
+```
+
+You edited on your computer and the container saw it, without rebuilding the image. If it doesn't restart, see “Common mistakes.” Undo the change and stop the server with <kbd>Ctrl</kbd> + <kbd>C</kbd>: `--rm` deletes the container.
+
+`/health` will answer `503`: your `.env` says `localhost:5432`, and inside the container `localhost` is the container itself. [Lesson 6](/en/phase-7/docker-networking/#localhost-inside-a-container-is-the-container) explains it and fixes it.
+
+</TryIt>
+
+### And whose node_modules is it?
+
+With the bind mount, the container uses **your** `node_modules`, the one `npm ci` installed on your computer. Almost all the shop's packages are JavaScript, which works on any system: that's why `npm run dev` starts. But the TypeScript 7 compiler is a program compiled for your system, and from a Mac it fails inside:
+
+<TryIt
+  title="11. A package compiled for another system"
+  cmd={`docker run --rm -v "$PWD":/app -w /app node:26 npm run check`}
+  output={`> shop-api@1.0.0 check
+> tsc --noEmit
+
+…
+Error: Unable to resolve @typescript/typescript-linux-arm64. Either your platform is unsupported, or you are missing the package on disk.
+…`}
+>
+
+`npm ci` installed the macOS `tsc` on your Mac, and the container is Linux. On a Mac with Intel, the name ends in `linux-x64`. **On Linux and WSL, it works:** your `node_modules` is already Linux's.
+
+</TryIt>
+
+The way out: give the container its own `node_modules`, in a volume mounted on top of that folder. It covers yours only inside the container:
+
+<TryIt
+  title="12. A node_modules just for the container"
+  cmd={`docker run --rm -v "$PWD":/app -v shop-modules:/app/node_modules -w /app \\\n  node:26 sh -c 'npm ci && npm run check'`}
+  output={`added 74 packages, and audited 75 packages in 3s
+…
+> shop-api@1.0.0 check
+> tsc --noEmit`}
+>
+
+`tsc` writes nothing: the types are fine. `npm ci` installed for Linux in the `shop-modules` volume, and your `node_modules` stays the same. We've removed npm's warnings.
+
+</TryIt>
+
+### A backup of the database
+
+<TryIt
+  title="13. pg_dump, with the shop running"
+  cmd={`docker exec db pg_dump -U shop shop > shop-backup.sql\nls -lh shop-backup.sql\ngrep Sticker shop-backup.sql`}
+  output={`-rw-r--r--@ 1 ana  staff    15K Oct 14 07:47 shop-backup.sql
+5	Sticker	300	100`}
+>
+
+`pg_dump` writes to its <Term id="stdout">output</Term>, and your terminal's `>` saves it in your folder ([Phase 1](/en/phase-1/pipes-and-redirection/)). Inside there's SQL with the tables, their data and your sticker. We've changed our user to `ana`. Don't upload it to Git: it has the shop's accounts.
+
+</TryIt>
+
+To restore it into an empty database: `docker exec -i db psql -U shop -d shop < shop-backup.sql`. With `-i`, the container reads the file through its <Term id="stdin">input</Term>.
+
+To finish, clean up. **The `data` volume stays**, with your data: [lesson 6](/en/phase-7/docker-networking/) uses it.
+
+```sh
+docker stop db && docker rm db
+docker volume rm shop-modules
+```
+
+## You have already seen it
+
+- **Your PostgreSQL from Phase 5.** Homebrew keeps its data in `/opt/homebrew/var/postgresql@18`, apart from the program: you update it without losing your data. A volume does the same for a container.
+- **Phone apps.** When they update, the whole program is replaced, and your data is still there, kept apart.
+- **`npm run dev` from Phase 3.** The same `node --watch`, now inside a container.
+
+## Common mistakes
+
+- **Mounting at `/var/lib/postgresql/data` with PostgreSQL 18.** It's the tutorials' path up to 17. The container stops, and `docker logs` says `Error: in 18+, these Docker images are configured to store database data in a format…` and suggests mounting at `/var/lib/postgresql`.
+- **`-v data:…` versus `-v ./data:…`.** With a name, a volume. With `./`, the `data` folder wherever you are: if it doesn't exist, Docker creates it, and PostgreSQL writes to your disk, slower on a Mac.
+- **The port is taken.** On Linux, Docker says `failed to bind host port 127.0.0.1:5432/tcp: address already in use`; with Docker Desktop, an error that also ends in `address already in use`. Stop your PostgreSQL or use `127.0.0.1:5433`, and delete the container left in `Created` (`docker ps -a`) before trying again.
+- **The container doesn't see your changes.** Docker Desktop and Linux tell the container about every file you save; some alternatives don't: with Colima, start it with `colima start --mount-inotify`. On WSL, the project has to be in your Linux folder (`~`), not in `/mnt/c`.
+- **`docker volume rm`, `docker volume prune -a` or `docker compose down -v` without thinking.** They delete the data, with no trash can. Make a backup with `pg_dump` first.
+
+## Summary
+
+- A container's layer goes away with `docker rm`; what must survive goes in a volume (`docker volume create`, `ls`, `inspect`, `rm`).
+- `-v name:/path` mounts a volume, for data; `-v "$PWD":/path`, a folder of yours, for your code while you develop.
+- PostgreSQL 18 keeps its data at `/var/lib/postgresql`, and a new container on the same volume finds it all.
+- If your native PostgreSQL takes 5432, stop it or publish the container on another port, like `127.0.0.1:5433`.
+- Backups, with `pg_dump` through `docker exec`: a consistent snapshot, without stopping the database.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="PostgreSQL 18.7 comes out and you want to update the shop’s container without losing the orders. What do you do?"
+  review="A volume: a folder Docker manages"
+>
+
+<QuizOption text="Get in with docker exec and update PostgreSQL inside with apt.">
+
+What you change inside stays in the container's layer, and it's lost the next time you recreate it. In Docker, you update by changing the image.
+
+</QuizOption>
+
+<QuizOption text="Delete the container and create another with the new image and the same -v." correct>
+
+With `docker stop` before `rm`. The data is in the volume, and within the same version, 18, its files work as they are.
+
+</QuizOption>
+
+<QuizOption text="Create a new volume, because a volume only works with the image that filled it.">
+
+A volume is a folder with files, and it isn't tied to any image. An empty one would leave you with no orders.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A tutorial says: docker run -v pgdata:/var/lib/postgresql/data postgres:18. What happens?"
+  review="Where PostgreSQL 18 keeps its data"
+>
+
+<QuizOption text="It doesn’t start: in 18, the volume goes at /var/lib/postgresql." correct>
+
+The image checks it when it starts and refuses, with a message that explains the new path. The tutorial's is the one for 17 and earlier.
+
+</QuizOption>
+
+<QuizOption text="It works the same: the path doesn’t matter as long as there’s a volume mounted.">
+
+The path is the only thing that matters: it has to be the folder where PostgreSQL writes. Mounted anywhere else, the volume wouldn't keep anything.
+
+</QuizOption>
+
+<QuizOption text="It starts fine, and PostgreSQL uses the volume for the new data.">
+
+The 18 image doesn't start with a volume at that path: it sees one in the old folder and stops so you don't think your data is there.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="What’s the difference between -v data:/app and -v ./data:/app?"
+  review="Two ways to keep things outside the container"
+>
+
+<QuizOption text="None: the ./ in front of the name is optional.">
+
+The `./` changes everything: it turns the name into a path, and Docker mounts your folder instead of a volume.
+
+</QuizOption>
+
+<QuizOption text="The first one is read-only, and the second one can be written to.">
+
+Both can be written to. The difference is where the files live.
+
+</QuizOption>
+
+<QuizOption text="The first is a volume; the second, your data folder." correct>
+
+A name is a volume, which Docker keeps. A path, with `/` or `./`, is a bind mount of a folder of yours.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="For the nightly backup, Luis suggests packing the volume’s folder with tar while PostgreSQL keeps running. What do you tell him?"
+  review="Backups with pg_dump"
+>
+
+<QuizOption text="That it’s fine: the volume’s files are the database, the most faithful copy.">
+
+While PostgreSQL writes, the files change during the copy. You'd take some from before and others from after, and it might not start.
+
+</QuizOption>
+
+<QuizOption text="To use pg_dump with docker exec: a consistent snapshot without stopping the shop." correct>
+
+`pg_dump` reads everything inside a transaction. If he wants to copy the files, he has to stop the container first.
+
+</QuizOption>
+
+<QuizOption text="That he’d better save the whole container in an image with docker commit.">
+
+`docker commit` saves the container's layer, not the volumes. PostgreSQL's data wouldn't go into the image.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You develop on your Mac with a bind mount. npm run dev works inside, but npm run check fails with Unable to resolve @typescript/typescript-linux-arm64. Why?"
+  review="And whose node_modules is it?"
+>
+
+<QuizOption text="The image’s Node is a different one, and TypeScript 7 doesn’t work with it.">
+
+The image comes with Node 26, the course's, and TypeScript 7 works with it. The error says something else: the `tsc` package for Linux is missing.
+
+</QuizOption>
+
+<QuizOption text="A bind mount is read-only, and tsc needs to write files.">
+
+A bind mount can be written to, and `tsc --noEmit` writes nothing. The error says a package is missing.
+
+</QuizOption>
+
+<QuizOption text="node_modules was installed on the Mac, with the tsc for macOS." correct>
+
+The container is Linux and doesn't find its version. A volume at `/app/node_modules` gives it a `node_modules` of its own, installed for Linux.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Your Homebrew PostgreSQL is running and docker run with -p 127.0.0.1:5432:5432 says address already in use. What do you do?"
+  review="Port 5432 may be taken"
+>
+
+<QuizOption text="Stop the Homebrew one, or publish on 127.0.0.1:5433:5432." correct>
+
+The one that clashes is the outside port, your computer's. Inside, PostgreSQL stays on its container's 5432.
+
+</QuizOption>
+
+<QuizOption text="Change the inside one: -p 127.0.0.1:5432:5433.">
+
+The outside one is still 5432, which is taken. And inside, PostgreSQL listens on 5432, not on 5433.
+
+</QuizOption>
+
+<QuizOption text="Remove 127.0.0.1: so Docker looks for another free address.">
+
+Docker doesn't look for another one: with no address, it publishes on all your computer's addresses and opens the database to your whole network. The port is still 5432.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [Volumes](https://docs.docker.com/engine/storage/volumes/), from Docker's documentation: when to use them, anonymous ones and how to back them up.
+- [Bind mounts](https://docs.docker.com/engine/storage/bind-mounts/): when to use them and what happens when you mount on top of a folder with files.
+- [The official PostgreSQL image](https://hub.docker.com/_/postgres): its variables and the data path since 18.
+- [pg_dump](https://www.postgresql.org/docs/18/app-pgdump.html), from PostgreSQL's documentation: all its options.

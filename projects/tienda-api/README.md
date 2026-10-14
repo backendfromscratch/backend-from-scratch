@@ -1,40 +1,43 @@
 # La API de la tienda de Ana y Luis
 
-El proyecto guiado de [Backend desde cero](https://backenddesdecero.com/): empieza en la Fase 3, «Tu primer servidor», sigue en la Fase 4, «Diseño de APIs», en la Fase 5, «Bases de datos», y en la Fase 6, «Autenticación, autorización y seguridad». Cada carpeta es el proyecto tal y como queda al final de una lección: si te atascas, compara tu código con el de la carpeta de esa lección.
+El proyecto guiado de [Backend desde cero](https://backenddesdecero.com/): empieza en la Fase 3, «Tu primer servidor», sigue en la Fase 4, «Diseño de APIs», en la Fase 5, «Bases de datos», en la Fase 6, «Autenticación, autorización y seguridad», y en la Fase 7, «Docker y contenedores». Cada carpeta es el proyecto tal y como queda al final de una lección: si te atascas, compara tu código con el de la carpeta de esa lección.
 
-| Carpeta             | Lección                          |
-| ------------------- | -------------------------------- |
-| `01-node`           | Qué es Node.js                   |
-| `02-javascript`     | JavaScript desde cero            |
-| `03-typescript`     | TypeScript con Node.js           |
-| `04-servidor-http`  | Un servidor HTTP sin framework   |
-| `05-framework`      | Express, Fastify o Hono          |
-| `06-middleware`     | Middleware                       |
-| `07-validacion`     | Validar los datos de entrada     |
-| `08-errores-y-logs` | Errores y logs                   |
-| `09-event-loop`     | El event loop                    |
-| `10-rest`           | REST                             |
-| `11-errores-api`    | Errores                          |
-| `12-paginacion`     | Paginación                       |
-| `13-versiones`      | Versionado                       |
-| `14-openapi`        | OpenAPI                          |
-| `15-serializacion`  | Serialización                    |
-| `16-webhooks`       | Webhooks                         |
-| `17-tiempo-real`    | Tiempo real                      |
-| `18-modelo`         | Modelado de datos                |
-| `19-postgres`       | Conectar Node.js con PostgreSQL  |
-| `20-migraciones`    | Migraciones                      |
-| `21-indices`        | Índices y EXPLAIN ANALYZE        |
-| `22-transacciones`  | Transacciones                    |
-| `23-orm`            | Qué es un ORM: Drizzle           |
-| `24-contrasenas`    | Contraseñas                      |
-| `25-sesiones`       | Sesiones                         |
-| `26-jwt-claves`     | JWT                              |
-| `27-oauth`          | OAuth                            |
-| `28-roles`          | Autorización                     |
-| `29-inyeccion-xss`  | Inyección                        |
-| `30-csrf-ssrf`      | CSRF y SSRF                      |
-| `31-limites`        | Rate limiting                    |
+| Carpeta             | Lección                         |
+| ------------------- | ------------------------------- |
+| `01-node`           | Qué es Node.js                  |
+| `02-javascript`     | JavaScript desde cero           |
+| `03-typescript`     | TypeScript con Node.js          |
+| `04-servidor-http`  | Un servidor HTTP sin framework  |
+| `05-framework`      | Express, Fastify o Hono         |
+| `06-middleware`     | Middleware                      |
+| `07-validacion`     | Validar los datos de entrada    |
+| `08-errores-y-logs` | Errores y logs                  |
+| `09-event-loop`     | El event loop                   |
+| `10-rest`           | REST                            |
+| `11-errores-api`    | Errores                         |
+| `12-paginacion`     | Paginación                      |
+| `13-versiones`      | Versionado                      |
+| `14-openapi`        | OpenAPI                         |
+| `15-serializacion`  | Serialización                   |
+| `16-webhooks`       | Webhooks                        |
+| `17-tiempo-real`    | Tiempo real                     |
+| `18-modelo`         | Modelado de datos               |
+| `19-postgres`       | Conectar Node.js con PostgreSQL |
+| `20-migraciones`    | Migraciones                     |
+| `21-indices`        | Índices y EXPLAIN ANALYZE       |
+| `22-transacciones`  | Transacciones                   |
+| `23-orm`            | Qué es un ORM: Drizzle          |
+| `24-contrasenas`    | Contraseñas                     |
+| `25-sesiones`       | Sesiones                        |
+| `26-jwt-claves`     | JWT                             |
+| `27-oauth`          | OAuth                           |
+| `28-roles`          | Autorización                    |
+| `29-inyeccion-xss`  | Inyección                       |
+| `30-csrf-ssrf`      | CSRF y SSRF                     |
+| `31-limites`        | Rate limiting                   |
+| `32-dockerfile`     | Dockerfile                      |
+| `33-imagen-pequena` | Multi-stage                     |
+| `34-compose`        | Compose                         |
 
 Necesitas Node.js 24 o posterior; el curso usa el 26 (con nvm, `nvm use` en la carpeta lo elige). En Linux y en WSL, Node 26 necesita además la librería `libatomic1` (`sudo apt install libatomic1`). En cada carpeta:
 
@@ -67,3 +70,28 @@ Desde la carpeta `24-contrasenas`, la tienda tiene cuentas. Estas cuatro son par
 | `pablo@ejemplo.com`   | `pablo-practica-2026`  | cliente                   |
 
 Si vienes de la Fase 5 con tu base de datos, después de `npm run bd:migrar` ejecuta `npm run bd:datos`: añade las cuentas que falten y no repite los productos. En la `28-roles`, vuelve a ejecutarlo después de migrar: pone a cada cuenta su rol.
+
+## Fase 7: con Docker
+
+Desde la carpeta `32-dockerfile`, el proyecto trae un `Dockerfile` para construir la imagen de la API, y desde la `34-compose`, un `compose.yaml` que arranca la tienda entera: la API, PostgreSQL 18 y Redis 8, cada uno en su contenedor. Necesitas Docker: la introducción de la Fase 7 explica cómo instalarlo. Los puertos se publican solo en `127.0.0.1`, así que solo llega a ellos tu ordenador.
+
+**Sin Docker**, todo sigue como en las fases anteriores: Node 26 y PostgreSQL en tu ordenador, `npm run bd:migrar`, `npm run bd:datos` y `npm start`. Sin `REDIS_URL`, los límites de intentos se guardan en la memoria del servidor.
+
+**Con Docker** (desde la `34-compose`), copia `.env.ejemplo` como `.env`, genera sus secretos como dice el fichero y pon en `POSTGRES_PASSWORD` una contraseña nueva (`openssl rand -hex 24`). Después:
+
+```sh
+docker compose up --build                  # construye la imagen y arranca todo: la API, en el 3000 o el 3001
+docker compose up --build --scale api=2    # dos copias de la API (3000 y 3001) que comparten Redis
+docker compose down                        # lo para; con -v, borra también los datos
+docker compose port api 3000               # en qué puerto de tu ordenador ha quedado la API
+```
+
+Antes de arrancar la API, Compose aplica las migraciones y carga los datos de práctica (el servicio `migrar`). Esa base de datos es otra, en un volumen de Docker, no la de tu ordenador, y no choca con ella: no publica ningún puerto. Iniciar sesión con el proveedor de práctica (`npm run proveedor`) no funciona desde los contenedores, porque dentro de un contenedor `localhost` es el propio contenedor; con email y contraseña, sí.
+
+Tamaño de la imagen (`CONTENT SIZE` de `docker image ls`, el 2026-10-14): 145 MB la de la `32-dockerfile`, de una etapa; 92 MB la de la `33-imagen-pequena`, multi-stage sobre `node:26-slim`. Con la misma etapa final sobre `node:26-alpine` serían 74 MB, y sobre distroless (`gcr.io/distroless/nodejs26-debian13`), 66 MB.
+
+Los tests del almacén de Redis (`test/almacen-redis.test.ts`, desde la `34-compose`) necesitan un Redis. Sin él se saltan, y el resto pasa. Para probarlos, arranca uno y quita el `#` de `REDIS_URL_TESTS` en `test/.env`:
+
+```sh
+docker run --rm -d --name redis-tests -p 127.0.0.1:6379:6379 redis:8
+```

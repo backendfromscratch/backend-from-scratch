@@ -88,7 +88,8 @@ export const phases: Phase[] = [
   },
   {
     number: 7,
-    status: 'coming-soon',
+    status: 'available',
+    lessonCount: 8,
     title: { es: 'Docker y contenedores', en: 'Docker and containers' },
     summary: {
       es: 'El fin del «en mi máquina funciona»: imágenes, contenedores, Dockerfile, volúmenes, redes y Docker Compose.',

@@ -1,0 +1,643 @@
+---
+translationKey: registry
+title: "Docker registry: image tags vs digests"
+description: "What a Docker registry like Docker Hub or ghcr.io is, image tags vs sha256 digests, and how to push an image, pin it by its digest and scan it."
+sidebar:
+  label: Registries
+  order: 8
+lesson:
+  oneLiner: "A registry is the store images are downloaded from and where you upload yours, like Docker Hub or ghcr.io. A tag, like latest, can point to another image tomorrow; a digest (sha256) always names the same content. That's why images are pinned by their digest."
+  objectives:
+    - Read an image's full name, piece by piece, from the registry to the digest.
+    - Explain why a tag like latest can change and a digest can't.
+    - Publish an image to a registry with docker tag and docker push, and download it by its digest.
+    - Look for known vulnerabilities in an image with Trivy and read its report.
+  prerequisites: [compose]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+On March 19, 2026, attackers with stolen credentials moved 76 of the 77 version tags of `trivy-action`, a GitHub action for finding vulnerabilities in images. Anyone using it with a version number got, under the usual name, code made to steal the CI's secrets ([Aqua Security](https://www.aquasec.com/blog/trivy-supply-chain-attack-what-you-need-to-know)). They also published infected versions of Trivy, among them images on Docker Hub.
+
+Those who had pinned the action by its commit SHA weren't affected by the moved tags: that name can't be moved.
+
+The same goes for images: `node:26-slim` or `latest` are names that their owner, or whoever steals their password, can point to another image tomorrow. This lesson teaches you to name them so they don't change, and to publish yours.
+
+## The analogy
+
+<Analogy>
+
+You call a clinic and ask for an appointment with “the doctor on call on Monday.” Whoever is on call that day sees you: this week, Dr. Ruiz; next week, maybe someone else. The words don't change; the person does.
+
+If you ask for an appointment with Dr. Ruiz by her medical license number, she sees you, whatever the day.
+
+The clinic is the registry; “the doctor on call,” the tag; the license number, the digest.
+
+<div slot="limits">
+
+- Someone assigns the license number. The digest is calculated from the content: no other image can have it, and Docker checks it when downloading.
+- In a registry, anyone with write permission moves a tag, including whoever steals your token.
+- A digest's image never changes, not even to get fixes: to have them, you change digests.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### A registry is an image store that speaks HTTP
+
+A <Term id="registry">registry</Term> stores images so they can be downloaded with `docker pull` and uploaded with `docker push`. The ones you'll see most:
+
+- **Docker Hub** (`docker.io`): the one Docker uses if you don't name another. The official images, like `node` or `postgres`, live in its `library` folder.
+- **GitHub Container Registry** (`ghcr.io`): GitHub's, next to your code.
+- **Each cloud's** (Amazon, Google, Azure) and others, like GitLab's. The `gcr.io` of the distroless image in [lesson 4](/en/phase-7/docker-multi-stage-build/) is Google's.
+
+They all speak the same language: an HTTP API with routes that start with `/v2/`. You'll see it with `curl` in “Try it.”
+
+### An image's name, piece by piece
+
+A full name, with all its pieces:
+
+```text
+ghcr.io/ana/shop-api:1.0.0@sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e
+```
+
+| Piece | Here | What it is | If you don't write it |
+|---|---|---|---|
+| Registry | `ghcr.io` | Where it's stored | `docker.io`, Docker Hub |
+| User or organization | `ana` | Whose it is | `library`, the official ones (on Docker Hub) |
+| Name | `shop-api` | Which image it is | It's required |
+| Tag | `:1.0.0` | Which version, according to its owner | `latest` |
+| Digest | `@sha256:d4ec…` | Exactly which content | Docker uses the tag |
+
+That's why `nginx:1.31`, in [lesson 1](/en/phase-7/docker-image-vs-container/), was `docker.io/library/nginx:1.31`. Docker knows the first piece is a registry because it has a dot (`ghcr.io`), a port (`localhost:5000`) or is `localhost`.
+
+### The tag moves; the digest doesn't
+
+A <Term id="tag">tag</Term> is a name the image's owner puts on and takes off whenever they want. In Node, `26.1.0-slim` is an exact version; `26-slim`, the latest of Node 26.
+
+But **`latest` is a tag like any other**: it points to the last thing someone uploaded with that name, which isn't necessarily the newest. And it's the one an image without a tag gets: your `shop-api` is `shop-api:latest`.
+
+`26-slim` moves with each new Node 26 and with each Debian fix. What doesn't move is the <Term id="image-digest">digest</Term>, the SHA-256 <Term id="hash">hash</Term> (the fingerprint) from [lesson 2](/en/phase-7/docker-layers/). Ask Docker for the one of your `node:26-slim`:
+
+<TryIt
+  title="The digest of an image you already have"
+  cmd="docker image inspect --format '{{index .RepoDigests 0}}' node:26-slim"
+  output="node@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0"
+>
+
+`RepoDigests` is the list of digests the registry knows the image by, and `index … 0` takes the first one. If you downloaded `node:26-slim` later than we did, your digest will be different: the tag will have moved.
+
+</TryIt>
+
+**Same content, same digest.** When downloading by digest, Docker calculates the digest of what it receives and compares them: if someone changes one byte in the registry, the download fails.
+
+### One digest for each processor
+
+Your laptop may have an ARM processor (a Mac with an Apple chip) and your server an Intel one. How does the same digest work for both?
+
+<TryIt
+  title="What's behind a tag"
+  cmd="docker buildx imagetools inspect node:26-slim | grep -E '^(Name|Digest)|Platform'"
+  output={`Name:      docker.io/library/node:26-slim
+Digest:    sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0
+  Platform:    linux/amd64
+  Platform:    unknown/unknown
+  Platform:    linux/arm64/v8
+  Platform:    unknown/unknown
+  Platform:    linux/ppc64le
+  Platform:    unknown/unknown
+  Platform:    linux/s390x
+  Platform:    unknown/unknown`}
+>
+
+`docker buildx imagetools inspect` reads the image in the registry, without downloading it; the `grep` keeps the lines that matter.
+
+The `193f…` digest is an **index**'s: a list with one image per processor (`amd64` for Intel and AMD, `arm64` for ARM…), each with its own digest. Each `unknown/unknown` is a note that goes with the image above it: what code it was built from and how.
+
+</TryIt>
+
+With the index's digest, each machine downloads the image for its processor. It's the one in the `FROM` lines of your Dockerfile.
+
+### Publishing to Docker Hub or ghcr.io
+
+Uploading an image takes two commands:
+
+```sh
+docker tag shop-api ghcr.io/ana/shop-api:1.0.0
+docker push ghcr.io/ana/shop-api:1.0.0
+```
+
+- **`docker tag`** gives the image another name, with the registry in front, without copying it. It's lesson 4's `docker image tag`.
+- **`docker push`** uploads the layers the registry is missing, and the registry answers with the digest.
+
+First, the registry has to know who you are, with `docker login`. Use a **token**, not your password: it's created on the registry's website with just the permissions it needs, and it can be deleted without touching anything else. It's the <Term id="least-privilege">least privilege</Term> from Phase 6.
+
+- **Docker Hub:** in your account, *Personal access tokens*. For a server that only downloads, a read-only one.
+- **ghcr.io:** a GitHub token with the `write:packages` permission. In GitHub Actions, each run brings its own, the `GITHUB_TOKEN` (Phase 8).
+
+```sh
+docker login ghcr.io -u ana --password-stdin < token.txt
+```
+
+**`--password-stdin`** reads the token from standard input: written in the command, it would stay in your terminal's history. Afterwards, delete the file.
+
+A token is a <Term id="secret">secret</Term>: out of Git, and rotated if it leaks ([lesson 8 of Phase 6](/en/phase-6/rate-limiting-secrets/#generating-a-secret-and-rotating-it)). Docker Desktop keeps it in the system keychain; Docker Engine on Linux, by default, unencrypted in `~/.docker/config.json`, and it warns you with a `WARNING!`.
+
+And check **who will see it**: on Docker Hub, a new repository is public; on ghcr.io, private.
+
+### Pinning by digest, and letting a robot update it
+
+Pinning an image is writing its digest after the tag: `node:26-slim@sha256:193f…`. Docker downloads the digest's image, and the tag stays as a note for whoever reads it. This course does it everywhere:
+
+- **Your Dockerfile:** the `FROM` lines carry `node:26-slim@sha256:193f…` ([lesson 3](/en/phase-7/dockerfile/)).
+- **Your `compose.yaml`:** `postgres:18@sha256:7493…` and `redis:8@sha256:2c2d…` ([lesson 7](/en/phase-7/docker-compose/)).
+- **This course's CI:** it tests the guided projects with PostgreSQL and Redis pinned by the same digests, and pins each GitHub action by its commit SHA, the defense that worked against the Trivy attack.
+
+It's the `save-exact` from [Phase 3](/en/phase-3/what-is-node-js/#the-npmrc-three-lines-against-the-2025-attacks): **the version changes when you decide**. The price: fixes don't arrive on their own either.
+
+That's why pinning goes with a robot that proposes the new digests:
+
+- **Dependabot**, from GitHub, checks the `FROM` lines of your Dockerfiles (`package-ecosystem: docker` in its configuration) and the images in your `compose.yaml` (`docker-compose`). When the tag moves, it opens a *pull request* with the new digest. The course's repository uses it for npm and the GitHub actions.
+- **Renovate** does the same, also with the images in GitHub Actions files.
+
+Your CI tests the new digest, and you decide whether to accept it.
+
+### Finding known vulnerabilities in an image
+
+`npm audit`, in the [Phase 6 OWASP lesson](/en/phase-6/owasp-top-10/#npm-audit-packages-with-known-vulnerabilities), looked at your npm packages. An image also carries a whole Debian and npm itself. Two tools compare all of it with the public databases of known vulnerabilities (the CVEs):
+
+- **Docker Scout**, which comes with Docker Desktop: `docker scout cves shop-api`.
+- **Trivy**, from Aqua Security, free: you'll use it in “Try it,” from its image.
+
+Yes, Trivy is the tool from the attack at the beginning. That's why you'll use it pinned by its digest.
+
+### What a registry isn't
+
+**A registry isn't a backup of your code.** Your image carries what the final stage copied (`src/`, `db/`, two scripts and `node_modules`), without tests, without the `Dockerfile` and without the Git history. The code lives in Git, and the image is built again from it. Nor is it a place for secrets: whatever goes into an image can be read by whoever downloads it.
+
+## Try it
+
+The goal: publish your shop to a registry of your own, move a tag and prove that the digest still gives the previous version. Then, look for known vulnerabilities in your image. You need the `shop-api` image from lesson 7.
+
+Your registry will be a `registry:3` container, the official image of Distribution, a free registry: no account, and without your image leaving your computer.
+
+The outputs are from Docker Engine 29 on a Mac, inside a virtual machine with Linux. We captured them with port 15002 and other names, swapped for the lesson's; nothing else changes. Your IDs, digests, sizes and dates will be different.
+
+<TryIt
+  title="1. Start your registry"
+  cmd="docker run -d --name registry -p 127.0.0.1:5000:5000 -v registry-data:/var/lib/registry registry:3"
+  output={`Unable to find image 'registry:3' locally
+3: Pulling from library/registry
+…
+Digest: sha256:ddf754342cfc8acc51a56d5d0ab6af06826461864460636d8bd5c546dab2a7b8
+Status: Downloaded newer image for registry:3
+02b4667d2a9b3181f411217a75002fbdff031a69a3d9a5c74722d2bb813a011d`}
+>
+
+The registry listens on 5000, only for your computer (`127.0.0.1`, [lesson 6](/en/phase-7/docker-networking/)), and keeps the images in the `registry-data` volume ([lesson 5](/en/phase-7/docker-volumes/)). We've removed the layer lines. If you get `address already in use` on a Mac, see “Common mistakes.”
+
+</TryIt>
+
+<TryIt
+  title="2. Ask it what it stores"
+  cmd="curl -s localhost:5000/v2/_catalog"
+  output={`{"repositories":[]}`}
+>
+
+A `GET` to the registry's API: it doesn't store any image.
+
+</TryIt>
+
+<TryIt
+  title="3. Two names for your image"
+  cmd={`docker tag shop-api localhost:5000/shop-api:1.0.0\ndocker tag shop-api localhost:5000/shop-api:latest\ndocker image ls localhost:5000/shop-api`}
+  output={`IMAGE                            ID             DISK USAGE   CONTENT SIZE   EXTRA
+localhost:5000/shop-api:1.0.0    d4ec32335b6a        452MB         93.1MB        
+localhost:5000/shop-api:latest   d4ec32335b6a        452MB         93.1MB        `}
+>
+
+`localhost:5000` in front says which registry it will go to. The same `ID`: one image with two tags.
+
+</TryIt>
+
+<TryIt
+  title="4. Upload it"
+  cmd="docker push --all-tags localhost:5000/shop-api"
+  output={`The push refers to repository [localhost:5000/shop-api]
+1d85c9c8dd4d: Pushed
+35a80f60bd99: Pushed
+20faae0343cb: Pushed
+3248466fa920: Pushed
+8e8c102ab7e1: Pushed
+0960870f6312: Pushed
+7f0751f2d2a7: Pushed
+a8fbfb8b16c7: Pushed
+f0dc10284ec2: Pushed
+bbeda6b4abb7: Pushed
+251dfd226801: Pushed
+1.0.0: digest: sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e size: 856
+3248466fa920: Layer already exists
+bbeda6b4abb7: Layer already exists
+8e8c102ab7e1: Layer already exists
+a8fbfb8b16c7: Layer already exists
+f0dc10284ec2: Already exists
+251dfd226801: Layer already exists
+35a80f60bd99: Layer already exists
+7f0751f2d2a7: Layer already exists
+1d85c9c8dd4d: Layer already exists
+0960870f6312: Layer already exists
+20faae0343cb: Layer already exists
+latest: digest: sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e size: 856`}
+>
+
+`--all-tags` uploads all the tags of that name. Each code is a piece, almost all of them layers (lesson 2):
+
+- **`1.0.0`** uploads them (`Pushed`), and the registry answers with the digest, `d4ec…`. `size: 856` is the index's size in bytes.
+- **`latest`** uploads nothing (`already exists`): the registry keeps each layer once. Its digest is the same.
+
+</TryIt>
+
+<TryIt
+  title="5. What the registry knows"
+  cmd={`curl -s localhost:5000/v2/shop-api/tags/list\ncurl -sI localhost:5000/v2/shop-api/manifests/1.0.0`}
+  output={`{"name":"shop-api","tags":["1.0.0","latest"]}
+HTTP/1.1 200 OK
+Content-Length: 856
+Content-Type: application/vnd.oci.image.index.v1+json
+Docker-Content-Digest: sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e
+Docker-Distribution-Api-Version: registry/2.0
+Etag: "sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e"
+Date: Wed, 14 Oct 2026 05:31:25 GMT`}
+>
+
+The two tags, and the headers of `1.0.0`: an index (`image.index`), like the one of `node:26-slim`. `Docker-Content-Digest` is the digest, and so is the `Etag`.
+
+</TryIt>
+
+### Move the latest tag
+
+Imagine you fix something. So as not to touch the API, add a comment at the end of `src/server.ts`, in your project's folder, and rebuild:
+
+```sh
+echo '// version 1.0.1' >> src/server.ts
+docker build -t shop-api .
+```
+
+Thanks to the cache (lesson 2), it takes a few seconds. Now upload the new image as `latest`:
+
+<TryIt
+  title="6. latest points to another image"
+  cmd={`docker tag shop-api localhost:5000/shop-api:latest\ndocker push localhost:5000/shop-api:latest`}
+  output={`The push refers to repository [localhost:5000/shop-api]
+bbeda6b4abb7: Layer already exists
+0960870f6312: Layer already exists
+251dfd226801: Layer already exists
+20faae0343cb: Layer already exists
+18afed9cdf45: Pushed
+7f0751f2d2a7: Layer already exists
+3248466fa920: Layer already exists
+e8cbb2e94d90: Pushed
+54d418fa4959: Pushed
+35a80f60bd99: Layer already exists
+2bc42ff70a9f: Pushed
+latest: digest: sha256:7c1a90566939c95de53428e1ee3afd742b9e9dda8fed988caee631b76264d0e4 size: 856`}
+>
+
+Four pieces go up: the layers of `src/`, `db/` and `scripts/`, which come out of the `check` stage and change with it, and the note on how it was built. Debian, Node and `node_modules` were already there.
+
+**`latest` has another digest, `7c1a…`**: the registry doesn't protect tags. Some, like Amazon's, can be configured to prevent it.
+
+</TryIt>
+
+Now you're Luis, on another computer: delete your local names and download version 1.0.0 by its digest.
+
+<TryIt
+  title="7. Download by the digest"
+  cmd={`docker image rm localhost:5000/shop-api:1.0.0 localhost:5000/shop-api:latest\ndocker pull localhost:5000/shop-api@sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e`}
+  output={`Untagged: localhost:5000/shop-api:1.0.0
+Deleted: sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e
+Untagged: localhost:5000/shop-api:latest
+localhost:5000/shop-api@sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e: Pulling from shop-api
+1d85c9c8dd4d: Already exists
+8e8c102ab7e1: Already exists
+a8fbfb8b16c7: Already exists
+f0dc10284ec2: Download complete
+Digest: sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e
+Status: Downloaded newer image for localhost:5000/shop-api@sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e
+localhost:5000/shop-api@sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e`}
+>
+
+Without its last name, the `d4ec…` image is deleted (`Deleted`); the new one stays, as `shop-api`. When downloading by the digest almost nothing comes down (`Already exists`), because Docker still has its pieces; on Luis's computer they would all come down.
+
+</TryIt>
+
+<TryIt
+  title="8. Which version is each one?"
+  cmd={`docker run --rm localhost:5000/shop-api@sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e tail -1 src/server.ts\ndocker run --rm localhost:5000/shop-api:latest tail -1 src/server.ts`}
+  output={`// #endregion shut-down
+Unable to find image 'localhost:5000/shop-api:latest' locally
+latest: Pulling from shop-api
+Digest: sha256:7c1a90566939c95de53428e1ee3afd742b9e9dda8fed988caee631b76264d0e4
+Status: Downloaded newer image for localhost:5000/shop-api:latest
+// version 1.0.1`}
+>
+
+`tail -1` shows the last line of a file. By the digest, the previous version; by `latest`, the new one. Whoever writes the digest gets the same image, always.
+
+</TryIt>
+
+Delete the comment from `src/server.ts`, which was only for testing, and rebuild with `docker build -t shop-api .`: `shop-api` is your API without changes again.
+
+<SelfCheck question="Challenge: someone uploads another image with the 1.0.0 tag. What does a compose.yaml with image: localhost:5000/shop-api:1.0.0 download? And one with image: localhost:5000/shop-api:1.0.0@sha256:d4ec…?">
+
+The first one, on a machine that downloads it now, the new image: `1.0.0` has moved, like `latest` in step 6. A version number doesn't make a tag fixed.
+
+The second one, the usual one: with the digest, Docker ignores the tag. If that digest were no longer in the registry, the download would fail; it would never give it another image.
+
+</SelfCheck>
+
+### Find known vulnerabilities with Trivy
+
+You don't install Trivy: you start it from its image, pinned by its digest, and give it access to your Docker so it can read yours.
+
+<TryIt
+  title="9. Scan your image"
+  cmd={`docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa image --scanners vuln localhost:5000/shop-api:latest`}
+  output={`…
+2026-10-14T05:32:30Z  INFO  Detected OS  family="debian" version="13.7"
+2026-10-14T05:32:30Z  INFO  [debian] Detecting vulnerabilities...  os_version="13" pkg_num=80
+…
+
+Report Summary
+
+┌──────────────────────────────────────────────────────────────────────────────────┬──────────┬─────────────────┐
+│                                      Target                                      │   Type   │ Vulnerabilities │
+├──────────────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ localhost:5000/shop-api:latest (debian 13.7)                                     │  debian  │       164       │
+├──────────────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+│ app/node_modules/@hono/node-server/package.json                                  │ node-pkg │        0        │
+├──────────────────────────────────────────────────────────────────────────────────┼──────────┼─────────────────┤
+…
+│ usr/local/lib/node_modules/npm/node_modules/undici/package.json                  │ node-pkg │        3        │
+…
+
+localhost:5000/shop-api:latest (debian 13.7)
+============================================
+Total: 164 (UNKNOWN: 1, LOW: 60, MEDIUM: 60, HIGH: 43, CRITICAL: 0)
+…
+
+Node.js (node-pkg)
+==================
+Total: 12 (UNKNOWN: 0, LOW: 1, MEDIUM: 7, HIGH: 4, CRITICAL: 0)
+…`}
+>
+
+Word by word:
+
+- **`-v /var/run/docker.sock:/var/run/docker.sock`** gives Trivy the *socket* through which the `docker` command talks to the engine. **Whoever has it is in charge of your Docker**, almost like `root`: only give it to images you trust, pinned by their digest.
+- **`-v trivy-cache:/root/.cache`** keeps its vulnerability database in a volume: it downloads about 130 MB and takes up 1.5 GB.
+- **`image --scanners vuln`** looks for known vulnerabilities in an image. Without `--scanners`, it also looks for secrets left behind in its files.
+
+The first time it takes half a minute. We've removed (`…`) the download, the table of each vulnerability and about 200 rows of the summary.
+
+</TryIt>
+
+The report, read calmly:
+
+- **Your shop's packages** (`app/node_modules`): no known vulnerabilities, as `npm audit --omit=dev` said in Phase 6.
+- **Debian:** 164 vulnerabilities, 43 serious (`HIGH`) and none critical. None of them has a fix today: in its table, `Status` says `affected` (Debian hasn't fixed it yet) or `fix_deferred` (it leaves it for later). And 36 of the 43 serious ones are 4 `util-linux` vulnerabilities counted across its 9 packages: tools for mounting disks or logging in, which your API doesn't use.
+- **npm:** 12 vulnerabilities, 4 serious, in the npm that comes with `node:26-slim`. Your server starts with `node`, but npm is in the image.
+
+Your numbers will be different: the database changes every few hours. To see only the serious ones that have a fix:
+
+<TryIt
+  title="10. Only the serious ones with a fix"
+  cmd={`docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v trivy-cache:/root/.cache aquasec/trivy:0.75.0@sha256:af6acf9a6b85dfe389a1941505c0ce9efef52a4719635e1a962f022a3d855daa image --scanners vuln --severity HIGH,CRITICAL --ignore-unfixed localhost:5000/shop-api:latest`}
+  output={`…
+│ localhost:5000/shop-api:latest (debian 13.7)                                     │  debian  │        0        │
+…
+Node.js (node-pkg)
+==================
+Total: 3 (HIGH: 3, CRITICAL: 0)
+…`}
+>
+
+Three are left, in the base image's npm (`brace-expansion` and `undici`), and their `Fixed Version` column says which versions fix them.
+
+</TryIt>
+
+So what? Today, nothing you can change yourself: the fix will come with a new `node:26-slim`, and Dependabot will propose its digest to you. What matters isn't the number, but whether a vulnerability has a fix and reaches what your server runs.
+
+To finish, clean up. The `shop-api` image stays:
+
+<TryIt
+  title="11. Clean up"
+  cmd={`docker rm -f registry\ndocker volume rm registry-data trivy-cache\ndocker image rm localhost:5000/shop-api:latest localhost:5000/shop-api@sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e`}
+  output={`registry
+registry-data
+trivy-cache
+Untagged: localhost:5000/shop-api:latest
+Deleted: sha256:7c1a90566939c95de53428e1ee3afd742b9e9dda8fed988caee631b76264d0e4
+Untagged: localhost:5000/shop-api@sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e
+Deleted: sha256:d4ec32335b6a2a0c72672ab1e51da505dfa861968bd624f33ef51d2b1420780e`}
+>
+
+The two test images are deleted (`Deleted`) when they lose their last name. If you're not going to use them again, also delete `registry:3` and the Trivy image.
+
+</TryIt>
+
+## You have already seen it
+
+- **Git.** In [Phase 1](/en/phase-1/git-internals/), a commit is named by its hash, and a Git tag points to one. The Trivy attack moved Git tags: with write permission, they move too.
+- **The lockfile.** `package-lock.json` records the hash of each package. Pinning an image is the same, for the whole system.
+- **The `ETag` from [Phase 2](/en/phase-2/http-caching/).** The registry uses the digest as its `Etag`: naming a content by its fingerprint.
+
+## Common mistakes
+
+- **`latest` on a server.** Each new server, or each `docker compose pull`, downloads the last thing someone uploaded: two servers with the same file can run different images. In production, an exact version and its digest.
+- **Pinning and forgetting.** A year-old digest is an image with a year of unfixed vulnerabilities. Let a robot propose the new ones.
+- **Pushing without the registry in the name.** `docker push shop-api` tries to upload to `docker.io/library/shop-api`, which isn't yours, and Docker Hub rejects it (`denied`). Name it with `docker tag`.
+- **Logging in with your password.** Use a token with just the permissions it needs, and never in Git or in an `ENV` in the Dockerfile.
+- **Port 5000 on a Mac.** The macOS AirPlay receiver uses it. If you get `address already in use`, or `curl` answers `403 Forbidden` with `AirTunes` in the `Server` header, use another port outside: `-p 127.0.0.1:5001:5000` and `localhost:5001/…`.
+
+## Summary
+
+- A registry stores images and speaks HTTP: Docker Hub (`docker.io`), ghcr.io and others. `docker push` uploads; `docker pull` downloads.
+- The full name is `registry/user/name:tag@sha256:…`; without a registry, it's Docker Hub, and without a user, `library`.
+- A tag, whether `latest` or `1.0.0`, is moved by whoever can write to the registry. A digest names an exact content, and Docker checks it.
+- Pin your images by their digest, and let Dependabot or Renovate propose the new ones.
+- Trivy or Docker Scout look for known vulnerabilities in the whole image: look first at the ones that have a fix and reach what you run.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="Your compose.yaml says image: ana/shop-api:latest. You deploy it on a new server and the API doesn’t start; on the old one, with the same file, it does. What’s most likely?"
+  review="The tag moves; the digest doesn't"
+>
+
+<QuizOption text="Someone uploaded another image as latest, and the new one got it." correct>
+
+`latest` points to the last thing uploaded with that name. The old server still has the one it downloaded a while ago; the new one downloaded another. With the digest, they'd have the same one.
+
+</QuizOption>
+
+<QuizOption text="The image’s digest expired, and the new server downloaded another one.">
+
+A digest doesn't expire: it names a content, and while it's in the registry, it downloads the same.
+
+</QuizOption>
+
+<QuizOption text="Docker Hub refreshes latest images every week with the newest version.">
+
+Docker Hub doesn't touch your tags: `latest` changes when someone uploads another image with that name.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You type docker pull redis:8. Where does Docker download it from?"
+  review="An image's name, piece by piece"
+>
+
+<QuizOption text="From the last registry you logged in to with docker login.">
+
+Logging in only identifies you to a registry. Which one Docker goes to is said by the image's name.
+
+</QuizOption>
+
+<QuizOption text="From ghcr.io, because Redis’s code is on GitHub.">
+
+Where the code is doesn't decide where the image is. Without a registry in the name, Docker goes to Docker Hub.
+
+</QuizOption>
+
+<QuizOption text="From Docker Hub: it’s docker.io/library/redis:8." correct>
+
+Without a registry, Docker uses `docker.io`; without a user, `library`, the folder of the official images.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Ana builds with FROM node:26-slim@sha256:193fe51b… on her Mac with an Apple chip, and the CI on an Intel server. Does it work on both?"
+  review="One digest for each processor"
+>
+
+<QuizOption text="No: that digest is the one of the ARM image Ana’s Mac downloaded.">
+
+`193f…` is the index's digest, the list with one image per processor, not the digest of one of them.
+
+</QuizOption>
+
+<QuizOption text="Yes: it’s an index’s, and each machine takes the one for its processor." correct>
+
+Pinning the index pins each of its images. The Mac downloads the `arm64` one; the server, the `amd64` one.
+
+</QuizOption>
+
+<QuizOption text="Yes: if the digest isn’t for its processor, Docker ignores it and uses the tag.">
+
+Docker never swaps a digest for a tag. If it didn't find an image for its processor, it would fail.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Your CI has to publish the shop’s image to ghcr.io. What do you give it for docker login?"
+  review="Publishing to Docker Hub or ghcr.io"
+>
+
+<QuizOption text="Your GitHub password, in an environment variable of the CI.">
+
+Your password opens your whole account. A token has only the permission it needs.
+
+</QuizOption>
+
+<QuizOption text="A token with write:packages in an ENV in the Dockerfile, so docker push can read it.">
+
+`docker push` doesn't read the Dockerfile, and an `ENV` stays inside the image, in plain sight of whoever downloads it.
+
+</QuizOption>
+
+<QuizOption text="A token with only the write:packages permission, stored as a CI secret." correct>
+
+Least privilege: it publishes packages and nothing else. If it leaks, you delete it and create another one.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Trivy finds 43 serious vulnerabilities in your image’s Debian packages, all affected and with no Fixed Version. What do you do?"
+  review="Find known vulnerabilities with Trivy"
+>
+
+<QuizOption text="Check whether they touch what your API runs, and wait for a new base." correct>
+
+Without a fixed version, there's nothing to install today. The fix will come with a new base image, and Dependabot will propose its digest to you.
+
+</QuizOption>
+
+<QuizOption text="Remove the digest from the FROM, to always get the latest node:26-slim.">
+
+The latest one doesn't bring a fix that doesn't exist either, and you no longer know which image is running.
+
+</QuizOption>
+
+<QuizOption text="Add RUN apt-get upgrade to the Dockerfile, which fixes them all.">
+
+`apt-get upgrade` installs fixed versions that already exist. Without a `Fixed Version`, there aren't any.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Luis deletes the shop’s repository on GitHub: “the image is on Docker Hub, we have everything there.” Is he right?"
+  review="What a registry isn't"
+>
+
+<QuizOption text="Yes: with docker pull you get the whole project back.">
+
+The image carries what the final stage copied. The tests, the `Dockerfile` and the Git history were left out.
+
+</QuizOption>
+
+<QuizOption text="No: the image only carries what the API needs to run." correct>
+
+A registry stores what was built, not how it's built. The code lives in Git, and the image comes out of it.
+
+</QuizOption>
+
+<QuizOption text="Yes: docker history rebuilds the project’s files from the layers.">
+
+`docker history` shows the instructions and the size of each layer. And whatever never went into the image isn't in any layer.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [What is a registry?](https://docs.docker.com/get-started/docker-concepts/the-basics/what-is-a-registry/), from Docker's documentation.
+- [Working with the Container registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry), from GitHub: `ghcr.io` and its tokens.
+- [Image index](https://github.com/opencontainers/image-spec/blob/main/image-index.md), from the OCI image specification: the index of an image for several processors.
+- [Dependabot ecosystems](https://docs.github.com/en/code-security/dependabot/ecosystems-supported-by-dependabot/supported-ecosystems-and-repositories): `docker` and `docker-compose`, among others.
+- [Trivy](https://trivy.dev/): how to scan images.

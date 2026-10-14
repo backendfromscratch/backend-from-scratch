@@ -1,0 +1,546 @@
+---
+translationKey: dockerfile
+title: "Dockerfile from scratch: the API in a container"
+description: "Write the Dockerfile of a Node API instruction by instruction, keep your secrets out with .dockerignore, build the image and run it."
+sidebar:
+  label: Dockerfile
+  order: 3
+lesson:
+  oneLiner: "A Dockerfile is the recipe of an image: which image you start from, what you copy, what you run when you build it and which program it starts. With eight instructions, the shop's API fits in an image that starts the same way on any computer with Docker, without installing Node or its dependencies."
+  objectives:
+    - Read and write a Dockerfile for a Node API, instruction by instruction.
+    - Keep your secrets and your computer's dependencies out of the image with .dockerignore.
+    - Build the image and start it with its configuration, connected to the PostgreSQL on your computer.
+    - Explain why CMD goes in exec form and how a server that is PID 1 shuts down properly.
+  prerequisites: [layers]
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+Luis wants to try the shop's API on his laptop. All he has is Docker: no Node 26, no dependencies. In [lesson 1](/en/phase-7/docker-image-vs-container/) you started nginx with one command because someone had made its <Term id="image">image</Term>. There's no image of your API: you have to make it yourself.
+
+For that you write a <Term id="dockerfile">Dockerfile</Term>: a text file with the steps you did by hand in Phase 3, one per line. `docker build` reads it and produces the image. From then on, Luis, a server or you yourself a year from now all start exactly the same API.
+
+## The analogy
+
+<Analogy>
+
+Imagine Ana leaves a recipe for a cook who has never seen her kitchen. It has to be exact: “start from this kitchen, already equipped; work on this counter; take these ingredients from the basket; cook them like this; when the restaurant opens, serve this dish.”
+
+The cook only uses what's in the basket. That's why Ana chooses what goes into it, and her wallet, with her house keys, stays out.
+
+<div slot="limits">
+
+- The cook cooks every time someone orders. Docker runs the recipe once, when it builds the image; each container starts the dish already made.
+- “This kitchen” may change if the owner remodels it. In a Dockerfile, the starting image can be pinned by its fingerprint, and then it never changes.
+- The cook remembers what they did last time: that's the cache from lesson 2.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### The shop's Dockerfile
+
+This is the whole file, `Dockerfile`, with no extension, in the project folder:
+
+<ProjectCode file="shop-api/32-dockerfile/Dockerfile" />
+
+The lines with `#` are comments. Each instruction starts with a word in capitals, and Docker runs them from top to bottom. It's the same recipe as in the lab of [lesson 2](/en/phase-7/docker-layers/). Now, piece by piece.
+
+### FROM: the starting image, pinned by its fingerprint
+
+**`FROM`** says which image you start from: everything else is built on top of its layers. `node:26-slim` is Node 26 on a minimal Debian, the one you looked at with `docker history`. [Lesson 4](/en/phase-7/docker-multi-stage-build/) compares it with smaller ones.
+
+After it comes `@sha256:193f…`, its fingerprint (*digest*). The `26-slim` tag moves to another image with each new version of Node or Debian; the fingerprint always names exactly the same one. It's the idea behind the `save-exact` in your [`.npmrc`](/en/phase-3/what-is-node-js/#the-npmrc-three-lines-against-the-2025-attacks): **the version changes when you decide**, not when someone publishes. Lesson 8 tells you how to update it.
+
+### WORKDIR: the working folder
+
+**`WORKDIR /app`** creates the folder `/app` inside the image and goes into it, like a `mkdir` and a `cd`. The following instructions work there, and the container will start in it.
+
+### COPY and RUN: the dependencies first
+
+**`COPY source destination`** copies files from your folder into the image. Here it copies three to `./`, that is, to `/app`:
+
+- **`package.json` and `package-lock.json`**: what `npm ci` needs. They go on their own, before the code, because of the cache: changing `src/` won't repeat the install (lesson 2).
+- **`.npmrc`**: the project's rules for npm. Without it, `npm ci` inside the image would run each package's install scripts, exactly what your `.npmrc` turns off with `ignore-scripts`, and as `root`, the user `RUN` runs as.
+
+**`RUN npm ci`** runs a command **when the image is built**, not when it starts. `npm ci` installs exactly what the *lockfile* says, inside a Linux: the dependencies are Linux ones, even if you build on a Mac. It's the biggest layer: 161 MB.
+
+### COPY . . and the .dockerignore: what goes into the image
+
+**`COPY . .`** copies the rest of the project to `/app`. The first dot is the folder you gave `docker build`, the **context**: Docker packs it up and sends it to the engine. What isn't in the context, `COPY` can't find.
+
+A **`.dockerignore`** file, next to the Dockerfile, says what stays out, like `.gitignore` for Git:
+
+<ProjectCode file="shop-api/32-dockerfile/.dockerignore" />
+
+Line by line:
+
+- **`node_modules`**: your dependencies, maybe installed for macOS. The image has its own, from `npm ci`; copying yours on top would overwrite them.
+- **`.env`**: your <Term id="secret">secrets</Term>. An image gets shared, and whoever has it can read all its files. It's the rule from [Phase 1](/en/phase-1/environment-variables/#keeping-secrets-out-of-the-code) and from [lesson 8 of Phase 6](/en/phase-6/rate-limiting-secrets/): a secret that travels in an image is as leaked as one that made it into Git.
+- **`.git`, `*.log`, `Dockerfile` and `.dockerignore`**: the Git history, the logs and Docker's own files. The API doesn't use them.
+
+The tests, `test/`, do go in: in lesson 4, the type check done during the build checks them too.
+
+### ENV HOST=0.0.0.0: listening on every address
+
+**`ENV`** leaves an <Term id="environment-variable">environment variable</Term> in the image's record: all its containers start with it. From this step on, `src/config.ts` reads `HOST`, the address the server listens on, and `src/server.ts` uses it:
+
+<ProjectCode file="shop-api/32-dockerfile/src/server.ts" region="server" />
+
+Without `HOST`, the server listens on `127.0.0.1`, as it has since [Phase 3](/en/phase-3/node-http-server/): only your computer reaches it. Inside a container, **`127.0.0.1` is the container itself**. What arrives through the published port comes in through the container's network, not through its `127.0.0.1`, so nobody would reach it. `0.0.0.0` means “all my addresses.”
+
+Does that break the rule from Phase 3? No: who reaches the container is decided by the published port. With `-p 127.0.0.1:3000:3000`, only your computer. [Lesson 6](/en/phase-7/docker-networking/) goes into it in depth.
+
+`ENV` is for default values, never for secrets: `docker history` shows every `ENV` to whoever has the image.
+
+### EXPOSE: it only documents
+
+**`EXPOSE 3000`** notes in the record that the program listens on 3000. It doesn't open or publish anything: `docker run -p` does that. It's there for whoever reads the Dockerfile, and for some tools.
+
+### CMD in exec form: node is PID 1
+
+**`CMD`** says which program each container starts. It goes in **exec form**, a list in square brackets: `["node", "src/server.ts"]`. Docker starts `node` directly, and `node` is <Term id="pid">PID</Term> 1.
+
+There's another form, the **shell form**: `CMD node src/server.ts`, without brackets. Docker turns it into `sh -c "node src/server.ts"`. Then PID 1 is `sh`, and `node` is its child. `docker stop` sends `SIGTERM` to PID 1, `sh` doesn't pass it on to `node`, and ten seconds later `SIGKILL` arrives. You'll check it in the challenge in “Try it.”
+
+The Node image first starts a script of its own, `docker-entrypoint.sh`, which replaces itself with your `CMD` without leaving a trace: `node` is still number 1.
+
+### Shutting down properly: PID 1 and signals
+
+As you saw in [lesson 1](/en/phase-7/docker-image-vs-container/#docker-stop-first-a-signal-then-sigkill), Linux doesn't end PID 1 with a <Term id="signal">signal</Term> it hasn't prepared for. That's why `server.ts` prepares for two:
+
+<ProjectCode file="shop-api/32-dockerfile/src/server.ts" region="shut-down" />
+
+- **`for (const signal of ['SIGTERM', 'SIGINT'])`**: the same for `SIGTERM`, the one from `docker stop`, and `SIGINT`, the one from <kbd>Ctrl</kbd> + <kbd>C</kbd> ([Phase 1](/en/phase-1/linux-processes-and-signals/)).
+- **`process.once(signal, …)`**: the function runs the first time that signal arrives.
+- **`server.close(…)`**: stops accepting connections and waits for the requests halfway through to finish. Then `pool.end()` closes the connections to PostgreSQL and `process.exit(0)` ends with code 0, “all good.”
+- **`setTimeout(…, 5000).unref()`**: if a connection never ends, like an open <Term id="websocket">WebSocket</Term>, it exits anyway after 5 seconds. `unref()` stops that timer, on its own, from keeping the program alive.
+
+Without this, `docker stop` takes ten seconds and cuts off whatever was halfway done. With it, less than two tenths of a second.
+
+### The database is outside the container
+
+Your `.env` says `DATABASE_URL=postgres://shop:shop@localhost:5432/shop`. Inside the container, `localhost` is the container, and there's no PostgreSQL there: the API would answer `500` and its log would say `connect ECONNREFUSED 127.0.0.1:5432`.
+
+How to reach the PostgreSQL on your computer depends on your Docker:
+
+- **Docker Desktop** gives containers a name for the computer they run on: **`host.docker.internal`**. All you need is to change `localhost` to that name.
+- **On Linux, with Docker Engine,** that name doesn't exist, and even if you added it, your PostgreSQL only accepts connections from `localhost`. Opening it to Docker's network means touching its configuration. **`--network host`** is easier: the container has no network of its own, it uses your Linux's, and its `localhost` is yours. Since the server ends up on your network, `HOST` goes back to `127.0.0.1`.
+
+In lessons [5](/en/phase-7/docker-volumes/) and [6](/en/phase-7/docker-networking/), PostgreSQL moves into a container and the API finds it by its name, the same on every system.
+
+## Try it
+
+The goal: put the shop in an image, call it with `curl` and find out how long it takes to stop with and without its `SIGTERM`.
+
+The outputs are from Docker Engine 29 on a Mac, inside a virtual machine with Linux, like Docker Desktop's. We captured them with another port and other names, which we've changed to the lesson's: nothing else changes. Your IDs, fingerprints, sizes and times will be different.
+
+### Update your project
+
+You start from your project from lesson 8 of Phase 6. Download this lesson's step and copy the two Docker files, the two files in `src/` that change and their test:
+
+```sh
+cd ~/backend-course/phase-3
+curl -O https://backenddesdecero.com/practicas/shop-api/32-dockerfile.tar.gz
+tar -xzf 32-dockerfile.tar.gz
+cd shop-api
+cp ../32-dockerfile/Dockerfile ../32-dockerfile/.dockerignore .
+cp ../32-dockerfile/src/config.ts ../32-dockerfile/src/server.ts src/
+cp ../32-dockerfile/test/docker.test.ts test/
+```
+
+If your `npm start` is running, stop it with <kbd>Ctrl</kbd> + <kbd>C</kbd>: the container will need port 3000. PostgreSQL, on the other hand, has to be running.
+
+<TryIt
+  title="1. Build the image"
+  cmd="docker build -t shop-api ."
+  output={`[+] Building 8.2s (10/10) FINISHED                                docker:colima
+ => [internal] load build definition from Dockerfile                       0.0s
+ => => transferring dockerfile: 1.29kB                                     0.0s
+ => [internal] load metadata for docker.io/library/node:26-slim@sha256:19  0.0s
+ => [internal] load .dockerignore                                          0.0s
+ => => transferring context: 551B                                          0.0s
+ => [1/5] FROM docker.io/library/node:26-slim@sha256:193fe51b64e77981119c  0.0s
+ => => resolve docker.io/library/node:26-slim@sha256:193fe51b64e77981119c  0.0s
+ => [internal] load build context                                          0.0s
+ => => transferring context: 512.14kB                                      0.0s
+ => CACHED [2/5] WORKDIR /app                                              0.0s
+ => [3/5] COPY package.json package-lock.json .npmrc ./                    0.1s
+ => [4/5] RUN npm ci                                                       3.9s
+ => [5/5] COPY . .                                                         0.1s
+ => exporting to image                                                     4.0s
+ => => exporting layers                                                    3.1s
+…
+ => => naming to docker.io/library/shop-api:latest                         0.0s
+ => => unpacking to docker.io/library/shop-api:latest                      0.9s`}
+>
+
+Word by word: **`docker build`** builds an image; **`-t shop-api`** gives it a name, with the tag `latest`; and **`.`** is the context, the current folder.
+
+While it builds, the lines rewrite themselves; when it finishes, this summary is left:
+
+- **`load build context`**: what your folder sends, 512 kB. Without `.dockerignore`, with `node_modules`, it would be hundreds of MB.
+- **`[1/5]` to `[5/5]`**: your five steps with a layer, with their seconds. `npm ci` is the slow one; the first time, with the downloads, it will take longer.
+- **`docker:colima`**, at the top right, is the Docker that built it: we captured with Colima, another program that starts the engine in a virtual machine. You'll see `docker:desktop-linux` or `docker:default`. Our `WORKDIR` came out `CACHED` because of an earlier image with the same beginning.
+
+If it ends with `open Dockerfile: no such file or directory`, you're not in the project folder, or you didn't copy the Dockerfile.
+
+</TryIt>
+
+<TryIt
+  title="2. What’s inside?"
+  cmd={`docker image ls shop-api\ndocker run --rm shop-api ls -a`}
+  output={`IMAGE             ID             DISK USAGE   CONTENT SIZE   EXTRA
+shop-api:latest   c6f29c6cd282        596MB          145MB
+.
+..
+.env.example
+.gitignore
+.npmrc
+.nvmrc
+db
+drizzle
+drizzle.config.ts
+examples
+node_modules
+package-lock.json
+package.json
+scripts
+src
+test
+tsconfig.json`}
+>
+
+The image downloads 145 MB compressed and takes up 596 MB on your disk, as you saw in lesson 2. `ls -a` replaces `node` and lists `/app`: `.env.example` is there, but **your `.env` isn't**. The `node_modules` is the one from `npm ci`.
+
+</TryIt>
+
+Now start it. The configuration arrives at startup, from your `.env`:
+
+<Tabs>
+
+<TabItem label="Mac and Windows">
+
+<TryIt
+  title="3. Start the shop"
+  cmd={`docker run -d --name shop -p 127.0.0.1:3000:3000 --env-file .env \\\n  -e DATABASE_URL=postgres://shop:shop@host.docker.internal:5432/shop shop-api\ndocker logs shop`}
+  output={`6038c412f0a8563f0a9e0b7e38517e8892a95bf347d1a65284cb3ba04ece3e03
+{"level":30,"time":1791955166208,"pid":1,"hostname":"6038c412f0a8","msg":"The shop is listening on http://localhost:3000"}`}
+>
+
+- **`--env-file .env`**: creates a variable inside for each line of your `.env`.
+- **`-e DATABASE_URL=…`**: changes only that one. If a variable is in both, `-e` wins.
+- **`-p 127.0.0.1:3000:3000`**, **`-d`** and **`--name`**, as in lesson 1. The `\` at the end continues the command on the next line.
+
+In the log, look at **`"pid":1`**: your server is the first process. `hostname` is the container's ID.
+
+On Windows, your PostgreSQL lives in WSL, and a container can't always reach it. If step 4 returns a `500`, see “Common mistakes.”
+
+</TryIt>
+
+</TabItem>
+
+<TabItem label="Linux">
+
+<TryIt
+  title="3. Start the shop"
+  cmd={`docker run -d --name shop --network host -e HOST=127.0.0.1 --env-file .env shop-api\ndocker logs shop`}
+  output={`ba26e4dfdcd576636394e127233f63faa5fd6255423515fd7788f6ee678d2bcb
+{"level":30,"time":1791955246526,"pid":1,"hostname":"laptop","msg":"The shop is listening on http://localhost:3000"}`}
+>
+
+- **`--network host`**: the container uses your Linux's network. No `-p`: port 3000 is already yours.
+- **`-e HOST=127.0.0.1`**: the server goes back to listening only on your computer.
+- **`--env-file .env`**: creates a variable inside for each line of your `.env`, including `DATABASE_URL` with its `localhost`, which here is yours.
+
+In the log, look at **`"pid":1`**: your server is the first process. With `--network host`, `hostname` is your computer's name; we've put `laptop`.
+
+</TryIt>
+
+</TabItem>
+
+</Tabs>
+
+<TryIt
+  title="4. Ask it for the products"
+  cmd="curl -s 127.0.0.1:3000/v2/products"
+  output={`[{"id":1,"name":"T-shirt","priceCents":2000,"stock":40,"categories":["Clothing"]},{"id":2,"name":"Mug","priceCents":850,"stock":60,"categories":["Home","Gifts"]},{"id":3,"name":"Hoodie","priceCents":3500,"stock":25,"categories":["Clothing"]},{"id":4,"name":"Cap","priceCents":1500,"stock":15,"categories":["Clothing","Gifts"]}]`}
+>
+
+The products in your PostgreSQL, served by an API running in a container, without your Node. Your data may be different if you changed it.
+
+</TryIt>
+
+<TryIt
+  title="5. Stop it"
+  cmd={`time docker stop shop\ndocker logs shop | tail -1`}
+  output={`shop
+docker stop shop  0.01s user 0.01s system 12% cpu 0.153 total
+{"level":30,"time":1791955170256,"pid":1,"hostname":"6038c412f0a8","msg":"SIGTERM: the shop is shutting down"}`}
+>
+
+**0.153 seconds**: `SIGTERM` reached `node` and the `shut-down` region closed everything. The last line of the log says so. In bash, `time` writes `real 0m0.153s`.
+
+</TryIt>
+
+Delete it with `docker rm shop`: the image stays.
+
+### Change one line and rebuild
+
+Now, an experiment. In `src/server.ts`, remove `'SIGTERM', ` from the list, so that only `'SIGINT'` is left:
+
+```ts
+for (const signal of ['SIGINT'] as const) {
+```
+
+Rebuild, with `--progress=plain` to read each step as in lesson 2:
+
+<TryIt
+  title="6. Which layers run again?"
+  cmd="docker build --progress=plain -t shop-api ."
+  output={`…
+#6 [2/5] WORKDIR /app
+#6 CACHED
+
+#7 [3/5] COPY package.json package-lock.json .npmrc ./
+#7 CACHED
+
+#8 [4/5] RUN npm ci
+#8 CACHED
+
+#9 [5/5] COPY . .
+#9 DONE 0.0s
+…`}
+>
+
+Only `COPY . .` runs: its files changed. `npm ci` comes out of the cache, because `package.json`, the *lockfile* and `.npmrc` are the same. It's Luis's order from lesson 2.
+
+</TryIt>
+
+Start the shop again with the command from step 3 and, when the log says it's listening, stop it:
+
+<TryIt
+  title="7. Without SIGTERM"
+  cmd={`time docker stop shop\ndocker ps -a --filter name=shop`}
+  output={`shop
+docker stop shop  0.01s user 0.01s system 0% cpu 10.131 total
+CONTAINER ID   IMAGE      COMMAND                  CREATED          STATUS                                PORTS     NAMES
+59b9edb87f5d   shop-api   "docker-entrypoint.s…"   20 seconds ago   Exited (137) Less than a second ago             shop`}
+>
+
+**More than ten seconds**, and `Exited (137)`: 128 plus 9, `SIGKILL`. Nobody was listening for `SIGTERM`, PID 1 ignored it, and Docker waited and killed it. `--filter name=shop` keeps only the containers with that name.
+
+</TryIt>
+
+Put `'SIGTERM', ` back, rebuild and delete the container with `docker rm shop`.
+
+<SelfCheck question="Challenge: start the image as if CMD were in shell form, with docker run -d --name test --env-file .env shop-api sh -c 'node src/server.ts'. How long does docker stop test take, and which pid does its log say?">
+
+About 10 seconds (`10.072 total` in our test), and the log's `pid` is no longer 1 (your number may be different):
+
+```text
+{"level":30,…,"pid":8,…,"msg":"The shop is listening on http://localhost:3000"}
+```
+
+PID 1 is `sh`, which receives `SIGTERM` and doesn't pass it on to `node`, even though `node` does know how to shut down. The log doesn't say `SIGTERM: the shop is shutting down`: `node` died from `SIGKILL`. Delete it with `docker rm test`.
+
+</SelfCheck>
+
+## You have already seen it
+
+- **`npm ci` and `npm start`.** They're the steps from Phase 3: `RUN npm ci` is your install, and `CMD` is what your `npm start` does, without npm in between.
+- **`.gitignore`.** `.dockerignore` is its partner: both leave out `node_modules` and `.env`.
+- **The `pid` in your logs.** pino has written it on every line since [Phase 3](/en/phase-3/node-errors-and-logging/). On your computer it's a big number; in the container, 1.
+
+## Common mistakes
+
+- **The server listens on `127.0.0.1` inside.** The log says it's listening, but `curl` answers `curl: (52) Empty reply from server`, or a similar connection error. `ENV HOST=0.0.0.0` is missing.
+- **`localhost` in `DATABASE_URL`.** The API answers `500`, and `docker logs` says `connect ECONNREFUSED 127.0.0.1:5432`: it's looking for PostgreSQL inside the container. On Windows, if it doesn't get through with `host.docker.internal` either, carry on with `curl -s 127.0.0.1:3000/`, which doesn't use the database; lesson 6 solves it.
+- **Secrets in the image.** A `.env` without `.dockerignore`, or an `ENV KEY=…`, travels with the image to whoever receives it.
+- **`CMD` in shell form.** `docker stop` takes ten seconds and ends with `137`.
+- **Changing the code and not rebuilding.** The container runs the image, not your folder: after `docker build`, delete the container and start another one.
+- **`port is already allocated`.** Another program, maybe your `npm start`, is using 3000: stop it.
+
+## Summary
+
+- A Dockerfile is the recipe of an image: `FROM` the base, `WORKDIR` the folder, `COPY` your files, `RUN` commands at build time, `ENV` and `EXPOSE` data for the record, and `CMD` the container's program.
+- The base is pinned by its fingerprint, and `.npmrc` goes with `package.json` so that `npm ci` follows its rules inside.
+- `.dockerignore` leaves out `node_modules` and `.env`: the secrets arrive at startup, with `--env-file` or `-e`.
+- Inside a container, the server listens on `0.0.0.0` and `localhost` is the container; `-p 127.0.0.1:` decides who gets in.
+- `CMD` in exec form makes `node` PID 1, and handling `SIGTERM` lets it stop in tenths of a second, not in ten seconds.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="You build your image and start it with -p 127.0.0.1:3000:3000. The log says it’s listening, but curl answers Empty reply from server. What’s wrong?"
+  review="ENV HOST=0.0.0.0: listening on every address"
+>
+
+<QuizOption text="EXPOSE 3000 is missing: without it, Docker lets nothing through to the port.">
+
+`EXPOSE` only documents; the port is published by `-p`, and you've already set it. The request reaches the container.
+
+</QuizOption>
+
+<QuizOption text="The server only listens on its own 127.0.0.1, inside." correct>
+
+What's published comes in through the container's network, not through its `127.0.0.1`. With `HOST=0.0.0.0` it listens on all its addresses, and `-p 127.0.0.1:` still limits who gets in.
+
+</QuizOption>
+
+<QuizOption text="PostgreSQL isn’t answering, and without a database the server answers nothing.">
+
+Without a database, the API answers anyway: a `500` on the routes that use it. An empty reply says that nobody took the connection.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Luis suggests putting ENV WEBHOOK_SECRET=… in the Dockerfile so he doesn’t have to pass it at startup. What do you tell him?"
+  review="ENV HOST=0.0.0.0: listening on every address"
+>
+
+<QuizOption text="No: anyone with the image can read it in docker history." correct>
+
+`ENV` stays in the image's record, and the image gets shared. Secrets arrive at startup, with `--env-file` or `-e`, and aren't stored in it.
+
+</QuizOption>
+
+<QuizOption text="Yes: ENV only exists while the container is running.">
+
+`ENV` is stored in the image when it's built, and all its containers inherit it. That's why it's fine for default values, like `HOST`.
+
+</QuizOption>
+
+<QuizOption text="Yes, as long as .env is in .dockerignore.">
+
+`.dockerignore` decides which files get in through `COPY`. An `ENV` line in the Dockerfile gets in anyway, with the secret written in it.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Another API has CMD node server.js. docker stop takes ten seconds and the container ends with Exited (137). Why?"
+  review="CMD in exec form: node is PID 1"
+>
+
+<QuizOption text="docker stop always waits ten seconds, in case the program has work pending.">
+
+It waits ten at most. With the exec form and the `shut-down` region, the shop stopped in 0.153 seconds.
+
+</QuizOption>
+
+<QuizOption text="137 is an error in the API: something failed while closing the connections.">
+
+137 is 128 plus 9: the process died from `SIGKILL`, the signal Docker sends when the wait is over.
+
+</QuizOption>
+
+<QuizOption text="In shell form, PID 1 is sh, and the stop signal doesn’t reach node." correct>
+
+Docker starts `sh -c "node server.js"`. `sh` receives `SIGTERM` and doesn't pass it on to `node`; ten seconds later `SIGKILL` arrives. With `CMD ["node", "server.js"]`, `node` is PID 1.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You change a message in src/v2.ts, rebuild the image and run docker start shop. The API still has the old message. What’s going on?"
+  review="Common mistakes"
+>
+
+<QuizOption text="The cache kept the old file: you have to build with --no-cache.">
+
+The cache saw the change: `COPY . .` ran. The new image has your message.
+
+</QuizOption>
+
+<QuizOption text="The container came from the previous image: you have to delete it and start another one." correct>
+
+`docker start` starts the same container, with the image it had when it was created. A new image only reaches new containers: `docker rm shop` and another `docker run`.
+
+</QuizOption>
+
+<QuizOption text="Docker copies src/ at startup: you have to save the file before docker start.">
+
+`COPY` acts at build time, not at startup. The container doesn't see your folder.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Your PostgreSQL is running on your Mac, but the API in the container says connect ECONNREFUSED 127.0.0.1:5432. What’s happening?"
+  review="The database is outside the container"
+>
+
+<QuizOption text="PostgreSQL rejects connections from Docker for security.">
+
+`ECONNREFUSED 127.0.0.1` says that nobody is listening at that address. The API hasn't even reached your PostgreSQL.
+
+</QuizOption>
+
+<QuizOption text="--env-file doesn’t read DATABASE_URL: URLs have to go with -e.">
+
+`--env-file` creates one variable per line, whatever its value. The variable arrived: it points somewhere else.
+
+</QuizOption>
+
+<QuizOption text="localhost, inside the container, is the container itself." correct>
+
+The `DATABASE_URL` in your `.env` says `localhost`, and there's no PostgreSQL there. With Docker Desktop, change it with `-e` to `host.docker.internal`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Next month a new version of node:26-slim comes out. Your Dockerfile says FROM node:26-slim@sha256:193fe51b…. What happens when you rebuild?"
+  review="FROM: the starting image, pinned by its fingerprint"
+>
+
+<QuizOption text="It uses the same image as always, until you change the line." correct>
+
+The fingerprint names a specific content. The `26-slim` tag moves to the new image, but your `FROM` doesn't follow it: you update when you decide.
+
+</QuizOption>
+
+<QuizOption text="It uses the new one: the fingerprint only checks that the download arrived complete.">
+
+With `@sha256:…`, Docker asks for exactly that image, not whichever one the tag points to today. The tag stays as a note for whoever reads it.
+
+</QuizOption>
+
+<QuizOption text="It fails: the fingerprint no longer matches the 26-slim tag.">
+
+Docker uses the fingerprint and doesn't compare it with the tag. The build works the same as on the first day.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [The Dockerfile reference](https://docs.docker.com/reference/dockerfile/), from the Docker documentation: every instruction, with the exec form and the shell form.
+- [Building best practices](https://docs.docker.com/build/building/best-practices/): Docker's recommendations for writing a Dockerfile.
+- [Build context](https://docs.docker.com/build/concepts/context/): what `docker build` sends to the engine and how `.dockerignore` works.
+- [The `docker stop` reference](https://docs.docker.com/reference/cli/docker/container/stop/): the signal, the wait and how to change them.
