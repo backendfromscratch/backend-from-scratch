@@ -1,0 +1,613 @@
+---
+translationKey: authorization
+title: "RBAC roles and permissions: who can do what"
+description: "Authorization in an API: roles and permissions (RBAC), each customer with only their orders (BOLA), when to answer 401, 403 or 404, and least privilege."
+sidebar:
+  label: Authorization
+  order: 5
+lesson:
+  oneLiner: "With RBAC, each account has a role (customer, delivery or admin) and each role, a list of permissions; the code asks about permissions, never about roles. And that's not enough: every route that receives an id also checks whose that data is, so a customer sees their own orders and not someone else's."
+  objectives:
+    - Organize authorization with roles and permissions, and check permissions in the code, not role names.
+    - Check whose each order is, to close the most common flaw in APIs (BOLA).
+    - Choose between 401, 403 and 404 when someone can't do what they ask.
+    - Give each role and each key only the permissions it needs, and explain why a security hole is closed without warning.
+  prerequisites: [oauth]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+At the end of [lesson 4, “OAuth”](/en/phase-6/oauth-openid-connect/), the shop already knows who it's talking to: Marta signs in with her password or with the provider, and Fast Delivery, with its key. But knowing who you are hasn't changed what you can do. The API still hands all the orders to anyone, and creating products still asks for the shared `ADMIN_TOKEN` from the [introduction](/en/phase-6/#the-admin-token-one-key-for-everyone).
+
+Imagine that Carmen, a customer, looks at her order at `/v2/orders/27` and tries 26. If the API answers, Carmen is reading Marta's order. She hasn't broken anything: she has changed a number.
+
+This isn't a textbook case. In 2018, an API of the United States Postal Service let any user with a session look up other users' data: about 60 million accounts ([KrebsOnSecurity](https://krebsonsecurity.com/2018/11/usps-site-exposed-data-on-60-million-users/)). **How does the shop decide what each person can do, and whose each piece of data is?**
+
+## The analogy
+
+<Analogy>
+
+In a company, keys aren't handed out person by person: they're handed out by job. Whoever joins as a courier gets the courier key ring, which opens the warehouse and the loading dock, but not the safe. Whoever joins as an accountant gets a different one. The job is the role; each key on the ring, a permission.
+
+And each employee has a locker. They're all the same and numbered, and your key opens yours, not the one next to it. Being able to open lockers isn't enough: it has to be yours.
+
+<div slot="limits">
+
+- A key ring once handed out is hard to get back. In the shop, the role lives in the database and is looked up on every request: if you change someone's role, their next request already notices.
+- Someone else's locker can be seen, even if it can't be opened. The API goes further: to whoever asks for someone else's order, it answers that it doesn't exist.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### Three roles, and a list of permissions for each one
+
+Start with what each one should be able to do in the shop:
+
+| | Customer (Marta, Carmen) | Delivery (Fast Delivery's key) | Admin (Ana, Luis) |
+|---|---|---|---|
+| Place orders | Yes | No | No |
+| See orders | Their own | All | All |
+| Change or cancel orders | Their own | No | All |
+| Mark an order as shipped | No | Yes | Yes |
+| Create and delete products | No | No | Yes |
+
+Each row is a **permission** and each column, a **role**. Organizing authorization this way is called **<Term id="rbac">RBAC</Term>**, role-based access control. In the code, `src/permissions.ts`:
+
+<ProjectCode file="shop-api/28-roles/src/permissions.ts" region="permissions" />
+
+- **`Role` and `Permission`** are TypeScript types ([lesson 3 of Phase 3](/en/phase-3/typescript-with-node/)): if you write `'order:view-all'`, without the `s`, `npm run check` fails.
+- **The names, `resource:action`**, are a common habit: they read on their own.
+- **`PERMISSIONS`** is the table above: each role, with its list.
+
+Admin doesn't have `orders:create`: in this shop, an order always belongs to a customer, and Ana doesn't shop with her admin account.
+
+### The code asks about permissions, not roles
+
+The tempting thing is to write `if (role !== 'admin')` in every route. The day a new role arrives, “customer support,” which must see all the orders without touching the products, you'll have to find every `if` and decide one by one. With permissions, you add a line to `PERMISSIONS`, and the routes don't change.
+
+<ProjectCode file="shop-api/28-roles/src/permissions.ts" region="can" />
+
+- **`roleOf`** takes the role from the session's account or, if there's no session, from the API key.
+- **`can`** answers yes or no: does their role's list include that permission?
+
+Each route says what it needs with `requirePermission`, a <Term id="middleware">middleware</Term>:
+
+<ProjectCode file="shop-api/28-roles/src/permissions.ts" region="require-permission" />
+
+- **`...permissions`** accepts one or several, and having any of them is enough. The routes that show orders use `requirePermission('orders:view-own', 'orders:view-all')`.
+- **In `src/contract.ts`**, each route carries it in its list: `middleware: [requirePermission('products:manage')]`. It goes before validating the body, like the guard in the [middleware lesson](/en/phase-3/what-is-middleware/#a-guard-that-answers-401).
+
+### 401, 403 or 404
+
+`requirePermission` gives two different responses, the ones from the [status codes lesson](/en/phase-2/http-status-codes/#401-or-403-i-dont-know-who-you-are-or-you-cant) in Phase 2:
+
+- **With no identity, `401`**, with `WWW-Authenticate`: the same response from `requireIdentity` you saw in [lesson 2](/en/phase-6/sessions-and-cookies/#400-when-signing-in-401-afterwards-with-www-authenticate), now in a function, `notIdentified` (`src/middleware/session.ts`), which both use. Identifying yourself can fix it.
+- **With an identity and no permission, `403`**, without `WWW-Authenticate`: identifying yourself again changes nothing.
+
+And there's a third case, which `requirePermission` doesn't see: the order exists, but it belongs to someone else. There the shop answers `404`, because [the 404 also hides things](/en/phase-2/http-status-codes/#the-404-also-hides-things): a `403` would confirm to Carmen that order 26 exists.
+
+### Each customer, their own orders: BOLA
+
+`requirePermission` lets Carmen through on `GET /v2/orders/:id`, because she has `orders:view-own`. But which order is she asking for? **The role says what kind of things you can do; only the data says whose it is.** Forgetting that second check is called **<Term id="bola">BOLA</Term>** (*Broken Object Level Authorization*).
+
+It's the first in the [<Term id="owasp">OWASP</Term> API Security Top 10](https://api-security.owasp.org/editions/2023/en/0x11-t10) of 2023, the list of the most serious flaws in APIs. The fifth, *Broken Function Level Authorization*, is the other half: a route without its `requirePermission`.
+
+First, each order needs an owner. It's the second part of migration 009:
+
+<ProjectCode file="shop-api/28-roles/db/migrations/009-roles.sql" region="customer-orders" />
+
+- **`customer_id` can be `NULL`:** the 25 sample orders were placed when the shop had no accounts, and nobody knows whose they are. Only admin and delivery see them.
+- **The index starts with the customer:** a customer's list comes out fast, as in the [indexes lesson](/en/phase-5/database-indexes-explain/).
+
+Then, every route that receives an id checks it, in `src/v2.ts`:
+
+<ProjectCode file="shop-api/28-roles/src/v2.ts" region="visible-order" />
+
+- **With the “all” permission**, any order; if not, only one whose `customerId` is the session's.
+- **Someone else's comes back as `undefined`**, just like one that doesn't exist, and the route answers the same `404`.
+- **The same function** is used to see, change and cancel an order, and for its event stream: one check, in a single place.
+
+The list doesn't receive an id, but it filters too:
+
+<ProjectCode file="shop-api/28-roles/src/v2.ts" region="only-their-own" />
+
+`customerId` stays `undefined` for whoever sees all of them; for a customer, it's their id, and `src/pagination.ts` adds the condition `customer_id = …` to the query.
+
+When an order is created, the owner comes from the session (`c.var.user`), **never from the request body**: if the JSON could carry a `customerId`, anyone could place orders in someone else's name.
+
+### Goodbye to the ADMIN_TOKEN: being an admin is an account's role
+
+The first part of the migration gives a role to each account and to each key:
+
+<ProjectCode file="shop-api/28-roles/db/migrations/009-roles.sql" region="roles" />
+
+- **`DEFAULT 'customer'`:** Marta, and whoever signs up tomorrow, are customers.
+- **`CHECK`** only accepts the roles that exist, and a key is never `customer`: a program has no orders of its own.
+- **Making someone an admin is an `UPDATE` by hand**, never an API route.
+
+`ADMIN_TOKEN` disappears from `src/config.ts` and `.env.example`, and `src/middleware/admin-only.ts` goes with it. The introduction's problems go with it too: Ana and Luis each sign in with their own account, so the shop knows who makes each request; taking access away from one of them is changing their role, without touching the other; and the delivery key isn't an admin key.
+
+### Least privilege, for the delivery key too
+
+Fast Delivery needs to see the orders and mark them as shipped, and nothing else. For that it has a new route, `POST /v2/orders/{id}/shipment`, with `requirePermission('orders:ship')`.
+
+If its key leaks, in a log or in a repository, whoever finds it sees orders and marks them as shipped, but doesn't create products or cancel anything. It's the <Term id="least-privilege">least privilege</Term> from the [permissions lesson in Phase 1](/en/phase-1/linux-users-and-permissions/), applied to the API. **Every extra permission is possible damage if the key leaks.**
+
+It could be tightened further: delivery also sees the pending orders, which it doesn't need. A stricter shop would give it only the paid ones.
+
+### A breaking change, on purpose
+
+Until today, `GET /v2/orders` answered anyone. From this lesson on, with no identity, it answers `401`, and a program that listed orders without identifying itself stops working: a <Term id="breaking-change">breaking change</Term>.
+
+In the [versioning lesson](/en/phase-4/api-versioning/#warn-before-switching-off-deprecation-sunset-and-link) you learned to warn first, with `Deprecation` and `Sunset`, and to leave months of margin. Here there's no warning, and `/v1`, which uses the same routes, closes the same way. The warning protects the convenience of whoever uses the API; here, what's at stake is the customers' data, and **every day of warning is a day when anyone can read all the orders**.
+
+A security hole is closed as soon as it's seen. Afterwards, the partners are told and given a way to identify themselves: Fast Delivery already has its key.
+
+## Try it
+
+The goal: make the same requests as five identities (nobody, Marta, Carmen, Fast Delivery and Ana) and check that each one sees and does only what's theirs.
+
+You're going to try to read another person's order in your own shop, on `localhost`. Doing it on a system that isn't yours, without permission, is a crime.
+
+### Write the code
+
+You start from your project from [lesson 4, “OAuth”](/en/phase-6/oauth-openid-connect/):
+
+1. Create `src/permissions.ts` and `db/migrations/009-roles.sql`.
+2. In `src/schema.ts`, `role` in `users` and in `apiKeys`, and `customerId` in `orders`. Generate drizzle-kit's snapshot with `npm run db:generate -- --name=roles`, as in [lesson 1](/en/phase-6/how-to-store-passwords/).
+3. In `src/contract.ts`, replace `adminOnly` with `requirePermission`, add `requirePermission` to the order routes and the `shipOrder` route. In `src/v2.ts`, `visibleOrder`, the list and the shipment. In `src/v1.ts`, `requirePermission`.
+4. Delete `src/middleware/admin-only.ts`, `ADMIN_TOKEN` from `src/config.ts` and its line from your `.env`: a secret that no longer protects anything shouldn't be left lying around.
+
+Copy the rest from the step (the role in `users.ts`, `sessions.ts` and `api-keys.ts`, `customerId` in `data.ts` and `pagination.ts`, the role and the `customerId` in the responses of `schemas.ts`, `notIdentified` in `middleware/session.ts` and the per-account key in `middleware/idempotency.ts`). The accounts with their role and the tests come in its folder:
+
+```sh
+cd ~/backend-course/phase-3
+curl -O https://backenddesdecero.com/practicas/shop-api/28-roles.tar.gz
+tar -xzf 28-roles.tar.gz
+cd shop-api
+cp ../28-roles/db/accounts.sql ../28-roles/db/seed.sql db/
+cp ../28-roles/test/*.ts test/
+```
+
+<TryIt
+  title="1. The roles migration"
+  cmd="npm run db:migrate"
+  output={`> shop-api@1.0.0 db:migrate
+> node --env-file-if-exists=.env scripts/migrate.ts
+
+Applied: 009-roles.sql`}
+>
+
+The outputs are from Node 26.11.1 and PostgreSQL 18; your ids, keys and times will be different.
+
+</TryIt>
+
+<TryIt
+  title="2. The practice accounts, with their role"
+  cmd={`npm run db:seed
+psql -d shop -c 'SELECT id, email, role FROM users ORDER BY id;'`}
+  output={`> shop-api@1.0.0 db:seed
+> node --env-file-if-exists=.env scripts/seed.ts
+
+Practice accounts ready (their passwords are in the README)
+The database already has products: the sample ones are not loaded again
+ id |       email        |   role
+----+--------------------+----------
+  1 | marta@example.com  | customer
+  3 | ana@shop.example   | admin
+  4 | luis@shop.example  | admin
+  5 | carmen@example.com | customer
+  6 | pablo@example.com  | customer
+(5 rows)`}
+>
+
+Marta is the account from lesson 1, a customer by default. The other four are the practice accounts, with their passwords in the project's README: Ana and Luis, admin; Carmen and Pablo, customers. If you already had them, the command only gives them their role.
+
+Number 2 is missing: Marta's repeated sign-up in lesson 1 used it up. PostgreSQL hands out the number before trying to save the row, and doesn't reuse it even if the `INSERT` fails. If your ids are different, use yours.
+
+</TryIt>
+
+<TryIt
+  title="3. This lesson's tests"
+  cmd="npm test -- test/roles.test.ts"
+  output={`> shop-api@1.0.0 test
+> node --env-file=test/.env --test --test-concurrency=1 test/roles.test.ts
+
+✔ the list of orders: without an identity, 401; a customer sees their own; admin and delivery, all (116.404942ms)
+✔ someone else's order: 404, as if it did not exist, its event stream too (15.28183ms)
+✔ changing or cancelling someone else's order: 404; their own, yes; admin, any (11.412119ms)
+✔ placing an order needs a customer's session, and the order belongs to whoever places it (7.180839ms)
+✔ the same Idempotency-Key from two customers: each one, their own order (8.249044ms)
+✔ the delivery company marks a paid order as shipped, and nothing else (11.286609ms)
+✔ admin manages the products: a customer or delivery, 403 without WWW-Authenticate (7.268679ms)
+✔ /v1 has the same protections (9.832832ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 654.102242`}
+>
+
+Each test makes the same request as several identities and compares the codes. If one fails, its name says which rule isn't met.
+
+</TryIt>
+
+### Sign in as each one
+
+Start the API with `npm start` and, in another terminal, open a session for Marta, Carmen and Ana, each in her own file:
+
+<TryIt
+  title="4. Three sessions"
+  cmd={`curl -s -w '\\n' -c marta.txt --json '{"email":"marta@example.com","password":"a long sentence only I know"}' localhost:3000/v2/session
+curl -s -w '\\n' -c carmen.txt --json '{"email":"carmen@example.com","password":"carmen-practice-2026"}' localhost:3000/v2/session
+curl -s -w '\\n' -c ana.txt --json '{"email":"ana@shop.example","password":"ana-practice-2026"}' localhost:3000/v2/session`}
+  output={`{"id":1,"email":"marta@example.com","role":"customer"}
+{"id":5,"email":"carmen@example.com","role":"customer"}
+{"id":3,"email":"ana@shop.example","role":"admin"}`}
+>
+
+The response now carries the `role`. The fifth identity is Fast Delivery's key from [lesson 3](/en/phase-6/what-is-jwt/#fast-deliverys-key): save it in this terminal with `KEY=`, followed by yours.
+
+</TryIt>
+
+### With no identity: the breaking change
+
+<TryIt
+  title="5. The list of orders, without signing in"
+  cmd={`curl -s -i -w '\\n' 'localhost:3000/v2/orders?limit=3'
+curl -s -o /dev/null -w '%{http_code}\\n' localhost:3000/v1/orders`}
+  output={`HTTP/1.1 401 Unauthorized
+content-type: application/problem+json
+vary: Origin
+www-authenticate: Bearer realm="shop-api"
+x-request-id: 70c2b75d-f53b-4f8f-92aa-1547560aa166
+content-length: 117
+Date: Wed, 14 Oct 2026 04:47:30 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"type":"about:blank","title":"Unauthorized","status":401,"detail":"Sign in, or identify yourself with your API key"}
+401`}
+>
+
+It's the first request from the introduction, which back then returned three orders. Now, `401` with its `www-authenticate`. The last line is `/v1`: closed the same way.
+
+</TryIt>
+
+### Each customer, their own orders
+
+Marta and Carmen place an order each:
+
+<TryIt
+  title="6. Two new orders"
+  cmd={`curl -s -w '\\n' -b marta.txt --json '{"productId":2,"quantity":1}' localhost:3000/v2/orders
+curl -s -w '\\n' -b carmen.txt --json '{"productId":1,"quantity":2}' localhost:3000/v2/orders`}
+  output={`{"id":26,"productId":2,"quantity":1,"status":"pending","createdAt":"2026-10-14T04:47:30.251Z","customerId":1}
+{"id":27,"productId":1,"quantity":2,"status":"pending","createdAt":"2026-10-14T04:47:30.260Z","customerId":5}`}
+>
+
+Look at `customerId`: the body didn't send it, it comes from the session. If you get a `401`, the cookie file isn't in this folder.
+
+</TryIt>
+
+<TryIt
+  title="7. Each one's list"
+  cmd={`curl -s -w '\\n' -b marta.txt localhost:3000/v2/orders
+curl -s -w '\\n' -b carmen.txt localhost:3000/v2/orders`}
+  output={`[{"id":26,"productId":2,"quantity":1,"status":"pending","createdAt":"2026-10-14T04:47:30.251Z","customerId":1}]
+[{"id":27,"productId":1,"quantity":2,"status":"pending","createdAt":"2026-10-14T04:47:30.260Z","customerId":5}]`}
+>
+
+The same route, two responses: each one sees her own. The 25 sample orders don't show up, because they belong to nobody.
+
+If your database was empty when you ran `npm run db:seed`, `db/seed.sql` gave them owners (the odd ones, Carmen; the even ones, Pablo), and Carmen will see hers too.
+
+</TryIt>
+
+Now Carmen does what the introduction did: she tries numbers.
+
+<TryIt
+  title="8. Carmen tries numbers"
+  cmd={`curl -s -w '\\n' -b carmen.txt localhost:3000/v2/orders/26
+curl -s -o /dev/null -w '%{http_code} ' -b carmen.txt 'localhost:3000/v2/orders/[24-27]'; echo`}
+  output={`{"type":"about:blank","title":"Not Found","status":404,"detail":"No such order"}
+404 404 404 200`}
+>
+
+Order 26, Marta's, gets the same `404` as an order that doesn't exist. Going from 24 to 27, only hers answers. `; echo` adds the final line break.
+
+</TryIt>
+
+### The delivery key: just enough
+
+<TryIt
+  title="9. All the orders, and an unpaid one"
+  cmd={`curl -s -w '\\n' -H "Authorization: Bearer $KEY" 'localhost:3000/v2/orders?limit=3'
+curl -s -w '\\n' -H "Authorization: Bearer $KEY" -X POST localhost:3000/v2/orders/26/shipment`}
+  output={`[{"id":27,"productId":1,"quantity":2,"status":"pending","createdAt":"2026-10-14T04:47:30.260Z","customerId":5},{"id":26,"productId":2,"quantity":1,"status":"pending","createdAt":"2026-10-14T04:47:30.251Z","customerId":1},{"id":25,"productId":2,"quantity":2,"status":"pending","createdAt":"2026-10-08T09:00:00.000Z","customerId":null}]
+{"type":"https://shop.example/problems/order-status","title":"The order's status doesn't allow it","status":409,"detail":"The order is pending: only a paid one is shipped"}`}
+>
+
+Delivery sees everyone's orders, including 25, which has no owner. But Marta's order can't be shipped: it isn't paid yet. If the first line is a `401`, `KEY` is empty.
+
+</TryIt>
+
+Have the gateway from the [webhooks lesson](/en/phase-4/webhooks-idempotency/) pay for it, and try again:
+
+<TryIt
+  title="10. Paid and shipped"
+  cmd={`npm run gateway -- 26
+curl -s -w '\\n' -H "Authorization: Bearer $KEY" -X POST localhost:3000/v2/orders/26/shipment`}
+  output={`> shop-api@1.0.0 gateway
+> node --env-file-if-exists=.env scripts/payment-gateway.ts 26
+
+→ POST /v2/webhooks/payments {"id":"evt_04878fb2-09e2-4c01-940d-3c1c9da73441","type":"payment.completed","orderId":26}
+← 200 {"received":"evt_04878fb2-09e2-4c01-940d-3c1c9da73441","repeated":false}
+{"id":26,"productId":2,"quantity":1,"status":"shipped","createdAt":"2026-10-14T04:47:30.251Z","customerId":1}`}
+>
+
+The signed webhook marks 26 as paid, and now the shipment works: `shipped`. Marta will see it like that in her list.
+
+</TryIt>
+
+<TryIt
+  title="11. What isn't its job"
+  cmd={`curl -s -i -w '\\n' -H "Authorization: Bearer $KEY" --json '{"name":"Sticker","priceCents":150}' localhost:3000/v2/products
+curl -s -w '\\n' -H "Authorization: Bearer $KEY" -X POST localhost:3000/v2/orders/27/cancellation`}
+  output={`HTTP/1.1 403 Forbidden
+content-type: application/problem+json
+vary: Origin
+x-request-id: 0fd26f28-2412-46e1-b966-cdbf22034bed
+content-length: 113
+Date: Wed, 14 Oct 2026 04:47:30 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"type":"about:blank","title":"Forbidden","status":403,"detail":"Your account does not have permission for this"}
+{"type":"about:blank","title":"Forbidden","status":403,"detail":"Your account does not have permission for this"}`}
+>
+
+Creating a product and cancelling an order: `403` both times. Look at what's missing from the headers: there's no `www-authenticate`, because the shop knows who it is.
+
+</TryIt>
+
+### The same request, five identities
+
+<TryIt
+  title="12. Order 26, for each one"
+  cmd={`curl -s -o /dev/null -w 'nobody    %{http_code}\\n' localhost:3000/v2/orders/26
+curl -s -o /dev/null -w 'marta     %{http_code}\\n' -b marta.txt localhost:3000/v2/orders/26
+curl -s -o /dev/null -w 'carmen    %{http_code}\\n' -b carmen.txt localhost:3000/v2/orders/26
+curl -s -o /dev/null -w 'delivery  %{http_code}\\n' -H "Authorization: Bearer $KEY" localhost:3000/v2/orders/26
+curl -s -o /dev/null -w 'ana       %{http_code}\\n' -b ana.txt localhost:3000/v2/orders/26`}
+  output={`nobody    401
+marta     200
+carmen    404
+delivery  200
+ana       200`}
+>
+
+Three different responses for the same URL: “identify yourself,” “here it is” and “it doesn't exist.” The text in front of `%{http_code}` only labels each line.
+
+</TryIt>
+
+<SelfCheck question="Challenge: repeat the five lines with POST /v2/products and the introduction’s Sticker body. What code does each one get? If someone creates it, delete it with their session.">
+
+Only Ana creates it:
+
+```
+nobody    401
+marta     403
+carmen    403
+delivery  403
+ana       201
+```
+
+Without `-o /dev/null`, Ana's line shows the product, `{"id":6,"name":"Sticker","priceCents":150,"stock":0,"categories":[]}`: number 6, because 5 was the introduction's Sticker. `curl -s -w '%{http_code}\n' -X DELETE -b ana.txt localhost:3000/v2/products/6` deletes it with a `204`. It's what the `ADMIN_TOKEN` used to do, now with Ana's account.
+
+</SelfCheck>
+
+When you're done, delete the files with `rm marta.txt carmen.txt ana.txt`: they're open sessions.
+
+## You have already seen it
+
+- **A shared document.** When you share a document in Google Drive you choose “Viewer”, “Commenter” or “Editor”: a role, not a list of permissions for each person.
+- **Linux groups.** In the [permissions lesson in Phase 1](/en/phase-1/linux-users-and-permissions/), a file gives permissions to a group, and adding someone to the group is enough: the same idea as a role.
+- **Your order number in the URL.** Many shops show `/orders/12345`. If changing that number showed another person's order, it would be BOLA: don't try it on other people's sites.
+
+## Common mistakes
+
+- **Checking permissions only in the frontend,** by hiding the button: anyone can call the API with `curl`.
+- **Checking that there's a session and forgetting whose the data is.** Every route that receives an id needs its check, including the events one and the `/v1` one.
+- **Taking the owner from the request body** instead of from the session.
+- **Asking about roles in the code** (`role === 'admin'`) instead of about permissions.
+- **Answering `403` to someone else's order,** which confirms it exists, or `401` to someone who is identified and isn't allowed.
+- **Sharing something stored by key between accounts.** With the same `Idempotency-Key`, Pablo would get Carmen's order; that's why `idempotency.ts` stores each key with its account.
+- **Relying on random ids instead of checking.** An id that's hard to guess helps, but it ends up in links, logs and screenshots.
+- **Giving a program more permissions “just in case.”**
+
+## Summary
+
+- Authorization decides what someone who is already identified can do. With RBAC, each account has a role and each role, a list of permissions.
+- The code asks about permissions (`requirePermission('products:manage')`), never about role names: a new role is one more line in the table.
+- The role isn't enough: every route that receives an id checks whose the data is. Forgetting it is BOLA, the first flaw in the OWASP API Security Top 10.
+- With no identity, `401`; identified and not allowed, `403`; someone else's data, `404`, so as not to confirm it exists.
+- Each role and each key, with just what it needs. And a security hole is closed as soon as it's seen, even if it breaks a client of the API.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="A colleague writes if (role !== 'admin') in three order routes. Tomorrow a new role arrives, “customer support,” which must see all the orders without touching the products. What do you suggest?"
+  review="The code asks about permissions, not roles"
+>
+
+<QuizOption text="Add the new role to each if: checking the role in each route is the safest, because that way none gets forgotten.">
+
+Every new role forces you to review all the routes, and a forgotten one gives no error: it lets in someone who shouldn't get in, or leaves out someone who should. The list of who can do what ends up scattered across the whole code.
+
+</QuizOption>
+
+<QuizOption text="Have the routes ask for a permission, like orders:view-all, and give the new role that permission in the table." correct>
+
+The routes don't change: the new role is one line in `PERMISSIONS`, with `orders:view-all` and without `products:manage`.
+
+</QuizOption>
+
+<QuizOption text="Make whoever works in customer support an admin: you have to be an admin to see all the orders.">
+
+Seeing all the orders is a permission, not a role. As admins they could also delete products: the opposite of least privilege.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A GET /orders/:id route has requirePermission('orders:view-own', 'orders:view-all') and nothing else. Carmen, a customer, asks for Marta’s order. What happens?"
+  review="Each customer, their own orders: BOLA"
+>
+
+<QuizOption text="Carmen sees it: requirePermission looks at what her role allows, not at whose that order is." correct>
+
+It's BOLA. The second check is missing, the one in `visibleOrder`: without “all,” only an order of her own.
+
+</QuizOption>
+
+<QuizOption text="The shop answers 403: view-own doesn’t let you see other customers’ orders.">
+
+`requirePermission` doesn't know which order is being asked for: it only looks at whether the role has any of those permissions, and Carmen has `view-own`.
+
+</QuizOption>
+
+<QuizOption text="PostgreSQL stops it: the foreign key on customer_id only lets that customer read the rows.">
+
+A foreign key only requires the customer to exist. Who can read the row is decided by the API.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Pablo, a customer, with his session, tries to delete a product. Another request, with no cookie and no key, tries the same. What does the shop answer to each one?"
+  review="401, 403 or 404"
+>
+
+<QuizOption text="Both get a 401: it’s the code for any request that doesn’t have permission for what it asks.">
+
+The name of the `401`, Unauthorized, is misleading: it means “I don't know who you are.” The shop does know Pablo.
+
+</QuizOption>
+
+<QuizOption text="Pablo gets a 401: his session isn’t valid for that route, so for that route he isn’t identified.">
+
+A session identifies you on every route. What Pablo is missing is a permission, and that's a `403`.
+
+</QuizOption>
+
+<QuizOption text="Pablo gets a 403; the request with no identity, a 401 with WWW-Authenticate." correct>
+
+Pablo is identified and doesn't have `products:manage`. The other request doesn't say who it is: identifying itself could change the response.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="One Monday you find out that GET /v2/orders gives all the customers’ orders to anyone. A partner uses it without identifying itself. What do you do?"
+  review="A breaking change, on purpose"
+>
+
+<QuizOption text="Announce it with Deprecation and Sunset, and close it in six months, like any breaking change.">
+
+Six months of warning are six months with the customers' data open. Warnings are for design changes, not for holes.
+
+</QuizOption>
+
+<QuizOption text="Close it today, in /v1 too, and give the partner a way to identify itself with its permissions." correct>
+
+A security hole is closed as soon as it's seen. Afterwards, the partner is told and given its key, with just what it needs.
+
+</QuizOption>
+
+<QuizOption text="Close it only in /v2: a deprecated version no longer gets fixes, not even security ones.">
+
+As long as `/v1` answers, it keeps handing the same orders to anyone. A hole is closed at every door, the deprecated ones too.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Fast Delivery asks for an admin key: “that way we won’t have to ask you for more permissions.” What do you tell them?"
+  review="Least privilege, for the delivery key too"
+>
+
+<QuizOption text="Yes, if they keep it safe: a key stored as a secret doesn’t leak.">
+
+Keys leak: in a log, a repository or a laptop. When that happens, what matters is what it allows.
+
+</QuizOption>
+
+<QuizOption text="Yes: even if it leaks, it’s useless, because what the shop accepts is its hash.">
+
+The shop stores the hash, but it accepts the key: it computes its hash and compares it. Whoever has the key uses it as Fast Delivery.
+
+</QuizOption>
+
+<QuizOption text="A delivery key, to see and ship orders: if it leaks, the damage stops there." correct>
+
+It's least privilege: with an admin key, whoever found it could create and delete products and cancel orders.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Another shop’s frontend sends {productId, quantity, customerId} when creating an order, and the API saves that customerId. What’s the problem?"
+  review="Each customer, their own orders: BOLA"
+>
+
+<QuizOption text="Anyone can place orders in another customer’s name by changing that number." correct>
+
+The owner has to come from the session, like `c.var.user` in the shop, never from what the client sends.
+
+</QuizOption>
+
+<QuizOption text="None, if the frontend always puts in the id of whoever has signed in.">
+
+The API doesn't only get requests from its own frontend: with `curl`, anyone sends whatever `customerId` they want.
+
+</QuizOption>
+
+<QuizOption text="None, if the route has requirePermission('orders:create'): it checks that the customerId is the session’s.">
+
+`requirePermission` only looks at whether the role has the permission. It doesn't read the body, and doesn't know which `customerId` it carries.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [API1:2023 Broken Object Level Authorization](https://api-security.owasp.org/editions/2023/en/0xa1-broken-object-level-authorization) (OWASP): BOLA, with examples of attacks and how to prevent it.
+- [OWASP API Security Top 10, 2023](https://api-security.owasp.org/editions/2023/en/0x11-t10) (OWASP): the ten most serious flaws in APIs.
+- [Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html) (OWASP): least privilege, deny by default and check on every request.
+- [USPS Site Exposed Data on 60 Million Users](https://krebsonsecurity.com/2018/11/usps-site-exposed-data-on-60-million-users/) (KrebsOnSecurity): a real case of BOLA.

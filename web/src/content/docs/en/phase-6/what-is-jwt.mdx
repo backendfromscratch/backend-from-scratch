@@ -1,0 +1,593 @@
+---
+translationKey: jwt
+title: "What is JWT? Session vs JWT authentication"
+description: "What a JWT is and how it works: header, payload and signature, why anyone can read it, what goes wrong and when to use it instead of a session or API key."
+sidebar:
+  label: JWT
+  order: 3
+lesson:
+  oneLiner: "A JWT is a token that carries who you are and until when it's valid, with a signature so nobody can change it. Anyone can read it, and it can't be canceled before it expires: that's why, for people in a browser, a session is better. JWTs fit between services, and a program identifies itself with an API key."
+  objectives:
+    - Read a JWT piece by piece (header, payload and signature) and explain why it's signed, but not encrypted.
+    - Check a JWT properly, with the signature, the algorithm, the expiry and the audience, and recognize the typical mistakes.
+    - Choose between a session and a JWT, and explain why a JWT isn't a better session.
+    - Give a program its own API key, stored as a hash and sent in Authorization Bearer.
+  prerequisites: [sessions]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+
+## The problem
+
+The delivery company from [Phase 4](/en/phase-4/), Fast Delivery, wants its program to mark orders as shipped. But a program has no browser and doesn't type passwords into a form. How does it tell the shop who it is? Today, the only way would be to give it the `ADMIN_TOKEN`, and in the [introduction](/en/phase-6/) you saw what that means.
+
+While you think about it, Luis reads on a forum: “Sessions in the database are outdated. Use JWT: the server doesn't store anything.” Is he right?
+
+This lesson answers both.
+
+## The analogy
+
+<Analogy>
+
+At a theater's coat check they give you a ticket with a number, 47. The ticket says nothing: the coat, and whose it is, are in the coat check. If you lose it and tell them, they cancel it on the spot. That's the session from [lesson 2](/en/phase-6/sessions-and-cookies/).
+
+At a festival they put a wristband on you that says it all, “VIP Area · Saturday,” with a hologram only the organizers make. Every bar checks it by looking at it, without calling anyone. But anyone who sees it reads what it says, and if it's stolen, it works until Sunday: no bar finds out. That's a JWT.
+
+<div slot="limits">
+
+- A hologram can be imitated with patience. A JWT's signature can't be made without the secret, if it's long and random.
+- A wristband can be read at a glance. A JWT looks like gibberish, but it isn't encrypted: one command reads it.
+- The wristband is tied to your wrist. A JWT isn't: whoever copies it gets in.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### Three parts separated by dots
+
+This is a JWT made by this lesson's example, `examples/jwt.ts`:
+
+```text
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiY3VzdG9tZXIiLCJzdWIiOiJjYXJtZW4iLCJpc3MiOiJzaG9wLWFwaSIsImF1ZCI6InNob3AtYXBpIiwiaWF0IjoxNzkxOTUyOTI0LCJleHAiOjE3OTE5NTM4MjR9.YquKMDhnqilUifK7j_2mf9FUwANwm8OwJjsSAR68VNE
+```
+
+It has three parts, separated by dots:
+
+| Part | What it carries | In this token |
+|---|---|---|
+| Header | How it's signed | `{"alg":"HS256","typ":"JWT"}` |
+| Payload | What the token claims | `{"role":"customer",` `"sub":"carmen",` `"iss":"shop-api",` `"aud":"shop-api",` `"iat":1791952924,` `"exp":1791953824}` |
+| Signature | 32 bytes that prove nobody has changed the other two | It can't be read: it's bytes |
+
+A <Term id="jwt">JWT</Term> (*JSON Web Token*, pronounced like the word *jot*) is just that: signed <Term id="json">JSON</Term> that fits in a header. The names in the payload are short because they travel in every request, and RFC 7519 defines them:
+
+- **`sub`** (*subject*): who the token is about.
+- **`iss`** (*issuer*): who issued it.
+- **`aud`** (*audience*): who it's for, which server should accept it.
+- **`iat`** and **`exp`** (*issued at*, *expiration*): when it was made and when it expires, in seconds since January 1, 1970. `1791952924` is October 14, 2026, at 04:42:04 UTC, and `exp`, fifteen minutes later.
+
+`role` isn't standard: whoever issues the token adds whatever data they want.
+
+### Signed, not encrypted
+
+The first two parts are in **base64url**. Base64 writes any data with 64 printable characters: letters, digits, `+` and `/`. The url variant swaps those two for `-` and `_`, which fit in a URL, and drops the `=` at the end. That's why every JWT starts with `eyJ`: it's `{"` in base64.
+
+There's no key at all: any program undoes it. **A JWT is signed, not <Term id="encryption">encrypted</Term>: whoever has it reads everything it carries.** There's an encrypted variant, JWE, but the JWTs you'll see are like this one. Never put anything in one that the person carrying it can't see.
+
+The signature hides nothing. It guarantees two things: that it was issued by whoever has the key, and that nobody has changed a single letter.
+
+### Signing and checking: a secret or a key pair
+
+The header says in `alg` how it was signed. There are two families:
+
+- **HS256:** an <Term id="hmac">HMAC</Term>-SHA256 of the first two parts with a <Term id="secret">secret</Term>, like the signature of the [webhooks in Phase 4](/en/phase-4/webhooks-idempotency/#the-signature-an-hmac-of-the-body-with-a-secret). The same secret signs and checks: whoever can check can forge.
+- **RS256 or ES256:** a <Term id="digital-signature">digital signature</Term> with a <Term id="private-key">private key</Term>, which anyone checks with the <Term id="public-key">public</Term> one, as in [TLS](/en/phase-0/tls-and-https/#two-keys-public-key-cryptography). Only the issuer signs. That's how Google signs the tokens for “Sign in with Google,” and it publishes its public keys so any website can check them ([lesson 4, “OAuth”](/en/phase-6/oauth-openid-connect/)).
+
+The example uses HS256 with `jose`, the most widely used JWT library in Node, with no dependencies:
+
+<ProjectCode file="shop-api/26-jwt-keys/examples/jwt.ts" region="create" />
+
+- `new SignJWT({ role: 'customer' })` starts the token with a piece of data of its own.
+- `setProtectedHeader` writes the header, and each `set…`, a standard field. `'15m'` is fifteen minutes.
+- `.sign(secret)` computes the signature. The secret comes from the <Term id="environment-variable">environment variable</Term> `JWT_SECRET` or, if it doesn't exist, it's 32 random bytes, different on every run.
+
+Checking is more than reading:
+
+<ProjectCode file="shop-api/26-jwt-keys/examples/jwt.ts" region="check" />
+
+- `jwtVerify` recomputes the signature with the secret and compares it. If it matches, it looks at `exp`, `iss` and `aud`.
+- **`algorithms: ['HS256']`: the algorithm is decided by whoever checks, never by the token.** You'll see why in a moment.
+- If something fails, `jose` throws an error with a code that says what, like `ERR_JWT_EXPIRED`.
+
+### What goes wrong
+
+RFC 8725 collects the mistakes seen in real life. The ones that matter most:
+
+- **`alg: none`.** The standard allows unsigned tokens, with `"alg":"none"`. A library that obeys the header accepts one forged by anyone, with an empty signature. In 2015, [several accepted it](https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/). The defense: the `algorithms` list.
+- **Reading without checking.** Libraries come with a function to read the payload without looking at the signature (in `jose`, `decodeJwt`). Deciding with it means believing whatever the sender of the token says.
+- **Not looking at `exp` or `aud`.** Without an expiry, a stolen token works forever. Without an audience, a token the shop made for the payment gateway would also work at the shop. `jose` looks at `exp` if the token has it, but at `aud` and `iss` only if you ask it to.
+- **A short secret.** With a token in hand, secrets are tried on another computer, millions per second, as with the passwords in [lesson 1](/en/phase-6/how-to-store-passwords/#sha-256-is-too-fast). `jose` accepts a three-letter one without complaining. Use 32 random bytes.
+- **Storing it where JavaScript can read it.** Many websites keep it in localStorage. If someone runs their JavaScript on the page (the <Term id="xss">XSS</Term> from [lesson 6](/en/phase-6/sql-injection-xss/)), they take it. An `HttpOnly` cookie [can't be read from JavaScript](/en/phase-2/cookies-httponly-secure-samesite/#cookies-or-localstorage).
+
+And the biggest one, which isn't a code mistake: **it can't be canceled**.
+
+### Sessions vs JWT
+
+The argument Luis read on the forum is half true: with JWT, the server doesn't store anything. Look at what it costs:
+
+| | Session (lesson 2) | JWT |
+|---|---|---|
+| What the client carries | A random 43-character id that says nothing | The signed data: 217 characters in the example, in every request |
+| What the server stores | One row per session | Nothing, only the secret or the key to check it |
+| How it's checked | A query by <Term id="primary-key">primary key</Term> | A calculation, with no database |
+| Signing out or canceling it | The row is deleted: it doesn't work on the next request | Impossible: it works until `exp` |
+| If you take a permission away from someone | On the next request | When their token expires |
+
+To cancel a JWT early, the server has to note down the canceled ones and look them up on every request: a table and a query, what the JWT promised to save. The usual fix, a fifteen-minute JWT plus a second token to renew it stored in the database, turns back into a session with more pieces.
+
+And the savings are small: the shop already talks to PostgreSQL on almost every request, and looking up by primary key is one of the fastest things it does ([indexes lesson](/en/phase-5/database-indexes-explain/)).
+
+**The course's answer: sessions for people in a browser; JWT between services.** A JWT fits when one server has to trust another without asking it. For example, the shop could give the payment gateway a one-minute token with `aud: payment-gateway`. And an identity provider tells you who you are with a JWT, the OpenID Connect `id_token` from lesson 4.
+
+### API keys: how a program identifies itself
+
+And Fast Delivery? Its program runs on a server, day and night, with nobody in front of it. A JWT that never expires would be a key that's impossible to take back. It needs an **<Term id="api-key">API key</Term>**: a long, random piece of text that identifies it, like a session that doesn't expire and is canceled by deleting it. This is how it's created, in `src/api-keys.ts`:
+
+<ProjectCode file="shop-api/26-jwt-keys/src/api-keys.ts" region="create-key" />
+
+- **`randomBytes(32)`**: 256 random bits, like the session id. Nobody guesses it.
+- **`shop_` in front:** whoever finds it in a log or in a repository knows where it's from. That's how GitHub recognizes other companies' keys and warns if they're pushed: `ghp_` ones are GitHub's, and `sk_live_` ones, Stripe's.
+- **The table stores its <Term id="hash">hash</Term>, never the key:** the key is shown once, when it's created. SHA-256, a fast one, is enough: argon2 slows down whoever tries likely passwords (lesson 1), and for a random key there's no list to try.
+
+On every request a new <Term id="middleware">middleware</Term> looks it up, `src/middleware/api-key.ts`:
+
+<ProjectCode file="shop-api/26-jwt-keys/src/middleware/api-key.ts" region="load-api-key" />
+
+- It reads `Authorization: Bearer …`, the [header from Phase 2](/en/phase-2/http-headers/#authorization-who-you-are). The prefix tells it apart from a session id, which can also arrive that way.
+- `findKey` looks it up by its hash and notes in `used_at` when it was used: a forgotten key can be deleted.
+
+With no session and no key, `requireIdentity` answers `401` with `WWW-Authenticate: Bearer realm="shop-api"`, the challenge RFC 6750 describes. For now, the key only identifies: `GET /v2/me` says who you are. What Fast Delivery can do with it comes in [lesson 5, “Authorization”](/en/phase-6/rbac-roles-permissions/).
+
+## Try it
+
+The goal: make a JWT, read it without the secret and watch four tricks get rejected. Then, give Fast Delivery its key and check that a fake one doesn't get in and that the shop doesn't store the real one.
+
+You'll break your own tokens, on your own computer: doing it against someone else's system without permission is a crime.
+
+### Write the code
+
+You start from your project from [lesson 2, “Sessions”](/en/phase-6/sessions-and-cookies/).
+
+<TryIt
+  title="1. Install jose"
+  cmd="npm install jose@6.2.12"
+  output={`added 1 package, and audited 71 packages in 2s
+
+9 packages are looking for funding
+  run \`npm fund\` for details
+
+4 moderate severity vulnerabilities
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run \`npm audit\` for details.`}
+>
+
+A single package: `jose` depends on nobody. The 4 *vulnerabilities* are drizzle-kit's, from [Phase 5's “ORM” lesson](/en/phase-5/orm-drizzle-prisma/). This lesson's outputs are from Node 26.11.1 and PostgreSQL 18.6.
+
+</TryIt>
+
+Add the table to `src/schema.ts`:
+
+<ProjectCode file="shop-api/26-jwt-keys/src/schema.ts" region="api-keys" />
+
+`unique()` prevents two equal hashes and creates the index used to look up each key.
+
+<TryIt
+  title="2. Generate the migration"
+  cmd="npm run db:generate -- --name=api-keys"
+  output={`> shop-api@1.0.0 db:generate
+> drizzle-kit generate --name=api-keys
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/Users/ana/backend-course/phase-3/shop-api/drizzle.config.ts'
+9 tables
+api_keys 5 columns 0 indexes 0 fks
+categories 2 columns 0 indexes 0 fks
+idempotency_keys 6 columns 0 indexes 0 fks
+orders 5 columns 1 indexes 1 fks
+processed_events 2 columns 0 indexes 0 fks
+product_categories 2 columns 1 indexes 2 fks
+products 4 columns 0 indexes 0 fks
+sessions 4 columns 0 indexes 1 fks
+users 4 columns 1 indexes 0 fks
+
+[✓] Your SQL migration file ➜ drizzle/0004_api-keys.sql 🚀`}
+>
+
+As in lessons 1 and 2: `drizzle/0004_api-keys.sql` has the `CREATE TABLE`. If you get `No schema changes`, you didn't save `schema.ts`.
+
+</TryIt>
+
+With that SQL, and with comments that explain it, write `db/migrations/007-api-keys.sql`:
+
+<ProjectCode file="shop-api/26-jwt-keys/db/migrations/007-api-keys.sql" region="api-keys" />
+
+<TryIt
+  title="3. Apply it"
+  cmd="npm run db:migrate"
+  output={`> shop-api@1.0.0 db:migrate
+> node --env-file-if-exists=.env scripts/migrate.ts
+
+Applied: 007-api-keys.sql`}
+>
+
+Only the new one: the other six were already there.
+
+</TryIt>
+
+Then:
+
+1. Create `src/api-keys.ts` and `src/middleware/api-key.ts`.
+2. In `src/env.ts`, add `apiKey?: ApiKey`. In `src/app.ts`, `app.use(loadApiKey)` right after `app.use(loadSession)`.
+3. Change `requireIdentity` (`src/middleware/session.ts`), so that a key also counts; `meSchema` (`src/schemas.ts`), `getMe` (`src/contract.ts`) and the `/me` route (`src/v2.ts`), which now say whether you're a person or a key. Whatever you haven't seen here, copy it from the step.
+4. Add the `create-key` script to `package.json` (the highlighted line):
+
+<ProjectCode file="shop-api/26-jwt-keys/package.json" mark={19} />
+
+The example, the script and the tests come in this lesson's folder:
+
+```sh
+cd ~/backend-course/phase-3
+curl -O https://backenddesdecero.com/practicas/shop-api/26-jwt-keys.tar.gz
+tar -xzf 26-jwt-keys.tar.gz
+cd shop-api
+cp ../26-jwt-keys/examples/jwt.ts examples/
+cp ../26-jwt-keys/scripts/create-key.ts scripts/
+cp ../26-jwt-keys/test/*.ts test/
+```
+
+If you get stuck, compare with `26-jwt-keys`. `npm test` should end with `fail 0`.
+
+### A JWT, made, read and broken
+
+<TryIt
+  title="4. The example, from start to finish"
+  cmd="node examples/jwt.ts"
+  output={`The token:
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2xlIjoiY3VzdG9tZXIiLCJzdWIiOiJjYXJtZW4iLCJpc3MiOiJzaG9wLWFwaSIsImF1ZCI6InNob3AtYXBpIiwiaWF0IjoxNzkxOTUyOTI0LCJleHAiOjE3OTE5NTM4MjR9.YquKMDhnqilUifK7j_2mf9FUwANwm8OwJjsSAR68VNE
+
+Header: { alg: 'HS256', typ: 'JWT' }
+Payload: {
+  role: 'customer',
+  sub: 'carmen',
+  iss: 'shop-api',
+  aud: 'shop-api',
+  iat: 1791952924,
+  exp: 1791953824
+}
+Signature: 32 bytes
+
+As is: valid
+With the payload changed: rejected (ERR_JWS_SIGNATURE_VERIFICATION_FAILED)
+With alg: none and no signature: rejected (ERR_JOSE_ALG_NOT_ALLOWED)
+Expired a minute ago: rejected (ERR_JWT_EXPIRED)
+For another audience: rejected (ERR_JWT_CLAIM_VALIDATION_FAILED)`}
+>
+
+It needs neither PostgreSQL nor the server. Your token and your times will be different. Look at the four tricks:
+
+- **Payload changed:** `sub` goes from `carmen` to `pablo` with the old signature, which no longer matches.
+- **`alg: none`:** `none` isn't in `algorithms`.
+- **Expired:** a good signature, but `exp` has already passed.
+- **Another audience:** a good signature, but it's for `payment-gateway`.
+
+If you get `Cannot find package 'jose'`, step 1 is missing.
+
+</TryIt>
+
+Now read it without the secret and without `jose`, as anyone who copies it would:
+
+<TryIt
+  title="5. Read it with base64"
+  cmd={`TOKEN=$(node examples/jwt.ts | sed -n 2p)
+echo "$TOKEN" | cut -d. -f1 | base64 -d
+echo
+echo "$TOKEN" | cut -d. -f2 | base64 -d
+echo`}
+  output={`{"alg":"HS256","typ":"JWT"}
+{"role":"customer","sub":"carmen","iss":"shop-api","aud":"shop-api","iat":1791952952,"exp":1791953852}`}
+>
+
+`sed -n 2p` keeps the second line, the token, and `cut -d. -f1`, the first part between dots ([pipes lesson in Phase 1](/en/phase-1/pipes-and-redirection/)). `base64 -d` decodes it. Each lone `echo` adds a line break.
+
+And the `=` that base64 usually ends with? base64url drops that padding, and this token's header and payload need none: each is a multiple of four characters long. Other data may need one or two, and without them macOS's `base64` eats the last characters, like the closing `}`: add them at the end. On Linux it comes out right with or without them.
+
+</TryIt>
+
+<SelfCheck question="Challenge: HS256 is the HMAC from Phase 4. Compute a token’s signature yourself with openssl and compare it with its third part.">
+
+Set the secret yourself and sign the first two parts, with the dot in between:
+
+```sh
+export JWT_SECRET=the-shop-secret
+TOKEN=$(node examples/jwt.ts | sed -n 2p)
+echo "$TOKEN" | cut -d. -f3
+printf '%s' "$(echo "$TOKEN" | cut -d. -f1-2)" | openssl dgst -sha256 -hmac "$JWT_SECRET" -binary | base64 | tr '+/' '-_' | tr -d '='
+```
+
+```text
+LgFyGQ2jelblGQP0CIN0RfxLhGrtphV39MC3owfsiGA
+LgFyGQ2jelblGQP0CIN0RfxLhGrtphV39MC3owfsiGA
+```
+
+The two lines are the same. `-binary` gives the HMAC's 32 bytes, and `tr` turns them from base64 into base64url. **With the secret, anyone can sign whatever they want**: that's why it lives in the `.env`, and it's never a password.
+
+</SelfCheck>
+
+### Fast Delivery's key
+
+Start the server with `npm start` and open another terminal in the project folder.
+
+<TryIt
+  title="6. Create the key"
+  cmd={`npm run create-key -- "Fast Delivery"`}
+  output={`> shop-api@1.0.0 create-key
+> node --env-file-if-exists=.env scripts/create-key.ts Fast Delivery
+
+Key 1, for "Fast Delivery":
+shop_1xwE7_-ZdFKf-QppIUiXPDm5nE-MunX4K2X9YCfG9dI
+Copy it now: the shop only keeps its hash and cannot show it to you again.`}
+>
+
+Whatever goes after `--` reaches the script, and the quotes make `Fast Delivery` a single name. Your key will be different: copy it.
+
+</TryIt>
+
+<TryIt
+  title="7. Who am I, with the key"
+  cmd={`KEY=shop_1xwE7_-ZdFKf-QppIUiXPDm5nE-MunX4K2X9YCfG9dI
+curl -s -w '\\n' -H "Authorization: Bearer $KEY" localhost:3000/v2/me`}
+  output={`{"type":"key","id":1,"name":"Fast Delivery"}`}
+>
+
+Put your key after `KEY=`. The shop recognizes a program, not a person: `type` is `key`. If you get a `401`, the variable is empty or a character is missing.
+
+</TryIt>
+
+<TryIt
+  title="8. With a fake key"
+  cmd={`curl -s -i -H 'Authorization: Bearer shop_1xwE7_-ZdFKf-QppIUiXPDm5nE-MunX4K2X9YCfG9dx' localhost:3000/v2/me`}
+  output={`HTTP/1.1 401 Unauthorized
+content-type: application/problem+json
+vary: Origin
+www-authenticate: Bearer realm="shop-api"
+x-request-id: f3e7592e-3e90-4435-8acb-8ec101bd7e2a
+content-length: 117
+Date: Wed, 14 Oct 2026 04:42:57 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"type":"about:blank","title":"Unauthorized","status":401,"detail":"Sign in, or identify yourself with your API key"}`}
+>
+
+The same key with the last character changed: `401`, and `www-authenticate` says how to identify yourself. The shop doesn't tell you whether it looks like a good one: only “I don't know who you are.”
+
+</TryIt>
+
+<TryIt
+  title="9. What the shop stores"
+  cmd={`psql -d shop -c "SELECT id, name, encode(hash, 'hex') AS hash, used_at FROM api_keys;"
+printf '%s' "$KEY" | shasum -a 256`}
+  output={` id |     name      |                               hash                               |            used_at
+----+---------------+------------------------------------------------------------------+-------------------------------
+  1 | Fast Delivery | 9b7478d1728da9a63c216c314105174ef65944501ba04da4f6721042e6f042d5 | 2026-10-14 04:42:50.813141+00
+(1 row)
+
+9b7478d1728da9a63c216c314105174ef65944501ba04da4f6721042e6f042d5  -`}
+>
+
+`encode(hash, 'hex')` writes the bytes in hexadecimal: your key's SHA-256, the same one `shasum` computes. **The key isn't anywhere**, and whoever copies the table can't use it. `used_at` is the time of step 7.
+
+To cancel the key, deleting its row is enough: the next request gets a `401`. That's what a JWT can't do.
+
+</TryIt>
+
+## You have already seen it
+
+- **“Sign in with Google.”** The website receives from Google a JWT signed with its private key: the `id_token` from lesson 4.
+- **A header that starts with `eyJ`.** In the *Network* tab of DevTools, many websites send `Authorization: Bearer eyJ…`: a JWT, which you read with `base64` as here. Don't paste it into a website that “decodes tokens”: [a real token isn't shown to anyone](/en/phase-2/http-headers/#authorization-who-you-are).
+- **The keys of the services you use.** A maps or payments service gives you a key, and shows it to you only once.
+
+## Common mistakes
+
+- **Putting in the JWT what nobody should read.** It's in base64url, not encrypted.
+- **Letting the token choose the algorithm, or reading it without checking it.** Set `algorithms` and use `jwtVerify`, never `decodeJwt`, to decide.
+- **Using JWTs that last days as a session.** They can't be canceled. For people in a browser, a session.
+- **A short secret, or the same one for two things.** 32 random bytes, one per use: don't reuse the `WEBHOOK_SECRET`.
+- **The API key in the URL or in the frontend.** URLs end up in logs, and anyone can read a page's JavaScript. It goes in `Authorization`, from a server.
+- **Storing the key as is.** Store its hash, and show it only once.
+
+## Summary
+
+- A JWT is three parts in base64url: header, payload and signature. It's signed, not encrypted: anyone can read it.
+- HS256 signs with a shared secret, an HMAC; RS256 and ES256, with a private key that's checked with the public one.
+- Checking means looking at the signature with a fixed algorithm, `exp`, `iss` and `aud`. `alg: none` and reading without checking are the classic mistakes.
+- A JWT can't be canceled before `exp`. Sessions for people in a browser; JWT between services and as an `id_token`.
+- A program identifies itself with an API key: long, random, stored as a hash, sent in `Authorization: Bearer` and canceled by deleting it.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="A coworker puts the customer’s address and phone number in the payload of their app’s JWT: “it’s signed, so it’s protected.” What do you tell them?"
+  review="Signed, not encrypted"
+>
+
+<QuizOption text="That they’re right: without the secret, nobody can read a JWT’s payload.">
+
+The secret is needed to sign, not to read. The payload is in base64url, and you read it with `base64`, without the secret.
+
+</QuizOption>
+
+<QuizOption text="That anyone who has the token can read it: the signature prevents changing it, not seeing it." correct>
+
+The signature guarantees who issued it and that it hasn't changed. Whatever the person carrying the token shouldn't see doesn't go inside.
+
+</QuizOption>
+
+<QuizOption text="That only the customer’s browser can read it, because it’s the only one that has the token.">
+
+So does whoever copies it from a log, from the network or from localStorage. And from there, one command reads it.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Someone sends an API a token with alg: none in the header, sub: pablo in the payload and an empty signature, and the API lets them in as Pablo. Where is the flaw?"
+  review="What goes wrong"
+>
+
+<QuizOption text="In the API’s secret: it was too short, and they guessed it.">
+
+With `alg: none` no secret is needed: the token says it has no signature. The secret isn't even used.
+
+</QuizOption>
+
+<QuizOption text="In the token: it has expired, and a library stops checking the signature of expired tokens.">
+
+No library does that. The expiry and the signature are checked separately, and both have to be right.
+
+</QuizOption>
+
+<QuizOption text="In the API: it accepts the algorithm the token says, instead of setting it itself." correct>
+
+Whoever checks decides the algorithm, like `algorithms: ['HS256']` in the example, and `none` isn't on the list.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="The shop gives its customers a JWT that lasts a week. Carmen’s laptop is stolen with her session open. What can the shop do today?"
+  review="Sessions vs JWT"
+>
+
+<QuizOption text="Nothing, unless it keeps a list of canceled tokens and checks it on every request." correct>
+
+The token is valid until its `exp`: its signature doesn't change. Canceling it early takes a table and a query, like a session.
+
+</QuizOption>
+
+<QuizOption text="Delete Carmen’s token from the database.">
+
+A JWT isn't in the database: that's its promise. With a session, deleting the row would be enough.
+
+</QuizOption>
+
+<QuizOption text="Change the stolen token’s exp from the server to a date that has already passed.">
+
+The token is on the stolen laptop, not on the server, and changing its payload would break the signature.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="In DevTools you see Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiI0MiJ9.k3Hq… What can you learn without any key?"
+  review="Three parts separated by dots"
+>
+
+<QuizOption text="Nothing: an RS256 token can only be read with the public key of whoever signed it.">
+
+The public key is for checking the signature, not for reading. Header and payload are base64url.
+
+</QuizOption>
+
+<QuizOption text="What the header and the payload say: that it was signed with RS256 and that sub is 42." correct>
+
+They're JSON in base64url: `base64 -d` decodes them. What you can't do is make another signature.
+
+</QuizOption>
+
+<QuizOption text="Everything, including the private key: base64 decodes the signature and the key comes out of it.">
+
+The decoded signature is meaningless bytes. The private key can't be extracted from a signature.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="The shop stores passwords with argon2 and API keys with SHA-256. Why not argon2 for the keys too?"
+  review="API keys: how a program identifies itself"
+>
+
+<QuizOption text="Because SHA-256 can be undone, so the shop can show the key again.">
+
+No hash can be undone, SHA-256 included. That's why `create-key` shows it only once.
+
+</QuizOption>
+
+<QuizOption text="Because argon2 only works with the short texts a person types, like a password.">
+
+argon2 computes the hash of any text. The reason is a different one: what can be tried.
+
+</QuizOption>
+
+<QuizOption text="Because a random key has no list of likely ones, and a slow hash would slow down every request." correct>
+
+argon2 is slow to hold back whoever tries likely passwords. With 256 random bits there's nothing to try.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Fast Delivery suggests sending its key in the URL, /v2/orders?key=shop_…, because it’s easier to program. What do you answer?"
+  review="Common mistakes"
+>
+
+<QuizOption text="That it goes in Authorization: Bearer, because URLs get recorded in logs and histories." correct>
+
+Servers, proxies and browsers store full URLs. An `Authorization` header isn't usually recorded.
+
+</QuizOption>
+
+<QuizOption text="That it doesn’t matter: with HTTPS, the URL isn’t stored anywhere.">
+
+HTTPS encrypts it on the way, but the server receives it whole and writes it to its log.
+
+</QuizOption>
+
+<QuizOption text="That a cookie is better, because programs can only send secrets in cookies.">
+
+A program sends whatever headers it wants, and `Authorization` is the standard one. Cookies are a browser thing.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [RFC 7519: JSON Web Token](https://www.rfc-editor.org/rfc/rfc7519.html): the standard.
+- [RFC 8725: JSON Web Token Best Current Practices](https://www.rfc-editor.org/rfc/rfc8725.html): the known attacks and how to avoid them.
+- [RFC 6750: Bearer Token Usage](https://www.rfc-editor.org/rfc/rfc6750.html): `Authorization: Bearer` and `WWW-Authenticate`.
+- [Stop using JWT for sessions](http://cryto.net/~joepie91/blog/2016/06/13/stop-using-jwt-for-sessions/) (Sven Slootweg): why a JWT isn't a better session.
+- [REST Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html) (OWASP): JWT and API keys.
+- [Behind GitHub's new authentication token formats](https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/) (GitHub): why its keys have a prefix.
+- [jose](https://github.com/panva/jose): the example's library.

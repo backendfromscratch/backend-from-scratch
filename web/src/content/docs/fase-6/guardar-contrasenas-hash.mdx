@@ -1,0 +1,556 @@
+---
+translationKey: passwords
+title: "Cómo guardar contraseñas: hash, sal y argon2"
+description: "Cómo guardar contraseñas de forma segura: por qué ni en claro ni cifradas, qué es la sal y cómo usar argon2id en Node.js, con las reglas de NIST."
+sidebar:
+  label: Contraseñas
+  order: 1
+lesson:
+  oneLiner: "Una contraseña no se guarda nunca, ni tal cual ni cifrada: se guarda su hash, calculado con un algoritmo lento a propósito (argon2id) y con una sal al azar para cada persona. Para comprobarla, se repite el cálculo y se compara. Si roban la tabla, cada intento de adivinar les cuesta tiempo y memoria."
+  objectives:
+    - Explicar por qué una contraseña no se guarda en claro, ni cifrada, ni con un hash rápido como SHA-256.
+    - Explicar qué hace la sal y por qué un hash de contraseñas tiene que ser lento.
+    - Guardar y comprobar contraseñas con argon2id en Node, y leer el texto que se guarda, pieza a pieza.
+    - "Aplicar las reglas de NIST para contraseñas: longitud y una lista de contraseñas comunes, sin símbolos obligatorios ni caducidad."
+  prerequisites: [phase-6]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Imagina que, dentro de un año, alguien se lleva una copia de la base de datos de la tienda: una copia de seguridad olvidada en un sitio público, un portátil robado, o una <Term id="sql-injection">inyección SQL</Term> como la de la [Fase 5](/fase-5/postgresql-node-js/#pegar-el-valor-en-el-texto-la-inyección-sql).
+
+En la tabla está Marta, con su correo y su contraseña. Y Marta, como casi todo el mundo, usa la misma contraseña en su correo electrónico. Con esa fila, quien la tenga entra en su correo, y desde ahí pide «He olvidado mi contraseña» en todas sus demás cuentas.
+
+La tienda necesita comprobar la contraseña de Marta cada vez que entra. **¿Cómo la guarda para comprobarla, sin que nadie pueda leerla, ni siquiera tú?**
+
+## La analogía
+
+<Analogy>
+
+Piensa en un batido. Con un plátano, dos fresas y leche sale un batido de un color y un sabor concretos, y con lo mismo sale siempre igual. Pero del batido no se puede volver a la fruta.
+
+La tienda no guarda tu fruta: guarda tu batido. Cuando vuelves, bate lo que traes y compara el color y el sabor. Si coinciden, era tu fruta.
+
+Para que nadie prepare de antemano los batidos de las frutas más comunes, añade a cada uno una pizca de una especia distinta, apuntada en tu vaso. Y usa una batidora que tarda un rato y ocupa toda la encimera: para ti es una espera corta; para quien prueba millones de frutas, interminable.
+
+<div slot="limits">
+
+- Dos batidos de frutas casi iguales se parecen. Dos contraseñas casi iguales dan hashes que no se parecen en nada.
+- La especia no es secreta: va apuntada en el vaso. Lo que consigue es que cada vaso sea distinto.
+- Quien roba la tabla no separa la fruta: prueba frutas hasta que un batido coincide. Contra eso sirve la batidora lenta.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Guardarla tal cual: una filtración las enseña todas
+
+Si la tabla guarda la contraseña de Marta en claro, **la primera filtración las enseña todas**. Y no solo en la tienda: como mucha gente repite contraseña, quien tiene la lista la prueba en otros servicios con el mismo correo. Se llama *credential stuffing* («relleno de credenciales»), y lo hacen programas, por millones. Tampoco debería leerlas nadie de dentro: ni tú, ni tus <Term id="log">logs</Term>.
+
+### Cifrarla: quien tiene la clave las tiene todas
+
+<Term id="encryption">Cifrar</Term>, como en la [lección de TLS de la Fase 0](/fase-0/tls-y-https/#una-sola-llave-el-cifrado-simétrico), parece la solución, pero el cifrado se puede deshacer: es su razón de ser. **Quien tenga la clave tiene todas las contraseñas a la vez.**
+
+Y la clave tiene que estar en el servidor, que la usa: quien se lleva una copia del servidor suele llevarse el `.env` con ella.
+
+Pero la tienda nunca necesita leer la contraseña de Marta: solo comprobar que la de hoy es la de siempre. Para eso basta algo que no se puede deshacer.
+
+### Un hash: comprobarla sin poder leerla
+
+Un <Term id="hash">hash</Term> es eso: la huella de unos datos, que no se puede deshacer, como viste en [«Git por dentro»](/fase-1/git-por-dentro/#el-hash-la-huella-de-los-datos). La tienda guarda el hash de la contraseña, y para comprobarla calcula el de la que llega y compara.
+
+Pero no vale cualquier hash. Mira el de `123456`, la contraseña más usada del mundo, con SHA-256, la fórmula de hash más común:
+
+<TryIt
+  title="El SHA-256 de 123456"
+  cmd={`printf '%s' '123456' | shasum -a 256`}
+  output={`8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92  -`}
+>
+
+`printf '%s'` escribe el texto sin un salto de línea al final, que cambiaría el hash, y `shasum -a 256` calcula su SHA-256. El `-` del final significa que el texto llegó por la <Term id="pipe">tubería</Term>, no de un fichero. En Linux y WSL, `sha256sum` hace lo mismo.
+
+Busca ese hash en internet: verás que es `123456`.
+
+</TryIt>
+
+### SHA-256 es demasiado rápido
+
+Ese hash tiene dos problemas.
+
+**El primero: la misma contraseña da siempre el mismo hash.** Si Carmen y Pablo usan `123456`, sus filas tienen el mismo texto, y al adivinar una se adivinan las dos. Peor: hay **tablas precalculadas** con los hashes de miles de millones de contraseñas, listas para buscar en ellas (las *rainbow tables* son una forma compacta de guardarlas).
+
+**El segundo: SHA-256 es rápido.** Está hecho para resumir ficheros enormes en un instante, y aquí lo rápido ayuda a quien ataca. Quien roba la tabla no deshace ningún hash: prueba contraseñas, una tras otra, y compara. Una tarjeta gráfica de las de jugar calcula miles de millones de SHA-256 por segundo.
+
+En 2012 se filtraron los hashes de unos 6,5 millones de contraseñas de LinkedIn, calculados [sin sal](https://en.wikipedia.org/wiki/2012_LinkedIn_hack): con tablas precalculadas, muchas se adivinaron deprisa.
+
+Probar contraseñas contra cuentas o hashes que no son tuyos, sin permiso, es un delito. En esta lección, todo se hace contra tu tienda, en `localhost`.
+
+### La sal: la misma contraseña, dos hashes distintos
+
+La **<Term id="salt">sal</Term>** arregla el primer problema. Son 16 bytes al azar, distintos para cada contraseña, que se mezclan con ella antes de calcular el hash, y que se guardan al lado.
+
+- **Carmen y Pablo, con la misma contraseña, tienen hashes distintos,** porque sus sales son distintas.
+- **Las tablas precalculadas dejan de servir:** harían falta una por cada sal posible.
+
+La sal no es secreta. Y no arregla el segundo problema: quien ataca a Marta prueba con la sal de Marta, igual de deprisa.
+
+### Lento a propósito: argon2id, bcrypt y scrypt
+
+Para eso existen los algoritmos de **<Term id="password-hashing">hash de contraseñas</Term>**: lentos a propósito, y con la lentitud ajustable. Quien inicia sesión espera unas decenas de milisegundos y no lo nota. Quien prueba mil millones de contraseñas, espera mil millones de veces más.
+
+| Algoritmo | Desde | Qué lo hace caro | Mínimo de OWASP |
+|---|---|---|---|
+| **argon2id** | 2015 | Tiempo y memoria | 19 MiB de memoria, 2 pasadas, paralelismo 1 |
+| scrypt | 2009 | Tiempo y memoria | N = 2¹⁷, r = 8, p = 1 |
+| bcrypt | 1999 | Tiempo | Coste 10; solo lee los primeros 72 bytes |
+| PBKDF2 | 2000 | Tiempo (repeticiones) | 600 000 vueltas con SHA-256; solo si una norma lo exige |
+
+**argon2id es la primera opción de <Term id="owasp">OWASP</Term>,** la comunidad de seguridad web de la lección 9. argon2, su familia, ganó en 2015 un concurso público de algoritmos de contraseñas. PBKDF2, un hash repetido miles de veces, lo usaste en la [lección del event loop](/fase-3/event-loop-node/#calcular-sí-bloquea) de la Fase 3.
+
+La memoria es la clave. Una tarjeta gráfica tiene miles de núcleos pequeños, pero poca memoria para cada uno. Si cada intento necesita 19 MiB, la memoria se acaba mucho antes que los núcleos.
+
+### argon2id en Node, sin instalar nada
+
+Node trae argon2 desde la versión 24.7, en `node:crypto`. Los parámetros de la tienda, en `src/contrasenas.ts`:
+
+<ProjectCode file="tienda-api/24-contrasenas/src/contrasenas.ts" region="parametros" />
+
+- **`memory: 19_456`**: la memoria, en bloques de 1 KiB: 19 MiB. El `_` solo separa las cifras.
+- **`passes: 2`**: cuántas pasadas da sobre esa memoria.
+- **`parallelism: 1`**: en cuántas partes reparte el trabajo, que se podrían calcular a la vez.
+- **`tagLength: 32`**: el hash sale de 32 bytes.
+- **`promisify(argon2)`**: `argon2` avisa al terminar llamando a una <Term id="function">función</Term> que le pasas; `promisify` la convierte en una que devuelve una <Term id="promise">promesa</Term>, para usar `await`. Calcula en un hilo de ayuda, y el servidor sigue atendiendo a los demás.
+
+**`crypto.argon2` llegó como experimental,** y la [documentación de Node 26](https://nodejs.org/api/crypto.html#cryptoargon2algorithm-parameters-callback) ya no lo marca así. El proyecto usa Node 26. Con un Node más antiguo, el paquete [`@node-rs/argon2`](https://www.npmjs.com/package/@node-rs/argon2) hace lo mismo, con argon2 ya compilado para cada sistema.
+
+### El formato PHC: todo lo necesario en un texto
+
+`hashear` calcula el hash y lo guarda todo en un solo texto:
+
+<ProjectCode file="tienda-api/24-contrasenas/src/contrasenas.ts" region="hashear" />
+
+- **`randomBytes(BYTES_DE_SAL)`**: la sal, 16 bytes al azar, nueva en cada llamada.
+- **`normalize('NFKC')`**: la `ñ` se puede escribir como una letra o como una `n` más una tilde. Normalizada, la misma contraseña da siempre los mismos bytes.
+- **El `return`** junta todo con `$`, en el formato PHC, el que usan casi todas las bibliotecas de argon2.
+
+El de Marta, que crearás en «Pruébalo», pieza a pieza:
+
+```
+$argon2id$v=19$m=19456,t=2,p=1$KqCKrALlpwkusU1YqmAHBg$zgnicr8rA/+sufL3005gSmGpDS/9RDJicDqd8dH54k0
+```
+
+| Pieza | Qué es |
+|---|---|
+| `argon2id` | El algoritmo |
+| `v=19` | La versión de argon2, la 1.3: se escribe `0x13` en hexadecimal, que es 19 |
+| `m=19456,t=2,p=1` | Memoria, pasadas e hilos |
+| `KqCKrALlpwkusU1YqmAHBg` | La sal: 16 bytes en base64, sin el relleno `=` |
+| `zgnicr8rA/+…H54k0` | El hash: 32 bytes en base64 |
+
+Con los parámetros dentro, mañana puedes subirlos para las contraseñas nuevas, y las antiguas se comprueban con los suyos. Una antigua solo se puede actualizar cuando su dueña inicia sesión: es el único momento en que la tienda tiene la contraseña.
+
+### Comprobar: el mismo cálculo y una comparación en tiempo constante
+
+<ProjectCode file="tienda-api/24-contrasenas/src/contrasenas.ts" region="verificar" />
+
+- **`guardado.split('$')`** separa las piezas, y el cálculo es el de `hashear`, con la sal y los parámetros guardados.
+- **`timingSafeEqual`** compara tardando lo mismo acierte o falle, como la firma de los webhooks en la [Fase 4](/fase-4/webhooks-idempotencia/#comprobar-la-firma-el-cuerpo-tal-cual-en-tiempo-constante). Una comparación normal se para en el primer byte distinto, y midiendo cuánto tarda se puede ir averiguando el resultado.
+
+### Las reglas que ayudan y las que no
+
+Las reglas de siempre, «una mayúscula, un número y un símbolo, y cámbiala cada tres meses», empujan a `Contraseña1!`, después a `Contraseña2!`, y a un pósit. El NIST, el instituto de normas de Estados Unidos, las retiró en su guía [SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b.html), de 2025:
+
+| Ayuda | No ayuda |
+|---|---|
+| Un mínimo de 15 caracteres si la contraseña va sola, sin segundo factor: una frase vale | Exigir mayúsculas, números o símbolos (NIST lo prohíbe) |
+| Aceptar al menos 64, con espacios, tildes y emojis | Un máximo corto, como 16 |
+| Rechazar las contraseñas comunes, filtradas o previsibles, y decir por qué | Cambiarla cada cierto tiempo: solo si hay señales de que se ha filtrado |
+| Dejar pegar y usar gestores de contraseñas | Pistas y preguntas de seguridad («¿tu primera mascota?») |
+
+En la tienda:
+
+<ProjectCode file="tienda-api/24-contrasenas/src/contrasenas.ts" region="reglas" />
+
+- **`MINIMO` y `MAXIMO`**: de 15 a 128 caracteres.
+- **`COMUNES`** lee `src/contrasenas-comunes.txt`: las de 15 caracteres o más que son un patrón (filas del teclado, cifras seguidas) entre las 100 000 más usadas, una lista del centro de ciberseguridad del Reino Unido. Con `toLowerCase()`, `QWERTY…` y `qwerty…` cuentan igual.
+- **`[...contrasena.normalize('NFKC')].length`** cuenta caracteres de verdad: para `length`, un emoji ocupa dos.
+
+Una tienda real comprobaría muchas más, por ejemplo con [Pwned Passwords](https://haveibeenpwned.com/Passwords), un servicio que dice si una contraseña ha salido en alguna filtración sin enviarle la contraseña.
+
+### La tabla usuarios y POST /v2/cuentas
+
+Las cuentas viven en una tabla nueva, con su <Term id="migration">migración</Term>, la 005:
+
+<ProjectCode file="tienda-api/24-contrasenas/bd/migraciones/005-usuarios.sql" region="usuarios" />
+
+- **`hash_contrasena`** puede faltar: quien entre con otra cuenta, como «Iniciar sesión con Google» ([lección 4](/fase-6/oauth-openid-connect/)), no tiene contraseña en la tienda.
+- **El índice único sobre `lower(email)`**: `Marta@Ejemplo.com` y `marta@ejemplo.com` son la misma cuenta.
+
+`crearUsuario`, en `src/usuarios.ts`, calcula el hash y guarda la fila. Si el email ya existe, PostgreSQL contesta `23505` y la función devuelve `email-en-uso`. Un `SELECT` previo no bastaría: dos altas a la vez lo pasarían las dos, la [condición de carrera](/fase-5/transacciones-acid/#dos-compradores-una-taza-la-condición-de-carrera) de la Fase 5.
+
+La ruta, en `src/v2.ts`:
+
+<ProjectCode file="tienda-api/24-contrasenas/src/v2.ts" region="crear-cuenta" />
+
+- **Las reglas se comprueban antes:** el esquema `esquemaCuentaNueva`, en `src/esquemas.ts`, llama a `problemaDeContrasena`, y si falla contesta `422`, como toda la <Term id="validation">validación</Term> desde la [Fase 3](/fase-3/validar-datos-zod/).
+- **El email repetido es un `409`**, con <Term id="problem-details">Problem Details</Term>.
+- **La respuesta lleva el id y el email,** nunca el hash.
+
+Ese `409` le dice a cualquiera si un email tiene cuenta. Callarlo exigiría mandar un correo; aquí, la lección 8, «Rate limiting», limitará cuántas veces se puede preguntar.
+
+## Pruébalo
+
+El objetivo: dar de alta a Marta, ver que nadie puede leer su contraseña en la tabla y medir cuánto más lento es argon2id.
+
+### Actualiza tu proyecto
+
+Partes de tu proyecto de la [lección 9 de la Fase 5, «ORM»](/fase-5/orm-drizzle-prisma/), en `~/curso-backend/fase-3/tienda-api`. No hay paquetes nuevos: argon2 viene con Node.
+
+1. Crea `src/contrasenas.ts` y `src/usuarios.ts`, y copia del paso la lista `src/contrasenas-comunes.txt`.
+2. Crea `bd/migraciones/005-usuarios.sql`.
+3. Añade la tabla `usuarios` a `src/esquema.ts`, `esquemaCuentaNueva` y `esquemaUsuario` a `src/esquemas.ts`, la ruta `crearCuenta` a `src/contrato.ts` y la ruta a `src/v2.ts`. Lo que no has visto aquí, cópialo del paso.
+
+El ejemplo y las pruebas vienen en la carpeta de esta lección:
+
+```sh
+cd ~/curso-backend/fase-3
+curl -O https://backenddesdecero.com/practicas/tienda-api/24-contrasenas.tar.gz
+tar -xzf 24-contrasenas.tar.gz
+cd tienda-api
+cp ../24-contrasenas/ejemplos/hash-rapido.ts ejemplos/
+cp ../24-contrasenas/bd/cuentas.sql bd/
+cp ../24-contrasenas/scripts/cargar-datos.ts scripts/
+cp ../24-contrasenas/test/*.ts test/
+```
+
+`bd/cuentas.sql` trae cuatro cuentas de práctica con su hash, y el nuevo `cargar-datos.ts` las carga con `npm run bd:datos`. Las pruebas ya las usan; tú, en la [lección 5](/fase-6/roles-permisos-rbac/). Si las cargas antes, Marta no será la cuenta 1.
+
+<TryIt
+  title="1. La foto de drizzle-kit"
+  cmd="npm run bd:generar -- --name=usuarios"
+  output={`> tienda-api@1.0.0 bd:generar
+> drizzle-kit generate --name=usuarios
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/Users/ana/curso-backend/fase-3/tienda-api/drizzle.config.ts'
+7 tables
+categorias 2 columns 0 indexes 0 fks
+claves_idempotencia 6 columns 0 indexes 0 fks
+eventos_procesados 2 columns 0 indexes 0 fks
+pedidos 5 columns 1 indexes 1 fks
+productos 4 columns 0 indexes 0 fks
+productos_categorias 2 columns 1 indexes 2 fks
+usuarios 4 columns 1 indexes 0 fks
+
+[✓] Your SQL migration file ➜ drizzle/0002_usuarios.sql 🚀`}
+>
+
+Como en la lección 9 de la Fase 5. Esta vez la 005 de `bd/migraciones/` está escrita a mano, con comentarios, y dice lo mismo que `drizzle/0002_usuarios.sql`. Si sale `No schema changes`, no guardaste `esquema.ts`.
+
+</TryIt>
+
+<TryIt
+  title="2. Aplica la migración"
+  cmd="npm run bd:migrar"
+  output={`> tienda-api@1.0.0 bd:migrar
+> node --env-file-if-exists=.env scripts/migrar.ts
+
+Aplicada: 005-usuarios.sql`}
+>
+
+Después, `npm test` debería acabar con `fail 0`. Las salidas son de Node 26.11.1 y PostgreSQL 18; tus ids, hashes y tiempos serán otros.
+
+</TryIt>
+
+### Marta se da de alta
+
+Arranca la API con `npm start` y, en otra terminal:
+
+<TryIt
+  title="3. Una cuenta nueva"
+  cmd={`curl -s -i -w '\\n' --json '{"email":"marta@ejemplo.com","contrasena":"una frase larga que solo sé yo"}' localhost:3000/v2/cuentas`}
+  output={`HTTP/1.1 201 Created
+content-type: application/json
+location: /v2/cuentas/1
+vary: Origin
+x-request-id: 86063e31-6972-4654-8f8d-924451ee3d47
+content-length: 36
+Date: Tue, 13 Oct 2026 23:56:35 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"id":1,"email":"marta@ejemplo.com"}`}
+>
+
+Un `201` con el id y el email. Es la primera cuenta de tu tabla: el id 1.
+
+</TryIt>
+
+<TryIt
+  title="4. El mismo email, con otras mayúsculas"
+  cmd={`curl -s -i -w '\\n' --json '{"email":"Marta@Ejemplo.com","contrasena":"otra frase larga distinta"}' localhost:3000/v2/cuentas`}
+  output={`HTTP/1.1 409 Conflict
+content-type: application/problem+json
+vary: Origin
+x-request-id: 040d5f47-c774-489b-a788-5003b35d35e3
+content-length: 158
+Date: Tue, 13 Oct 2026 23:56:35 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"type":"https://tienda.example/problemas/email-en-uso","title":"Ya hay una cuenta con ese email","status":409,"detail":"Si es tuya, inicia sesión con ella"}`}
+>
+
+El índice sobre `lower(email)` ve la misma cuenta. Si sale `500`, revisa que `crearUsuario` mire `error.cause`: Drizzle envuelve el error de PostgreSQL.
+
+</TryIt>
+
+Ahora Lucía intenta darse de alta con dos contraseñas malas:
+
+<TryIt
+  title="5. Una corta y una de las más usadas"
+  cmd={`curl -s -w '\\n' --json '{"email":"lucia@ejemplo.com","contrasena":"Lucia2026!"}' localhost:3000/v2/cuentas
+curl -s -w '\\n' --json '{"email":"lucia@ejemplo.com","contrasena":"1q2w3e4r5t6y7u8i9o0p"}' localhost:3000/v2/cuentas`}
+  output={`{"type":"https://tienda.example/problemas/datos-no-validos","title":"Los datos no son válidos","status":422,"detail":"Mira en «errores» qué falla en cada campo.","errores":[{"campo":"contrasena","problema":"Como mínimo, 15 caracteres: una frase vale"}]}
+{"type":"https://tienda.example/problemas/datos-no-validos","title":"Los datos no son válidos","status":422,"detail":"Mira en «errores» qué falla en cada campo.","errores":[{"campo":"contrasena","problema":"Es una de las contraseñas más usadas: es lo primero que se prueba"}]}`}
+>
+
+`Lucia2026!` cumple las reglas de siempre, y es corta. `1q2w3e4r5t6y7u8i9o0p` tiene 20 caracteres, pero recorre el teclado en zigzag: es la primera de la lista.
+
+En la terminal del servidor, `ms` dice cuánto tardó cada petición: los `422`, dos milisegundos como mucho, sin calcular ningún hash. **Y ninguna línea lleva el cuerpo:** una contraseña nunca va a un log.
+
+</TryIt>
+
+### Lo que guarda la tabla
+
+<TryIt
+  title="6. La fila de Marta"
+  cmd={`psql -d tienda -c 'SELECT id, email, hash_contrasena FROM usuarios;'`}
+  output={` id |       email       |                                          hash_contrasena
+----+-------------------+---------------------------------------------------------------------------------------------------
+  1 | marta@ejemplo.com | $argon2id$v=19$m=19456,t=2,p=1$KqCKrALlpwkusU1YqmAHBg$zgnicr8rA/+sufL3005gSmGpDS/9RDJicDqd8dH54k0
+(1 row)`}
+>
+
+Es todo lo que la tienda sabe de la contraseña de Marta. Tienes acceso completo a la base de datos, y no puedes leerla: solo comprobar una que te digan, como hará la [lección 2](/fase-6/sesiones-cookies/) al iniciar sesión.
+
+</TryIt>
+
+### Rápido contra lento
+
+`ejemplos/hash-rapido.ts` calcula un millón de SHA-256, después un argon2id, y por último la misma contraseña dos veces:
+
+<TryIt
+  title="7. Mide los dos"
+  cmd="node ejemplos/hash-rapido.ts"
+  output={`Un millón de hashes SHA-256: 1471 ms
+Un hash argon2id: 29 ms
+En lo que tarda un argon2id, SHA-256 calcula unos 19.725.
+
+La misma contraseña, dos veces:
+$argon2id$v=19$m=19456,t=2,p=1$lv9c6dm86W9BmRmyKRIVyg$Flg6brdCiKLsP6+hgJgTz/nUhpzXWYbwiy1Ukr1GWew
+$argon2id$v=19$m=19456,t=2,p=1$JIv/Mg0D9URuYlwlbVI6YA$ngvw+egx5XQ4d3R6FjEjoR48dOMgG5XtaJLwhT60Z08`}
+>
+
+La tercera línea: por cada contraseña probada contra argon2id, contra SHA-256 se prueban miles. Tus tiempos dependen de tu ordenador.
+
+Y en las dos últimas: la misma frase da dos textos distintos, cada uno con su sal.
+
+</TryIt>
+
+## Ya lo has visto
+
+- **«He olvidado mi contraseña».** Una web bien hecha te manda un enlace para poner otra, nunca tu contraseña: no la tiene. Si alguna te la manda por correo, la guarda en claro o cifrada.
+- **El aviso de contraseña filtrada** de tu navegador o tu gestor de contraseñas: comprueba las tuyas contra las filtraciones conocidas.
+
+## Errores comunes
+
+- **Cifrar las contraseñas,** o pasarlas a base64, que ni siquiera es cifrado: las dos cosas se deshacen.
+- **Usar un hash rápido,** MD5, SHA-1 o SHA-256, aunque lleve sal.
+- **Una sal fija para todos, o el email como sal.** La sal es al azar y distinta en cada hash.
+- **Comparar con `===`.** Usa `timingSafeEqual`.
+- **Usar `argon2Sync` en una ruta:** bloquea el servidor mientras calcula.
+- **Escribir el cuerpo de la petición en el log,** o devolver el hash en la API.
+
+## Resumen
+
+- Una contraseña no se guarda nunca: ni en claro, porque una filtración las enseña todas, ni cifrada, porque quien tiene la clave las tiene todas.
+- Se guarda un hash, que no se puede deshacer. Para comprobarla, se calcula otra vez y se compara en tiempo constante.
+- Un hash rápido como SHA-256 deja probar miles de millones de contraseñas por segundo. La sal, al azar en cada una, inutiliza las tablas precalculadas.
+- argon2id es lento a propósito y necesita memoria. El texto guardado (PHC) lleva el algoritmo, los parámetros, la sal y el hash.
+- NIST: 15 caracteres como mínimo y una lista de contraseñas comunes; nada de símbolos obligatorios ni caducidad.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Una tienda guarda las contraseñas cifradas con AES, y la clave está en el .env del mismo servidor. Alguien se lleva una copia del servidor entero. ¿Qué pasa con las contraseñas?"
+  review="Cifrarla: quien tiene la clave las tiene todas"
+>
+
+<QuizOption text="Están a salvo: un cifrado convierte cada contraseña en algo que no se puede volver atrás.">
+
+Eso es un hash, no un cifrado. Un cifrado se deshace con su clave, por diseño.
+
+</QuizOption>
+
+<QuizOption text="Las tiene todas: con la clave del .env, se descifran." correct>
+
+La clave viaja con la copia. No hace falta romper AES: basta con usarlo.
+
+</QuizOption>
+
+<QuizOption text="Están a salvo: para leerlas, habría que romper AES.">
+
+No hace falta romperlo: quien tiene la clave descifra como lo haría la tienda.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Carmen y Pablo, dos clientes, eligen la misma contraseña. La tienda la guarda con argon2id y su sal. ¿Cómo son sus dos hash_contrasena?"
+  review="La sal: la misma contraseña, dos hashes distintos"
+>
+
+<QuizOption text="Iguales: con argon2id, la misma contraseña da siempre el mismo texto.">
+
+Solo con la misma sal. Cada contraseña se mezcla con su propia sal antes del cálculo.
+
+</QuizOption>
+
+<QuizOption text="Iguales: la tienda usa la misma sal para todas las contraseñas.">
+
+`hashear` crea una sal nueva en cada llamada. Una sal fija para todos es uno de los errores comunes.
+
+</QuizOption>
+
+<QuizOption text="Distintos: cada uno tiene su sal, y la sal entra en el cálculo." correct>
+
+Lo viste con `hash-rapido.ts`: la misma frase, dos textos distintos. Quien roba la tabla no sabe que comparten contraseña.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un compañero propone guardar las contraseñas con SHA-256 y una sal al azar: «es un hash seguro, y la sal evita las tablas precalculadas». ¿Qué le falta?"
+  review="SHA-256 es demasiado rápido"
+>
+
+<QuizOption text="Que es rápido: se pueden probar miles de millones de contraseñas por segundo." correct>
+
+La sal obliga a probar cuenta por cuenta, pero no frena cada intento. Para eso hace falta un hash lento, como argon2id.
+
+</QuizOption>
+
+<QuizOption text="Nada: con sal, SHA-256 es tan seguro como argon2id para guardar contraseñas.">
+
+Contra tablas precalculadas, sí ayuda. Contra probar contraseñas una a una, SHA-256 sigue siendo miles de veces más rápido.
+
+</QuizOption>
+
+<QuizOption text="Que un SHA-256 se puede deshacer: con el hash y la sal se calcula la contraseña.">
+
+SHA-256 no se deshace. Quien ataca no lo deshace: adivina contraseñas y compara.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="El formulario de alta de una web pide de 8 a 16 caracteres, con mayúscula, número y símbolo, y obliga a cambiarla cada 90 días. Según la guía de NIST, ¿qué debería cambiar?"
+  review="Las reglas que ayudan y las que no"
+>
+
+<QuizOption text="Solo el mínimo, de 8 a 12: los símbolos obligatorios y la caducidad son buenas medidas.">
+
+NIST prohíbe exigir tipos de caracteres, y no quiere caducidad periódica: la gente responde con `Contraseña1!`, `Contraseña2!`…
+
+</QuizOption>
+
+<QuizOption text="Nada: cambiarla cada 90 días hace que una contraseña filtrada deje de valer enseguida.">
+
+En 90 días hay tiempo de sobra para usar una contraseña filtrada. Se cambia cuando hay señales de filtración, no por calendario.
+
+</QuizOption>
+
+<QuizOption text="Un mínimo de 15, sin tipos obligatorios ni caducidad, y una lista de las más usadas." correct>
+
+Es lo que pide la SP 800-63B-4 para una contraseña que se usa sola, además de aceptar al menos 64 caracteres. Una frase larga se recuerda bien y cuesta adivinarla.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Dentro de un año subes la memoria de argon2id de 19 a 46 MiB. ¿Qué pasa con las cuentas que ya existen?"
+  review="El formato PHC: todo lo necesario en un texto"
+>
+
+<QuizOption text="Siguen entrando: cada texto guardado lleva sus parámetros, y verificar usa esos." correct>
+
+`m=19456` va dentro del texto. Los hashes nuevos usan 46 MiB, y cada antiguo se puede recalcular cuando su dueño inicia sesión.
+
+</QuizOption>
+
+<QuizOption text="Nadie puede entrar hasta que cambie su contraseña, porque los hashes antiguos ya no cuadran.">
+
+Cuadrarían si `verificar` usara los parámetros nuevos, pero usa los guardados con cada hash.
+
+</QuizOption>
+
+<QuizOption text="Hay que recalcular todos los hashes guardados con un script, la misma noche del cambio.">
+
+No se puede: para calcular el hash nuevo hace falta la contraseña, y la tienda no la tiene. Solo la tiene un momento, cuando alguien inicia sesión.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Pulsas «He olvidado mi contraseña» en una web, y te llega un correo con tu contraseña de siempre. ¿Qué te dice eso?"
+  review="Cifrarla: quien tiene la clave las tiene todas"
+>
+
+<QuizOption text="Nada malo: la habrá sacado de su hash solo para mandártela.">
+
+De un hash no se saca la contraseña. Si te la manda, guarda algo que se puede leer.
+
+</QuizOption>
+
+<QuizOption text="Que la guarda en claro o cifrada: se puede leer." correct>
+
+Una web que guarda un hash no puede mandártela: te manda un enlace para poner otra. Cambia esa contraseña en todos los sitios donde la uses.
+
+</QuizOption>
+
+<QuizOption text="Que la guarda bien, porque el correo viaja cifrado con TLS.">
+
+TLS protege el viaje, no lo que guarda el servidor. Y el correo se queda en tu buzón, en claro.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html) (OWASP, en inglés): qué algoritmo usar y con qué parámetros.
+- [NIST SP 800-63B-4](https://pages.nist.gov/800-63-4/sp800-63b.html) (NIST, en inglés): las reglas de las contraseñas, en la sección 3.1.1.
+- [RFC 9106](https://www.rfc-editor.org/rfc/rfc9106.html) (IETF, en inglés): argon2, por dentro.
+- [crypto.argon2](https://nodejs.org/api/crypto.html#cryptoargon2algorithm-parameters-callback) y [timingSafeEqual](https://nodejs.org/api/crypto.html#cryptotimingsafeequala-b) (Node.js, en inglés).
+- [El formato PHC](https://github.com/P-H-C/phc-string-format/blob/master/phc-sf-spec.md) (en inglés): cómo se escribe un hash de contraseña con sus parámetros.
+- [Have I Been Pwned](https://haveibeenpwned.com/): comprueba si tu correo ha salido en alguna filtración.

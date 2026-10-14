@@ -75,7 +75,8 @@ export const phases: Phase[] = [
   },
   {
     number: 6,
-    status: 'coming-soon',
+    status: 'available',
+    lessonCount: 9,
     title: {
       es: 'Autenticación, autorización y seguridad',
       en: 'Authentication, authorization and security',

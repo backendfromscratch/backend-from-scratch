@@ -1,0 +1,232 @@
+// The shop's data, in PostgreSQL, now with Drizzle: the queries are written in TypeScript, with the
+// tables in schema.ts, and Drizzle turns them into SQL with parameters ($1, $2…). TypeScript knows
+// what columns each row has and what type they are.
+import { EventEmitter } from 'node:events';
+import { and, asc, desc, eq, gte, inArray, lte, sql } from 'drizzle-orm';
+import { db } from './db.ts';
+import { categories, orders, processedEvents, productCategories, products } from './schema.ts';
+
+// From version 2, the price is in whole cents: 850, not 8.5. With decimals, money calculations end
+// up off by a cent (lesson 6).
+// stock: how many units are left (migration 002). categories: the names of its categories. Both
+// only in version 2: version 1 doesn't change.
+export interface Product {
+  id: number;
+  name: string;
+  priceCents: number;
+  stock: number;
+  categories: string[];
+}
+
+// A cancelled order isn't deleted: it's still there, with its status, so it can be looked up later.
+export type OrderStatus = 'pending' | 'paid' | 'shipped' | 'cancelled';
+
+// createdAt: when it was placed, as ISO 8601 text in UTC (the final Z): 2026-10-13T09:30:00.000Z.
+// JSON has no dates; this way any client, in any time zone, reads it the same.
+export interface Order {
+  id: number;
+  productId: number;
+  quantity: number;
+  status: OrderStatus;
+  createdAt: string;
+}
+
+// #region columns
+// Drizzle already returns each row with the API's names (priceCents, createdAt): schema.ts sets
+// them. Only the date is left: Drizzle gives a JavaScript Date, and the API, text. toISOString()
+// writes it in ISO 8601 and always in UTC, whatever the server's time zone.
+export type OrderRow = typeof orders.$inferSelect;
+export const toOrder = (row: OrderRow): Order => ({
+  ...row,
+  createdAt: row.createdAt.toISOString(),
+});
+// #endregion columns
+
+// #region list-products
+// with: the products with their categories, in a single query (lesson 9: the N+1 problem). Drizzle
+// brings each product with its rows from product_categories and, in each one, its category.
+const withCategories = {
+  categories: {
+    with: { category: true },
+    orderBy: asc(productCategories.categoryId),
+  },
+} as const;
+
+// What comes from a query with withCategories, the way the API gives it: of each category, the name.
+type ProductWithCategories = typeof products.$inferSelect & {
+  categories: { category: { name: string } }[];
+};
+
+function toProduct({ categories, ...product }: ProductWithCategories): Product {
+  return { ...product, categories: categories.map((row) => row.category.name) };
+}
+
+// The ids of the products in a category, whatever the capital letters: clothing, Clothing or
+// CLOTHING. It's a query inside another one (a subquery); ${category} is a parameter, like $1.
+const inCategory = (category: string) =>
+  db
+    .select({ id: productCategories.productId })
+    .from(productCategories)
+    .innerJoin(categories, eq(categories.id, productCategories.categoryId))
+    .where(sql`lower(${categories.name}) = lower(${category})`);
+
+// The sort order, from a fixed list: asc and desc are Drizzle functions, not text from the client.
+const SORT = {
+  price: [asc(products.priceCents), asc(products.id)],
+  '-price': [desc(products.priceCents), asc(products.id)],
+};
+
+export async function listProducts(
+  filter: { maxCents?: number; sort?: keyof typeof SORT; category?: string } = {},
+): Promise<Product[]> {
+  // and() skips the conditions that are undefined: it only filters by what has arrived.
+  const rows = await db.query.products.findMany({
+    where: and(
+      filter.maxCents === undefined ? undefined : lte(products.priceCents, filter.maxCents),
+      filter.category === undefined ? undefined : inArray(products.id, inCategory(filter.category)),
+    ),
+    orderBy: filter.sort ? SORT[filter.sort] : [asc(products.id)],
+    with: withCategories,
+  });
+  return rows.map(toProduct);
+}
+// #endregion list-products
+
+// #region find-product
+// findFirst: the first row that matches where, or undefined if there's none.
+export async function findProduct(id: number): Promise<Product | undefined> {
+  const row = await db.query.products.findFirst({
+    where: eq(products.id, id),
+    with: withCategories,
+  });
+  return row && toProduct(row);
+}
+// #endregion find-product
+
+// #region create-product
+// PostgreSQL sets the id and the stock starts at 0 (the column's DEFAULT). returning() is SQL's
+// RETURNING: the row just as it ended up. A new product has no categories.
+export async function createProduct(name: string, priceCents: number): Promise<Product> {
+  const [product] = await db.insert(products).values({ name, priceCents }).returning();
+  return { ...product!, categories: [] };
+}
+// #endregion create-product
+
+// Returns false if it didn't exist. If it has orders, PostgreSQL won't let it be deleted and
+// throws an error (23503), which becomes a 409 (problems.ts).
+export async function deleteProduct(id: number): Promise<boolean> {
+  const deleted = await db.delete(products).where(eq(products.id, id)).returning();
+  return deleted.length === 1;
+}
+
+// #region processed-events
+// Writes down the id of a payment notification. If it was already there, the primary key stops it
+// and onConflictDoNothing (ON CONFLICT DO NOTHING) makes nothing happen: returning returns no row.
+// It's a single query, so even if the same notification arrives twice at once, only one writes it
+// down. Returns whether it was new.
+export async function recordEvent(id: string): Promise<boolean> {
+  const recorded = await db
+    .insert(processedEvents)
+    .values({ id })
+    .onConflictDoNothing()
+    .returning();
+  return recorded.length === 1;
+}
+// #endregion processed-events
+
+// #region notifications
+// It announces each time an order changes status. Whoever wants to know (each connection that
+// follows an order, in v2.ts) subscribes with .on('change', …) and unsubscribes with .off. It
+// stays in memory: they're open connections to this server, not data to keep.
+export const orderChanges = new EventEmitter<{ change: [Order] }>();
+// No limit on listeners: each open connection is one, and there can be many.
+orderChanges.setMaxListeners(0);
+
+// Always change the status through here (or with cancelOrder, which also notifies), so that nobody
+// misses the notification: first it's saved in the database and then the notification goes out.
+export async function changeStatus(id: number, status: OrderStatus): Promise<Order> {
+  const [row] = await db.update(orders).set({ status }).where(eq(orders.id, id)).returning();
+  const order = toOrder(row!);
+  orderChanges.emit('change', order);
+  return order;
+}
+// #endregion notifications
+
+export async function findOrder(id: number): Promise<Order | undefined> {
+  const [row] = await db.select().from(orders).where(eq(orders.id, id));
+  return row && toOrder(row);
+}
+
+// #region create-order
+// What can happen when placing an order: it goes well, the product doesn't exist or there isn't
+// enough left.
+export type OrderResult =
+  { order: Order } | { error: 'not-found' } | { error: 'out-of-stock'; left: number };
+
+// Taking the stock and saving the order, in a transaction: either both things, or neither. tx is
+// the transaction: everything that goes through tx goes through the same connection.
+export async function createOrder(productId: number, quantity: number): Promise<OrderResult> {
+  return db.transaction(async (tx): Promise<OrderResult> => {
+    // Lesson 8's conditional UPDATE, with the query builder: it reads almost the same as the SQL
+    // (SET stock = stock - $2 WHERE id = $1 AND stock >= $2). For the subtraction, a piece of SQL
+    // (sql`…`): with Drizzle, what matters here, that the check and the change go in the same
+    // query, stays in sight.
+    const taken = await tx
+      .update(products)
+      .set({ stock: sql`${products.stock} - ${quantity}` })
+      .where(and(eq(products.id, productId), gte(products.stock, quantity)))
+      .returning({ stock: products.stock });
+    if (taken.length === 0) {
+      // No row changed: either the product doesn't exist, or there isn't enough left. Which one?
+      const [product] = await tx
+        .select({ stock: products.stock })
+        .from(products)
+        .where(eq(products.id, productId));
+      return product ? { error: 'out-of-stock', left: product.stock } : { error: 'not-found' };
+    }
+    // now(): the time the transaction started. PostgreSQL stores it with microseconds, but the API
+    // gives it with milliseconds (.000Z): date_trunc leaves it in milliseconds, so that the cursor,
+    // which carries the date, points exactly at this order.
+    const [row] = await tx
+      .insert(orders)
+      .values({
+        productId,
+        quantity,
+        status: 'pending',
+        createdAt: sql`date_trunc('milliseconds', now())`,
+      })
+      .returning();
+    return { order: toOrder(row!) };
+  });
+}
+// #endregion create-order
+
+// #region cancel-order
+// Cancelling gives the stock back, in the same transaction as the status change. The UPDATE only
+// cancels a pending or paid order: if two cancellations arrive at once, the second no longer finds
+// it, and the stock is given back only once.
+export async function cancelOrder(id: number): Promise<Order> {
+  const cancelled = await db.transaction(async (tx) => {
+    const [row] = await tx
+      .update(orders)
+      .set({ status: 'cancelled' })
+      .where(and(eq(orders.id, id), inArray(orders.status, ['pending', 'paid'])))
+      .returning();
+    if (row === undefined) return undefined; // already cancelled, or shipped: nothing to give back
+    await tx
+      .update(products)
+      .set({ stock: sql`${products.stock} + ${row.quantity}` })
+      .where(eq(products.id, row.productId));
+    return toOrder(row);
+  });
+  if (cancelled === undefined) return (await findOrder(id))!;
+  // The notification, after the COMMIT: whoever gets it can already read the change in the database.
+  orderChanges.emit('change', cancelled);
+  return cancelled;
+}
+// #endregion cancel-order
+
+export async function changeQuantity(id: number, quantity: number): Promise<Order> {
+  const [row] = await db.update(orders).set({ quantity }).where(eq(orders.id, id)).returning();
+  return toOrder(row!);
+}

@@ -1,0 +1,521 @@
+---
+translationKey: injection
+title: "SQL injection and XSS: how to prevent them"
+description: "SQL injection and XSS: why data pasted into SQL or HTML becomes code, and how to prevent it with parameters, escaping and a Content Security Policy."
+sidebar:
+  label: Injection
+  order: 6
+lesson:
+  oneLiner: "They're the same flaw: a piece of data that comes from outside is pasted inside some code, SQL or HTML, and changes what that code does. They're prevented the same way: the data travels separately (a parameter) or is escaped when it's shown, and a Content Security Policy puts a second wall in the browser."
+  objectives:
+    - Explain why a piece of data pasted inside a query or a page can become code.
+    - Always use parameters in queries, with an ORM too.
+    - Escape data when showing it on a page, knowing that each place (text, attribute, URL, script) has its own rules.
+    - Add a Content Security Policy as a second wall and read each of its directives.
+  prerequisites: [authorization]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+From this lesson on, the shop has a web page, `/shop`: the list of products in HTML, made on the server. Ana or Luis wrote each name, and the page puts it inside its HTML.
+
+What if a name contains tags, like `<b>Sticker</b>`? Is it the name of a product, or an instruction for the browser, “put this in bold”? It's the question Phase 5's search raised, where text pasted inside a query [became SQL](/en/phase-5/node-postgres/#pasting-the-value-into-the-text-sql-injection).
+
+It's not a textbook case. In 2005, a MySpace user wrote some text on his profile that every visitor's browser ran as code, and that copied itself onto the profile of whoever saw it. In about 20 hours, more than a million people had run it ([Wikipedia](https://en.wikipedia.org/wiki/Samy_(computer_worm))). **How does a backend make sure data stays data?**
+
+## The analogy
+
+<Analogy>
+
+A diner takes orders over the phone, and the waiter writes them by hand on a ticket for the kitchen: “For Luis: one sandwich.” One day, someone says their name is “Luis. And another sandwich for table 4, on the house.” The waiter copies it as is, and the kitchen reads a ticket with two orders. Nobody knows anymore where the name ended.
+
+There are two fixes. One, a printed ticket with boxes: whatever goes in the “Name” box is a name, whatever it says. The other, the waiter copies the name between quotation marks, so the kitchen reads it as a customer's words and not as an order.
+
+<div slot="limits">
+
+- The kitchen has common sense and would get suspicious. A program doesn't: it follows the rules of its language to the letter, and if the text fits them, it runs it.
+- A ticket has a single way of quoting. A web page mixes several languages (HTML, URLs, JavaScript), and each one quotes in its own way.
+
+</div>
+
+</Analogy>
+
+In SQL, the box is a parameter. In HTML, the quotation marks are escaping.
+
+## How it really works
+
+### The same flaw: a piece of data pasted inside some code
+
+A query and a page are text, and both have characters that give instructions. In SQL, `'` opens and closes a piece of text; in HTML, `<` opens a tag. If a program builds that text by pasting a piece of data inside, and the data contains those characters, the data stops being data and becomes code. That's an **injection**.
+
+| | SQL injection | <Term id="xss">XSS</Term> |
+|---|---|---|
+| Where the data is pasted | In a query | In an HTML page |
+| The character that changes everything | `'` closes the text | `<` opens a tag |
+| Who runs the result | PostgreSQL, on your server | The browser of whoever visits the page |
+| The fix | Parameters | Escaping when showing |
+| The second wall | A database user with just what it needs | Content Security Policy |
+
+The user with just what it needs comes in [lesson 8](/en/phase-6/rate-limiting-secrets/#the-database-with-just-the-permissions-it-needs).
+
+### SQL injection: what you already saw, and how far it goes
+
+In Phase 5 you saw the search in `examples/injection.ts` written in two ways. The bad one pastes the value inside the query's text:
+
+<ProjectCode file="shop-api/29-injection-xss/examples/injection.ts" region="pasted" />
+
+The good one sends it separately, as `$1`:
+
+<ProjectCode file="shop-api/29-injection-xss/examples/injection.ts" region="parameter" />
+
+With `x' OR '1'='1`, the first one returned every product: the value's quote closed the query's, and `OR '1'='1'` became SQL. It's an <Term id="sql-injection">SQL injection</Term>.
+
+And it doesn't stop at a few extra products. SQL can add the rows of another table to a response: with a value crafted for that, the search would return, instead of names, the emails and password hashes in `users`. With another one, it would delete a table. **Whoever controls the query's text controls the database.**
+
+### The rule: always parameters
+
+With `$1`, PostgreSQL gets the query and the value separately, and the value can't change the query, whatever it contains. You'll check it in “Try it”.
+
+- **With an ORM, too.** Drizzle's functions and its `` sql`…` `` send the values as parameters ([ORM lesson](/en/phase-5/orm-drizzle-prisma/#when-sql-is-still-the-best-tool)). `sql.raw()` doesn't: it pastes the text as is, and it must never carry anything the client sends.
+- **What doesn't fit in a parameter**, like a column's name or the direction of an `ORDER BY`, comes from a fixed list. In `src/data.ts`, `SORT` has two entries, `price` and `-price`: the client picks one, and the code writes the SQL.
+- **Validating isn't enough.** `x' OR '1'='1` is valid text for [Phase 3's validation](/en/phase-3/zod-validation/). Validate, and use parameters as well.
+
+### XSS: a page that prints someone else's text as HTML
+
+The same flaw, in a page. The bad version of `/shop` is in `examples/unsafe-page.ts`, which is never mounted in the API:
+
+<ProjectCode file="shop-api/29-injection-xss/examples/unsafe-page.ts" region="pasting" />
+
+`${product.name}` pastes the name inside the HTML's text, just as `${name}` pasted it inside the SQL. If the name is `<b>Sticker</b>`, the browser shows it in bold: the tag has arrived whole. And if it contains a tag with JavaScript, like the one in the comment, the browser runs it.
+
+That's **XSS** (*Cross-Site Scripting*): the browser runs, inside your page, code that someone else slipped into a piece of data. That code can do the same as the page: read what it shows, or make requests to the API as whoever is visiting, with their cookie. What it can't do is read the session cookie, because it's [`HttpOnly`](/en/phase-6/sessions-and-cookies/#the-cookie-what-each-attribute-stops): that's why the session [doesn't go in localStorage](/en/phase-2/cookies-httponly-secure-samesite/#cookies-or-localstorage), where any script would read it.
+
+### The good version: html`…` escapes each piece of data
+
+Now, `src/shop.ts`:
+
+<ProjectCode file="shop-api/29-injection-xss/src/shop.ts" region="page" />
+
+- **`html` in front of the backticks** is a Hono function (`hono/html`). It gets separately the fixed text, which is yours, and each `${…}`, which is data.
+- **Escaping** is replacing each character that gives instructions with its harmless version: `<` becomes `&lt;`, `>` becomes `&gt;`, `&` becomes `&amp;`, and the quotation marks too. The browser draws them as those characters, but never reads them as tags.
+- **An `html` inside another**, the one for each `<li>`, isn't escaped twice: Hono knows it's already safe HTML.
+- **`euros`**, with the division by 100, turns 850 cents into “€8.50”.
+
+`html` is to HTML what `$1` is to SQL: you write the code, and each piece of data goes in its box.
+
+### Three types of XSS
+
+- **Stored:** the data is saved, like a product name or a review, and shows up on the page of everyone who visits it. MySpace's was like that.
+- **Reflected:** the data comes in the request itself, for example in a search box's URL, and the page repeats it in the response. It's enough for someone to open a crafted link.
+- **DOM-based** (the DOM is the page as the browser holds it in memory): the server doesn't take part. The page's JavaScript takes something, from the URL for example, and puts it into the page as HTML, with `innerHTML`.
+
+In all three, the defense is the same: escape where the data enters the page.
+
+### A JSON API doesn't get off the hook
+
+`GET /v2/products/6` returns `{"id":6,"name":"<b>Sticker</b>",…}`, and that's fine: in <Term id="json">JSON</Term>, that's just text, and the browser doesn't draw it as a page, because it arrives with `Content-Type: application/json` and `nosniff`.
+
+But some page will show that JSON: the shop's website or a partner's dashboard. If it puts the name in with `innerHTML`, there's the XSS. **The API stores and returns the data as is; whoever shows it escapes it.** React, a widely used tool for making pages, does it with `{name}`; `dangerouslySetInnerHTML` doesn't.
+
+What about escaping it when saving? The API doesn't know where it will end up: in a mobile app, a name saved as `&lt;b&gt;` would show up with those letters.
+
+### Escaping depends on the place
+
+`html` protects the text between tags and the value of an attribute between quotes. In a link, `href="${website}"`, an address that starts with `javascript:` has nothing to escape, and the browser runs what follows when you click: you have to check that it starts with `https://`. Inside a `<script>`, the rules are JavaScript's, and the safest thing is not to put data there. That's why OWASP's guide gives a rule for each place.
+
+### Content Security Policy: the second wall
+
+Escaping is the fix. But one forgotten place, an `innerHTML` in a corner, is enough for something to slip in. That's what the **<Term id="content-security-policy">Content Security Policy</Term>** (CSP) is for, the header from [Phase 2's headers lesson](/en/phase-2/http-headers/#security-headers): it tells the browser where the page can load each thing from. The one for `/shop`, at the end of `src/shop.ts`:
+
+<ProjectCode file="shop-api/29-injection-xss/src/shop.ts" region="csp" />
+
+Each directive, in words:
+
+| Directive | What it tells the browser |
+|---|---|
+| `default-src 'self'` | Everything (images, styles, scripts, requests), only from this same site, unless another directive says otherwise |
+| `script-src 'self'` | Scripts, only from this site's files. No code written inside the page: neither `<script>…</script>` nor attributes like `onerror` |
+| `object-src 'none'` | No plugins (`<object>`, `<embed>`) |
+| `base-uri 'none'` | Nobody changes, with `<base>`, where relative links point |
+| `frame-ancestors 'none'` | No site puts this page inside its own, in an `<iframe>`. It replaces `X-Frame-Options` in current browsers |
+| `form-action 'self'` | Forms are only sent here |
+
+If something slips in unescaped, the browser doesn't run its script, and it reports it in the DevTools console. **The CSP doesn't fix the page:** the tag is still inside, and it can still change what you see. It only stops it from running. That's why you always escape, and the CSP goes behind.
+
+### The security headers, on every response
+
+In `src/app.ts`, one line adds the rest of the security headers to every response:
+
+<ProjectCode file="shop-api/29-injection-xss/src/app.ts" region="security-headers" />
+
+`secureHeaders()` sets, among others, the ones from Phase 2: `nosniff`, `Referrer-Policy` and `Strict-Transport-Security`. And `X-XSS-Protection: 0`, which turns off an old browser filter that caused flaws of its own.
+
+Why the CSP only on `/shop`? Because `/docs`, Scalar's documentation, loads its code from `cdn.jsdelivr.net` and starts it with a script written inside the page: with `/shop`'s policy, it would stop working. To the JSON routes, which nobody browses, a CSP adds little. **Each page, with its own policy.**
+
+## Try it
+
+The goal: check that your defenses hold. A value with quotes is still text to PostgreSQL, a name with tags is still text on the page, and the page carries its CSP.
+
+Everything is done in your own shop, on `localhost`, and without running any attack. Trying them on a system that isn't yours, without permission, is a crime.
+
+### Write the code
+
+You start from your project from [lesson 5](/en/phase-6/rbac-roles-permissions/):
+
+1. Create `src/shop.ts` with the two parts above, `shopPage` and the CSP. The `import` lines at the top are in the step.
+2. In `src/app.ts`, `app.use(secureHeaders())`, imported from `hono/secure-headers`, and `app.route('/shop', shop)`, with `shop` imported from `./shop.ts`.
+
+Copy the bad example and the tests from the step:
+
+```sh
+cd ~/backend-course/phase-3
+curl -O https://backenddesdecero.com/practicas/shop-api/29-injection-xss.tar.gz
+tar -xzf 29-injection-xss.tar.gz
+cd shop-api
+cp ../29-injection-xss/examples/unsafe-page.ts examples/
+cp ../29-injection-xss/test/injection-xss.test.ts test/
+```
+
+You already have `examples/injection.ts`, from Phase 5. Both are wrong on purpose: no route uses them. This lesson has no migration.
+
+<TryIt
+  title="1. This lesson’s tests"
+  cmd="npm test -- test/injection-xss.test.ts"
+  output={`> shop-api@1.0.0 test
+> node --env-file=test/.env --test --test-concurrency=1 test/injection-xss.test.ts
+
+✔ /shop: an HTML page with the products, and the name with tags comes out escaped (279.880028ms)
+✔ /shop carries the Content Security Policy: no scripts inside the page (6.478577ms)
+✔ the JSON routes stay the same, now with the security headers (2.805089ms)
+✔ examples/unsafe-page.ts: pasting the name, the tag reaches the browser whole (5.066052ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 841.122864`}
+>
+
+The outputs are from Node 26.11.1 and PostgreSQL 18; your ids, times and dates will be different. The first three check your defenses; the last one, that the bad example really is bad: it escapes nothing. If one fails, its name says what isn't met.
+
+</TryIt>
+
+### A value with quotes, as a parameter
+
+Open the <Term id="repl">REPL</Term> in the project's folder with `node --env-file=.env`, as in Phase 5:
+
+<TryIt
+  title="2. In the REPL: the value travels separately"
+  lang="js"
+  cmd={`const { pool } = await import('./src/db.ts')
+const query = 'SELECT name FROM products WHERE name = $1'
+(await pool.query(query, ['Mug'])).rows
+(await pool.query(query, ["x' OR '1'='1"])).rows
+await pool.end()`}
+  output={`undefined
+undefined
+[ { name: 'Mug' } ]
+[]
+undefined`}
+>
+
+Look at the fourth line: `[]`. PostgreSQL has looked for a product called exactly `x' OR '1'='1`, quotes included, and there isn't one. If you get a connection error, check `DATABASE_URL` in your `.env`.
+
+</TryIt>
+
+### A name with tags, on the page
+
+Start the API with `npm start` and, in another terminal, sign in as Ana, who is an admin, and create a product with tags in its name:
+
+<TryIt
+  title="3. Ana creates the Sticker, in bold"
+  cmd={`curl -s -w '\\n' -c ana.txt --json '{"email":"ana@shop.example","password":"ana-practice-2026"}' localhost:3000/v2/session
+curl -s -w '\\n' -b ana.txt --json '{"name":"<b>Sticker</b>","priceCents":150}' localhost:3000/v2/products`}
+  output={`{"id":3,"email":"ana@shop.example","role":"admin"}
+{"id":6,"name":"<b>Sticker</b>","priceCents":150,"stock":0,"categories":[]}`}
+>
+
+The API accepts the name and returns it as is. If you did the challenge in [lesson 5](/en/phase-6/rbac-roles-permissions/), yours is 7: use your id. If you get a `401`, the `ana.txt` file isn't in this folder.
+
+</TryIt>
+
+<TryIt
+  title="4. In the table, as is"
+  cmd="psql -d shop -c 'SELECT id, name FROM products WHERE id = 6;'"
+  output={` id |      name
+----+----------------
+  6 | <b>Sticker</b>
+(1 row)`}
+>
+
+The database stores what Ana wrote, unescaped: escaping is done when showing.
+
+</TryIt>
+
+<TryIt
+  title="5. The shop’s page"
+  cmd="curl -s localhost:3000/shop"
+  output={`<!doctype html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <title>Ana and Luis's shop</title>
+      </head>
+      <body>
+        <h1>Ana and Luis's shop</h1>
+        <ul>
+          <li>T-shirt: €20.00</li><li>Mug: €8.50</li><li>Hoodie: €35.00</li><li>Cap: €15.00</li><li>&lt;b&gt;Sticker&lt;/b&gt;: €1.50</li>
+        </ul>
+      </body>
+    </html>`}
+>
+
+Look at the last `<li>`: `&lt;b&gt;Sticker&lt;/b&gt;`. The shop's tags (`<li>`, `<h1>`) are still tags; the name's have arrived escaped. If you see `<b>Sticker</b>` unescaped, your `shopPage` doesn't use `html` in the `<li>`.
+
+</TryIt>
+
+Open `http://localhost:3000/shop` in Chrome. The Sticker shows up as `<b>Sticker</b>: €1.50`, with its `<` and `>` in plain sight and no bold. In DevTools, the **Elements** panel shows that `<li>` with only text inside, without any `<b>`. In **Network**, when you click the `shop` request, its **Response Headers** carry the `content-security-policy`.
+
+### The CSP and the other headers
+
+<TryIt
+  title="6. The headers of /shop"
+  cmd="curl -s -I localhost:3000/shop"
+  output={`HTTP/1.1 200 OK
+content-security-policy: default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'
+content-type: text/html; charset=UTF-8
+cross-origin-opener-policy: same-origin
+cross-origin-resource-policy: same-origin
+origin-agent-cluster: ?1
+referrer-policy: no-referrer
+strict-transport-security: max-age=15552000; includeSubDomains
+vary: Origin
+x-content-type-options: nosniff
+x-dns-prefetch-control: off
+x-download-options: noopen
+x-frame-options: SAMEORIGIN
+x-permitted-cross-domain-policies: none
+x-request-id: e5c55de6-1031-4bf0-8954-b442dcd7e235
+x-xss-protection: 0
+Date: Wed, 14 Oct 2026 04:50:10 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5`}
+>
+
+`-I` asks only for the headers. The second line is the policy from `src/shop.ts`; `secureHeaders()` sets almost all the others. If the `content-security-policy` is missing, check that `shop.use(…)` comes before `shop.get`.
+
+</TryIt>
+
+<TryIt
+  title="7. A JSON route and the page, face to face"
+  cmd={`curl -s -I localhost:3000/v2/products/6 | grep -i -e '^content-' -e '^x-content'
+curl -s -I localhost:3000/shop | grep -i -e '^content-' -e '^x-content'`}
+  output={`content-type: application/json
+x-content-type-options: nosniff
+content-security-policy: default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'
+content-type: text/html; charset=UTF-8
+x-content-type-options: nosniff`}
+>
+
+`grep` keeps only the lines that start like that. Both carry `nosniff`, which is global; only the page carries a CSP.
+
+</TryIt>
+
+When you're done, delete the Sticker with Ana's session, `curl -s -w '%{http_code}\n' -X DELETE -b ana.txt localhost:3000/v2/products/6`, which answers `204`, and the file, with `rm ana.txt`: it's an open session.
+
+## You have already seen it
+
+- **A comment with symbols.** If you've written `<3` or `<b>` in a comment on a website and it came out as is, that website escapes what you post.
+- **The console warning.** Some big websites write a huge warning in the DevTools console: don't paste anything there that someone asks you to. It's XSS done by hand: convincing you to run the code yourself.
+- **React.** `{product.name}` comes out escaped; `dangerouslySetInnerHTML` carries the danger in its name.
+
+## Common mistakes
+
+- **Pasting values into the SQL**, also in an `ORDER BY` or in a column's name. What doesn't fit in a parameter comes from a fixed list.
+- **Trusting validation** to stop an injection. `x' OR '1'='1` and `<b>` are valid text.
+- **Escaping when saving** instead of when showing. Each place needs its own way of escaping, and in the end it gets escaped twice: `&amp;lt;`.
+- **Skipping the escaping with outside data:** `sql.raw()`, `raw()` from `hono/html`, `innerHTML` or `dangerouslySetInnerHTML`.
+- **Taking the CSP for the fix.** It's the second wall, and adding `'unsafe-inline'` to `script-src` to make something work knocks it down.
+- **Thinking a JSON API has no XSS:** the page that draws its data unescaped will have it.
+
+## Summary
+
+- SQL injection and XSS are the same flaw: a piece of data pasted inside some code changes what the code does.
+- In SQL, always parameters: with an ORM too, never with `sql.raw()`, and a fixed list for what doesn't fit in a parameter.
+- In HTML, each piece of data is escaped when it's shown, with a tool like Hono's `html`, and according to the place: text, attribute, URL or script.
+- A JSON API stores and returns the data as is; whoever shows it escapes it.
+- The Content Security Policy is the second wall: it doesn't fix the page, but the browser doesn't run whatever slips in.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="A teammate validates with Zod that the name being searched has between 1 and 100 characters, and pastes it into the SQL. “Now it’s protected,” they say. Is it?"
+  review="The rule: always parameters"
+>
+
+<QuizOption text="Yes: Zod rejects text that has SQL inside.">
+
+Zod checks what you ask it to, here the length. Text with quotes is valid text.
+
+</QuizOption>
+
+<QuizOption text="No: a valid text can change the query." correct>
+
+Validation decides which data you accept; the parameter, `$1`, that no data changes the query. You need both.
+
+</QuizOption>
+
+<QuizOption text="Yes: an injection that does harm doesn’t fit in 100 characters.">
+
+`x' OR '1'='1` has 13 characters and returns the whole table; one that deletes a table fits in fewer than 30.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A shop stores its customers’ reviews, and its server puts them on each product’s page without escaping them. What type of XSS is it?"
+  review="Three types of XSS"
+>
+
+<QuizOption text="Reflected: the text arrives in the request of whoever visits the page.">
+
+Whoever visits doesn't send the review: someone else wrote it before, and the page takes it from the database.
+
+</QuizOption>
+
+<QuizOption text="DOM-based: the browser’s JavaScript puts the review in the page.">
+
+Here the server puts it in, when making the page. “DOM-based” is when the page's JavaScript puts the data in, without the server.
+
+</QuizOption>
+
+<QuizOption text="Stored: it’s saved once and shows up for every visitor." correct>
+
+That's why it's the most serious: nobody has to be tricked into opening a link. Visiting the product is enough.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Your API only returns JSON. A teammate says XSS has nothing to do with you. What do you answer?"
+  review="A JSON API doesn't get off the hook"
+>
+
+<QuizOption text="That it does: the page that draws that data without escaping it will have an XSS." correct>
+
+The API returns the data as is, with its `Content-Type` and `nosniff`. The danger is in whoever shows it with `innerHTML`.
+
+</QuizOption>
+
+<QuizOption text="That the API should store the names already escaped for HTML, so no page is at risk.">
+
+The API doesn't know where they'll be shown: in a mobile app `&lt;b&gt;` would show up, and in a URL or a script a different escaping would be needed. You escape when showing.
+
+</QuizOption>
+
+<QuizOption text="That they’re right: what comes out of a JSON API never ends up running in a browser.">
+
+The JSON isn't run, but its content ends up on some page. If that page puts it in as HTML, it runs there.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Each account has a “Your website” field, and the profile page puts it in a link’s href, with html`…`. Is that enough?"
+  review="Escaping depends on the place"
+>
+
+<QuizOption text="No: inside an attribute, html`…` escapes nothing.">
+
+It does escape: the quotation marks become `&quot;` and the value can't get out of the attribute. The problem is something else.
+
+</QuizOption>
+
+<QuizOption text="Yes: escaped for HTML, a piece of data is safe anywhere on the page.">
+
+It's escaped for HTML. An address that starts with `javascript:` has nothing to escape, and the browser runs it when you click.
+
+</QuizOption>
+
+<QuizOption text="No: you also have to check that the address starts with https://." correct>
+
+In a URL, the danger isn't the characters but the scheme. Escaping and checking the scheme are two different defenses.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="With the CSP already in place, someone suggests removing html`…` from /shop: “the CSP already blocks scripts.” What happens?"
+  review="Content Security Policy: the second wall"
+>
+
+<QuizOption text="Nothing bad: the server applies the CSP before sending the page and removes any scripts that slipped in.">
+
+The CSP is a header the browser reads. The server removes nothing: the page goes out with the tag inside.
+
+</QuizOption>
+
+<QuizOption text="The tags in the names change the page again, and only one wall is left." correct>
+
+Unescaped, the tag changes what you see even if its script doesn't run. And a mistake in the policy leaves the page unprotected.
+
+</QuizOption>
+
+<QuizOption text="Nothing bad: with script-src 'self', no piece of data can change what the page does.">
+
+`script-src` stops scripts, not HTML. An unescaped name can still bring in links, images or misleading text.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="To go faster, you put /shop’s policy on the whole API: app.use(secureHeaders({ contentSecurityPolicy: POLICY })). What stops working?"
+  review="The security headers, on every response"
+>
+
+<QuizOption text="The documentation at /docs, which loads its code from a CDN." correct>
+
+`script-src 'self'` blocks its code, which comes from `cdn.jsdelivr.net`, and the script the page starts it with. That's why each page carries its own policy, and `/docs`'s would be a different one.
+
+</QuizOption>
+
+<QuizOption text="The JSON routes: the browser rejects any response with a CSP that isn’t HTML.">
+
+A CSP doesn't prevent receiving a response: it says what a page can load and run. The JSON arrives just the same, to `curl` and to the browser.
+
+</QuizOption>
+
+<QuizOption text="Nothing: the CSP only affects pages that show customers’ data.">
+
+The browser applies it on any page that receives it, whatever it shows.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [Cross Site Scripting Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Cross_Site_Scripting_Prevention_Cheat_Sheet.html) (OWASP): how to escape in each place of a page.
+- [SQL Injection Prevention Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html) (OWASP): parameters, fixed lists and least privilege in the database.
+- [Content Security Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/CSP) (MDN): each directive, with examples.
+- [Secure Headers Middleware](https://hono.dev/docs/middleware/builtin/secure-headers) and [html Helper](https://hono.dev/docs/helpers/html) (Hono): the two pieces of this lesson.
+- [Samy (computer worm)](https://en.wikipedia.org/wiki/Samy_(computer_worm)) (Wikipedia): MySpace's XSS from 2005.
