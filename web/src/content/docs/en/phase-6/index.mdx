@@ -1,0 +1,268 @@
+---
+translationKey: phase-6
+title: "Authentication vs authorization: the difference"
+description: "Authentication is knowing who you are; authorization, what you can do. See what your API lets anyone do today and how this phase locks it down."
+sidebar:
+  label: Introduction
+  order: 0
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+
+At the end of Phase 5, the shop's <Term id="api">API</Term> keeps its data in PostgreSQL and no longer forgets anything. But it hands it to anyone who asks: it doesn't know who it's talking to.
+
+In this phase you give it **accounts, sessions and permissions**: the shop will know who makes each request and what each person can do. And you'll learn the attacks every backend gets: you'll try many of them against your own server, and then you'll shut them out.
+
+## Who you are and what you can do
+
+Picture the shop at the end of this phase. Marta, a customer, types her email and her password to sign in. The server checks the password and, from that moment on, knows that the requests coming from her browser are Marta's.
+
+Then Marta looks at her orders. The server gives her hers, and none from any other customer. If she tries to create a product, the server tells her no: only Ana and Luis, who run the shop, do that.
+
+These are two different questions, and each one has its name:
+
+| | Authentication | Authorization |
+|---|---|---|
+| The question | Who are you? | Can you do this? |
+| In the shop | Marta gives her password, and the server knows she's Marta | Marta sees her orders, but not other people's, and can't create products |
+| When | When you sign in; after that, the <Term id="session">session</Term> remembers it | On every request |
+| If it fails | `401`: I don't know who you are | `403`: I know who you are, and you can't |
+| Where you'll see it | Lessons 1 to 4 | Lesson 5 |
+
+**<Term id="authentication">Authentication</Term>** checks who you are. **<Term id="authorization">Authorization</Term>** decides what you can do, once it already knows who you are. They always go in that order: you can't decide what someone can do without knowing who they are. They're sometimes shortened to *authn* and *authz*.
+
+You already saw both codes in [lesson 3 of Phase 2](/en/phase-2/http-status-codes/#401-or-403-i-dont-know-who-you-are-or-you-cant), and something was left pending there: the `401`'s name, *Unauthorized*, is misleading. In this phase's words, a `401` says “you're not authenticated,” and a `403`, “you're not authorized.” The name comes from HTTP/1.0, from 1996, and nobody changes it because millions of programs use it that way.
+
+<Analogy>
+
+At a hotel, the front desk asks for your ID and your booking when you arrive: it checks who you are. That's authentication. Then it gives you a key card, and the card opens your room, the gym and the elevator, but not the room next door or the kitchen. That's authorization: which doors open for you.
+
+Nobody asks for your ID again at every door: the card remembers that you already showed it. On the web, that's the session, from lesson 2.
+
+<div slot="limits">
+
+The hotel card has written on it which doors it opens, and each door checks it on its own. In the shop, the browser only carries a random number: who you are and what you can do is looked up by the server in its database, on every request. And a lost card is canceled at the front desk; a session is canceled by deleting it on the server, not in the browser.
+
+</div>
+
+</Analogy>
+
+## What your API lets anyone do today
+
+First, set your data back to the lessons' data. If you followed Phase 5, your database keeps what you did in it: test orders with numbers above 100,000 and the stock you left. This phase's outputs come from freshly loaded sample data. With the server stopped, in your project, `~/backend-course/phase-3/shop-api`:
+
+<TryIt
+  title="Your data, like the lessons'"
+  cmd={`psql -d shop -c 'DROP SCHEMA public CASCADE' -c 'CREATE SCHEMA public'
+npm run db:migrate
+npm run db:seed`}
+  output={`NOTICE:  drop cascades to 7 other objects
+…
+DROP SCHEMA
+CREATE SCHEMA
+
+> shop-api@1.0.0 db:migrate
+> node --env-file-if-exists=.env scripts/migrate.ts
+
+Applied: 001-shop.sql
+Applied: 002-stock.sql
+Applied: 003-orders-index.sql
+Applied: 004-categories-index.sql
+
+> shop-api@1.0.0 db:seed
+> node --env-file-if-exists=.env scripts/seed.ts
+
+Sample data loaded`}
+>
+
+`public` is the schema where PostgreSQL keeps your tables, like a folder. `DROP SCHEMA public CASCADE` deletes it along with all of them, and `CREATE SCHEMA public` creates it empty. **It deletes everything in your `shop` database**: here, only practice data. Then the migrations create the tables, and `db:seed` loads the 4 products and the 25 sample orders.
+
+We've trimmed the list of dropped tables (`…`). On Linux, `psql` first asks you for the password, `shop`. If it says `must be owner of schema public`, the database doesn't belong to the `shop` role: create it as in the [introduction to Phase 5](/en/phase-5/). If your project doesn't start, begin with [“If you'd rather start fresh”](#if-youd-rather-start-fresh), at the end of this page.
+
+</TryIt>
+
+Now look at what the API answers someone who doesn't say who they are. Start it with `npm start` and, in another terminal, ask for the orders:
+
+<TryIt
+  title="The orders, without signing in"
+  cmd={`curl -s -w '\\n' 'localhost:3000/v2/orders?limit=3'`}
+  output={`[{"id":25,"productId":2,"quantity":2,"status":"pending","createdAt":"2026-10-08T09:00:00.000Z"},{"id":24,"productId":1,"quantity":1,"status":"pending","createdAt":"2026-10-08T02:00:00.000Z"},{"id":23,"productId":3,"quantity":4,"status":"pending","createdAt":"2026-10-07T19:00:00.000Z"}]`}
+>
+
+The three most recent orders, without anyone asking who you are. `?limit=3` is the page of three from the [pagination lesson](/en/phase-4/api-pagination/), so the output fits.
+
+Notice what isn't there: no order says whose it is. The shop couldn't refuse you one even if it wanted to, because it doesn't know. In a real shop, every order would carry a name, an address and a phone number: a person's data, there for anyone to see.
+
+</TryIt>
+
+What about all of them? You don't need to know anything about the shop: trying consecutive numbers is enough.
+
+<TryIt
+  title="All 25, in one go"
+  cmd={`curl -s -w '\\n' 'localhost:3000/v2/orders/[1-25]' | head -3`}
+  output={`{"id":1,"productId":2,"quantity":2,"status":"shipped","createdAt":"2026-10-01T09:00:00.000Z"}
+{"id":2,"productId":3,"quantity":3,"status":"shipped","createdAt":"2026-10-01T16:00:00.000Z"}
+{"id":3,"productId":1,"quantity":4,"status":"shipped","createdAt":"2026-10-01T23:00:00.000Z"}`}
+>
+
+`[1-25]` is a `curl` feature: it asks for `/v2/orders/1`, `/v2/orders/2`… up to 25, one after another. `head -3` shows only the first three lines ([lesson 2 of Phase 1](/en/phase-1/linux-file-commands/)); without it, you'd see all 25 orders, one per line, in an instant.
+
+The quotes are needed. Without them, zsh, the Mac's shell, reads the brackets as a file name pattern and answers `zsh: no matches found`.
+
+</TryIt>
+
+And it's not just reading. Without signing in, anyone can cancel someone else's order: `curl -X POST localhost:3000/v2/orders/24/cancellation` answers `200` and the order becomes `cancelled`. We checked, but don't do it now: the API has no way of turning it back to `pending`, and your practice data would no longer match the lessons'.
+
+### The admin token: one key for everyone
+
+Creating a product does ask for something. Try with nothing:
+
+<TryIt
+  title="A product, without a token"
+  cmd={`curl -s -w '\\n' --json '{"name":"Sticker","priceCents":150}' localhost:3000/v2/products`}
+  output={`{"type":"about:blank","title":"Unauthorized","status":401,"detail":"A valid token is required"}`}
+>
+
+A `401`, in the Problem Details format from [lesson 2 of Phase 4](/en/phase-4/api-errors-problem-details/). The route first goes through `adminOnly`, the guard from the [middleware lesson in Phase 3](/en/phase-3/what-is-middleware/): it asks for the `Authorization` header with the `ADMIN_TOKEN` from your `.env`. `--json` sends the body as JSON, with its `Content-Type`.
+
+</TryIt>
+
+Now with the token. Look it up in your `.env`, copy it into a shell variable, create the product and delete it, to leave your data as it was:
+
+<TryIt
+  title="With the token"
+  cmd={`grep ADMIN_TOKEN .env
+TOKEN=6bb3a19879dcf82e36c2e623dff47255dfb115160d44ae38
+curl -s -w '\\n' -H "Authorization: Bearer $TOKEN" --json '{"name":"Sticker","priceCents":150}' localhost:3000/v2/products
+curl -s -w '%{http_code}\\n' -X DELETE -H "Authorization: Bearer $TOKEN" localhost:3000/v2/products/5`}
+  output={`ADMIN_TOKEN=6bb3a19879dcf82e36c2e623dff47255dfb115160d44ae38
+{"id":5,"name":"Sticker","priceCents":150,"stock":0,"categories":[]}
+204`}
+>
+
+The token is the one you created with `openssl rand -hex 24` in [lesson 8 of Phase 3](/en/phase-3/node-errors-and-logging/): put yours after `TOKEN=`. With it, the Sticker is born with id 5, and the `DELETE` deletes it: `204`, with no body. `-w '%{http_code}\n'` makes `curl` write the response's code.
+
+If your id is different, use yours in the `DELETE`. PostgreSQL doesn't reuse 5: your next product will be 6. If you get `401`, the token isn't the one in your `.env`, or `TOKEN` is empty because you created it in another terminal.
+
+</TryIt>
+
+It works, and it has four problems:
+
+- **Whoever knows it is an admin.** The token doesn't say whose it is: whoever carries it gets in, like the concert ticket from the [headers lesson in Phase 2](/en/phase-2/http-headers/). If Luis pastes it into a chat, or it's left on a stolen laptop, whoever finds it creates, changes and deletes products.
+- **It doesn't say who did what.** Look at the server's terminal: the product's line says `"method":"POST","path":"/v2/products","status":201`, and no name. To your API, Ana and Luis are the same person.
+- **It can't be taken away from just one person.** If someone stops working at the shop, the only way to shut the door on them is to change the token and hand it out again to everyone else.
+- **All or nothing.** The delivery company from Phase 4, which should only mark orders as shipped, would have to get the same token, and with it, it could delete products.
+
+**A shared <Term id="secret">secret</Term> doesn't identify a person, but a group.** In lesson 5, `ADMIN_TOKEN` disappears: being an admin becomes the role of a user with their own account.
+
+## How an attacker sees it
+
+So far you've looked at your API as the one who builds it: which routes it has and what each one returns. In this phase you also look at it as someone who wants to use it for what they shouldn't. That person is after one of three things:
+
+- **Data.** Your customers' emails, addresses, phone numbers and passwords. They get sold, or tried on other sites, because many people reuse passwords.
+- **Money.** Unpaid orders, changed prices, or other people's accounts with a saved card.
+- **Access.** Your server, for something else: sending spam, storing files, or reaching the database from it, and whatever lies behind.
+
+And trying costs them almost nothing. The command for the 25 orders takes an instant, and a program can repeat it with thousands of numbers, or thousands of passwords, all night long. In [lesson 2 of Phase 1](/en/phase-1/linux-file-commands/) you saw one in the practice log: a scanner that, at three in the morning, asked for `/.env`, a file that often holds secrets. Nobody picked that server by hand: these programs go through the whole internet and try every door.
+
+**That's why your shop doesn't need to be famous to get attacked: it's enough for it to be on the internet.** And the math isn't fair: the defender has to get every route right, and the attacker only needs one mistake. This phase goes through, one by one, the places where someone can sneak in.
+
+In several lessons you'll try attacks against your own shop, always on `localhost`: doing it against a system that isn't yours, without permission, is a crime in almost every country (in the United States, under the [Computer Fraud and Abuse Act](https://www.justice.gov/jm/jm-9-48000-computer-fraud)).
+
+## What you're going to build
+
+At the end of the phase, the shop has accounts. Marta creates hers with her email and a password, or signs in with the account she already has somewhere else, as with “Sign in with Google.” From that moment on, her orders are hers: only she and whoever runs the shop can see them. Ana and Luis are admins, each with their own account, and the delivery company has its own key, which only works for what it needs.
+
+Lesson by lesson, the API gains this:
+
+| Lesson | What the shop's API gains | Folder |
+|---|---|---|
+| 1. Passwords | Customer accounts, with the password stored as a slow, salted <Term id="hash">hash</Term>: not even you can read it | `24-passwords` |
+| 2. Sessions | Signing in and out, with the session in a <Term id="cookie">cookie</Term>, and a route that says who you are | `25-sessions` |
+| 3. JWT | A signed token, made, read and broken on purpose, and the delivery company's own key | `26-jwt-keys` |
+| 4. OAuth | “Sign in with…,” against a practice provider that runs on your computer | `27-oauth` |
+| 5. Authorization | Roles and permissions: each customer sees only their own orders, and `ADMIN_TOKEN` disappears | `28-roles` |
+| 6. Injection | A shop page, `/shop`, where a product's name can't sneak in a script, and the security headers | `29-injection-xss` |
+| 7. CSRF and SSRF | Requests from another site, rejected, and the delivery company's notification address, checked | `30-csrf-ssrf` |
+| 8. Rate limiting | A limit on attempts (after ten wrong passwords, a `429`, “too many requests”), and a server that won't start with the example secrets | `31-rate-limits` |
+| 9. OWASP | Nothing new: you review the security headers, look for packages with known flaws, check what's left in the log and put everything above in order | — |
+
+One of these improvements breaks something on purpose. In lesson 5, the list of all orders stops being open overnight, without the months of notice from the [versioning lesson](/en/phase-4/api-versioning/). You'll see why a security hole doesn't wait.
+
+## What you're going to learn
+
+By the end of this phase you'll know how to:
+
+- Tell authentication and authorization apart, and which code to return when each one fails.
+- Store passwords properly, with a slow, salted hash (argon2id), and why they're never encrypted.
+- Sign people in with a cookie, and explain what a <Term id="jwt">JWT</Term> is, what it's for and why it isn't a better session.
+- Explain what “Sign in with Google” does on the inside (<Term id="oauth">OAuth 2.0</Term> and <Term id="openid-connect">OpenID Connect</Term>).
+- Give each role its permissions, and check that each customer only sees their own: the most common flaw in APIs.
+- Recognize and stop <Term id="sql-injection">SQL injection</Term>, <Term id="xss">XSS</Term>, <Term id="csrf">CSRF</Term> and <Term id="ssrf">SSRF</Term> in your code.
+- Limit how many times something can be tried (<Term id="rate-limiting">rate limiting</Term>), and keep secrets out of the code.
+- Read the <Term id="owasp">OWASP</Term> Top 10 as a map of everything above.
+
+## The lessons
+
+1. [Passwords](/en/phase-6/how-to-store-passwords/)
+2. [Sessions](/en/phase-6/sessions-and-cookies/)
+3. [JWT](/en/phase-6/what-is-jwt/)
+4. [OAuth](/en/phase-6/oauth-openid-connect/)
+5. [Authorization](/en/phase-6/rbac-roles-permissions/)
+6. [Injection](/en/phase-6/sql-injection-xss/)
+7. [CSRF and SSRF](/en/phase-6/csrf-ssrf/)
+8. [Rate limiting](/en/phase-6/rate-limiting-secrets/)
+9. [OWASP](/en/phase-6/owasp-top-10/)
+
+## Where you will practice
+
+Everything happens on your computer, as in Phase 5:
+
+| Where | What for | From |
+|---|---|---|
+| Your project, `shop-api`, with `curl` | Each lesson adds something to it, and you try it on `http://localhost:3000` | Lesson 1 |
+| The browser, with <Term id="devtools">DevTools</Term> | Seeing your session's cookie, the requests that go out and how the browser stops an attack | Lesson 2 |
+| A practice sign-in provider | It plays Google on your computer, on `localhost:9000`, with no account anywhere | Lesson 4 |
+| A second site, on `127.0.0.1:4000` | It plays an enemy site that tries to buy in your shop with your session | Lesson 7 |
+
+The provider and the second site come as scripts in the project: you start them with one command. DevTools opens as in the [introduction to Phase 2](/en/phase-2/#before-you-start-devtools).
+
+- **On Windows,** everything happens in WSL, as it has since [Phase 0](/en/phase-0/#before-you-start-the-terminal).
+- **The outputs** were captured with Node 26.11.1 and PostgreSQL 18. Your ids, hashes, tokens and times will be different.
+- **No Docker yet:** it arrives in Phase 7.
+
+## Before you start
+
+You need the same as in Phase 5, and nothing new:
+
+- **PostgreSQL 18 running,** with the `shop` role and its two databases, `shop` and `shop_test`, as in the [introduction to Phase 5](/en/phase-5/).
+- **Your project,** in `~/backend-course/phase-3/shop-api`, up to date with the last lesson of Phase 5 and with `DATABASE_URL` in its `.env`.
+- **Node 26.**
+
+To store passwords, lesson 1 uses argon2, which already comes inside Node. Check it:
+
+<TryIt
+  title="argon2, inside Node"
+  cmd={`node --version
+node -p "typeof require('node:crypto').argon2"`}
+  output={`v26.11.1
+function`}
+>
+
+`node -p` runs one line of JavaScript and writes the result. `function` says that Node's `crypto` module has an `argon2` function. It arrived in Node 24.7, and Node 26's documentation no longer marks it as experimental; lesson 1 tells you what to use if you don't have it.
+
+If you get `undefined`, your Node is older: install 26 with nvm, as in the [introduction to Phase 3](/en/phase-3/). The packages needed later are installed in their lesson, with their exact version.
+
+</TryIt>
+
+### If you'd rather start fresh
+
+If your project was left half-finished, start with the end of Phase 5, the `23-orm` folder. You download it and put it in place as in the [introduction to Phase 4](/en/phase-4/#if-youd-rather-start-fresh), changing the folder's name: from `~/backend-course/phase-3`, `curl -O https://backenddesdecero.com/practicas/shop-api/23-orm.tar.gz`, `tar -xzf 23-orm.tar.gz`, `mv shop-api shop-api-before` and `mv 23-orm shop-api`.
+
+Then, inside the folder, `npm install`, copy your `.env` with `cp ../shop-api-before/.env .` and run `npm run db:migrate`. Your database is still the same one: the command only applies the <Term id="migration">migrations</Term> it's missing, and if none is missing, it says `No new migrations: the database is up to date`.
+
+Lessons 1 to 8 also have their folder, from `24-passwords` to `31-rate-limits`. You download them the same way, and they're for comparing when you get stuck.
+
+Start with [lesson 1, “Passwords”](/en/phase-6/how-to-store-passwords/): the shop will have its first account, and you'll see why nobody can read Marta's password, not even you.
