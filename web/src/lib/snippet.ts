@@ -49,6 +49,8 @@ export function extractRegion(source: string, region?: string): string {
 export function languageOf(file: string): string {
   // tsconfig.json admits comments: JSON with comments, so they are not marked as errors.
   if (/(^|\/)tsconfig[^/]*\.json$/.test(file)) return 'jsonc';
+  // A Dockerfile has no extension: its name is its language.
+  if (/(^|\/)Dockerfile$/.test(file)) return 'dockerfile';
   const extension = file.slice(file.lastIndexOf('.') + 1);
   const languages: Record<string, string> = {
     ts: 'ts',
@@ -57,6 +59,8 @@ export function languageOf(file: string): string {
     sh: 'sh',
     proto: 'proto',
     sql: 'sql',
+    yaml: 'yaml',
+    yml: 'yaml',
   };
   const language = languages[extension] ?? (file.split('/').at(-1)?.startsWith('.') ? 'ini' : '');
   if (!language) throw new Error(`No language for «${file}»`);

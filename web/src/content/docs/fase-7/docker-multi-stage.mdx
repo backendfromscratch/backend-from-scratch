@@ -1,0 +1,617 @@
+---
+translationKey: small-images
+title: "Imágenes Docker pequeñas y seguras: multi-stage"
+description: "Cómo hacer una imagen Docker pequeña y segura para Node.js: multi-stage, slim, alpine o distroless, sin root, con HEALTHCHECK y sin tu .env dentro."
+sidebar:
+  label: Multi-stage
+  order: 4
+lesson:
+  oneLiner: "Una imagen pequeña lleva solo lo que tu API necesita para ejecutarse: menos megas que descargar y menos programas que un atacante pueda aprovechar. Con un Dockerfile multi-stage, unas etapas instalan y comprueban, y la imagen final copia de ellas solo el resultado, con un usuario sin privilegios y un chequeo de salud."
+  objectives:
+    - Comparar las imágenes base slim, alpine, distroless y la completa por su tamaño y por lo que traen dentro.
+    - Escribir un Dockerfile multi-stage que compruebe los tipos al construir y deje fuera las dependencias de desarrollo.
+    - Ejecutar la API con un usuario sin privilegios y comprobarlo con whoami.
+    - Añadir un HEALTHCHECK y leer healthy y unhealthy en docker ps.
+  prerequisites: [dockerfile]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+La imagen de la tienda que construiste en la [lección 3](/fase-7/dockerfile/) funciona, pero lleva de todo. Dentro están TypeScript y `drizzle-kit`, que solo sirven para desarrollar; la caché que `npm` dejó al instalar, 34 MB; los tests y los scripts. Son **145 MB que se descargan** cada vez que un servidor la necesita.
+
+Y su programa se ejecuta como <Term id="root">root</Term>. Si alguien encuentra un fallo en la API y consigue ejecutar órdenes dentro del contenedor, lo hace como administrador: puede cambiar el código de la tienda o instalar lo que quiera.
+
+En esta lección la dejas en 92 MB, sin herramientas de desarrollo, sin `root` y con un chequeo de salud.
+
+## La analogía
+
+<Analogy>
+
+En un restaurante, la cocina está llena de cosas: cuchillos, ollas, peladuras, el libro de recetas. El cocinero prueba la salsa antes de servirla. Pero al cliente no le llega la cocina: le llega el plato, limpio, con lo justo.
+
+Un Dockerfile multi-stage hace lo mismo. Las primeras etapas son la cocina: instalan todo y comprueban que el código está bien. La última es el plato: solo lo que la API necesita para funcionar.
+
+<div slot="limits">
+
+- La cocina no se tira: las etapas se quedan en la caché de tu ordenador, para la próxima vez. Lo que no hacen es viajar en la imagen.
+- El cocinero prueba la salsa sin que nadie se lo pida. Docker solo ejecuta una etapa si la final copia algo de ella: si no, se la salta, como verás.
+- El plato no lleva cuchillos, pero la imagen final sí lleva un Linux mínimo con Node y `npm`: pequeño, no vacío.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Lo que sobra en una imagen pesa y se puede atacar
+
+Cada fichero de una imagen cuesta dos veces:
+
+- **En megas.** Cada servidor que arranca tu API descarga la imagen, y cada despliegue (Fase 8) espera a esa descarga.
+- **En riesgo.** Cada programa que va dentro es una herramienta más para quien se cuele, y un sitio más donde puede haber un fallo de seguridad conocido. Todo eso es la **superficie de ataque**: cuantas menos piezas, menos superficie.
+
+Compara dos imágenes de Node 26, la completa y la `slim`. `dpkg -l` lista los paquetes de Debian instalados, y `grep -c ^ii` los cuenta:
+
+<TryIt
+  title="¿Cuántos paquetes trae cada una?"
+  cmd={`docker run --rm node:26 sh -c 'dpkg -l | grep -c ^ii'\ndocker run --rm node:26-slim sh -c 'dpkg -l | grep -c ^ii'`}
+  output={`453
+80`}
+>
+
+`node:26` trae 453 paquetes, entre ellos `gcc` (un compilador), `git`, `python3` y `curl`: sirven para compilar casi cualquier cosa dentro. `node:26-slim` trae 80, y ninguno de esos cuatro. Tu API no usa ninguno.
+
+`node:26` descarga 452 MB: si no quieres, mira nuestra salida. Tus números pueden variar.
+
+</TryIt>
+
+Con `npm` pasa igual. Al instalar, revisa los paquetes contra una lista de fallos conocidos: con las dependencias de desarrollo, avisa de **4 vulnerabilidades moderadas**; solo con las de producción, de **ninguna**. Lo verás en «Pruébalo».
+
+### Cuatro imágenes base para Node 26
+
+La <Term id="base-image">imagen base</Term> es la del `FROM`: pone el sistema que hay debajo de tus capas, y con él, la mayor parte del tamaño. Para Node hay cuatro habituales:
+
+<TryIt
+  title="Las cuatro, lado a lado"
+  cmd="docker image ls --filter 'reference=node:26*' --filter 'reference=gcr.io/distroless/nodejs26*'"
+  output={`IMAGE                                        ID             DISK USAGE   CONTENT SIZE   EXTRA
+gcr.io/distroless/nodejs26-debian13:latest   c85d869757a6        253MB         60.2MB
+node:26                                      32fa97f33639        1.8GB          452MB
+node:26-alpine                               143494b1da29        258MB         68.2MB
+node:26-slim                                 193fe51b64e7        378MB         88.4MB`}
+>
+
+`--filter reference=…` deja las imágenes cuyo nombre encaja con cualquiera de los filtros. Para verlas, antes tienes que descargarlas con `docker pull`: unos 670 MB entre las cuatro. Mira `CONTENT SIZE`, lo que se descarga. Tus tamaños e IDs serán otros.
+
+</TryIt>
+
+| Imagen base | Qué trae | Se descarga |
+|---|---|---|
+| `node:26` | Debian completo, con herramientas para compilar | 452 MB |
+| `node:26-slim` | Debian mínimo y Node | 88 MB |
+| `node:26-alpine` | Alpine, otro Linux mínimo, y Node | 68 MB |
+| `nodejs26-debian13` (*distroless*, de Google) | Node y las bibliotecas que necesita; ni shell ni `apt` | 60 MB |
+
+Las dos más pequeñas tienen letra pequeña.
+
+### Alpine usa otra biblioteca de C
+
+Casi todo programa de Linux se apoya en una **biblioteca de C**: el código común para abrir ficheros, reservar memoria o usar la red. Debian usa *glibc*; Alpine, una más pequeña, *musl*. `docker run --rm node:26-alpine ldd --version` lo confirma: `musl libc`.
+
+Para tu API da igual: es JavaScript. Pero algunos paquetes de `npm` traen **código nativo**, compilado casi siempre para *glibc*. Sobre *musl* pueden no tener versión, intentar compilarse al instalar (el `.npmrc` del curso no deja ejecutar esos scripts) o fallar de formas raras. La tienda no usa ninguno; tu próximo proyecto puede.
+
+### Distroless no trae ni una shell
+
+Las imágenes *distroless* («sin distribución») solo llevan el programa y lo que necesita. Node funciona; una <Term id="shell">shell</Term>, no:
+
+<TryIt
+  title="Una imagen sin shell"
+  cmd={`docker run --rm gcr.io/distroless/nodejs26-debian13 -e "console.log(process.version)"\ndocker run --rm --entrypoint sh gcr.io/distroless/nodejs26-debian13`}
+  output={`v26.11.0
+docker: Error response from daemon: failed to create task for container: failed to create shim task: OCI runtime create failed: runc create failed: unable to start container process: error during container init: exec: "sh": executable file not found in $PATH
+
+Run 'docker run --help' for more information`}
+>
+
+- La primera funciona: esta imagen arranca `node`, y `-e` le pasa código.
+- **`--entrypoint sh`** cambia el programa que arranca el contenedor por `sh`, que no existe.
+
+</TryIt>
+
+Quien se cuele no tiene shell. Tú tampoco: no puedes entrar con `docker exec -it … sh` a mirar.
+
+**El curso usa `node:26-slim`:** casi tan pequeña, con *glibc*, y con una shell para mirar dentro. Con alpine, la tienda se quedaría en 74 MB de descarga, y con distroless, en 66 MB, frente a 92 MB.
+
+### Un Dockerfile, tres etapas
+
+Este es el Dockerfile nuevo de la tienda. Tiene tres `FROM`, y cada uno empieza una **etapa**:
+
+<ProjectCode file="tienda-api/33-imagen-pequena/Dockerfile" />
+
+Es una <Term id="multi-stage-build">construcción multi-stage</Term>: varias etapas, y **solo la última se convierte en la imagen**. Palabra a palabra:
+
+- **`FROM … AS dependencias`**: `AS` le da nombre a la etapa. Esta es la de la lección 3: instala todas las dependencias, también las de desarrollo (`devDependencies`, de la [Fase 3](/fase-3/typescript-con-node/)).
+- **`FROM dependencias AS comprobar`**: una etapa puede partir de otra. Esta copia el proyecto y ejecuta **`npm run check`**, el `tsc --noEmit` de la [Fase 3](/fase-3/typescript-con-node/), que revisa todo el proyecto, tests incluidos. Si un tipo está mal, `tsc` termina con error y la construcción se para: no hay imagen.
+- **`FROM node:26-slim… AS final`**: empieza otra vez de cero, desde la imagen base. Nada de las etapas anteriores llega aquí si no lo copias.
+- **`npm ci --omit=dev`**: instala solo las dependencias de producción. `&& npm cache clean --force` borra la caché de `npm` **en el mismo `RUN`**: borrada en otro paso, seguiría ocupando su <Term id="image-layer">capa</Term>, como viste en la [lección 2](/fase-7/capas-docker/). `npm` pide `--force` como precaución, y por eso avisa.
+- **`COPY --from=comprobar /app/src ./src`**: copia la carpeta `src` de la etapa `comprobar`, no de tu ordenador. Ahora verás por qué.
+- **`ENV NODE_ENV=production`**: así muchas bibliotecas de Node saben que están en producción.
+
+`USER` y `HEALTHCHECK` tienen sección propia. La imagen final se queda con `package.json`, su *lockfile*, `.npmrc`, las dependencias de producción y `src/`: ni tests, ni scripts, ni TypeScript.
+
+### Por qué la final copia de comprobar
+
+BuildKit, el constructor de Docker, **solo construye las etapas que la final necesita**. Si la última no copia nada de `comprobar`, no la ejecuta.
+
+Lo probamos con un fallo a propósito: en `src/app.ts`, `pool.querry` en lugar de `pool.query`, y la última línea `COPY` cambiada por `COPY src ./src`, que copia de tu ordenador. Este es el registro de la construcción, recortado:
+
+```text
+#5 [final 1/5] FROM docker.io/library/node:26-slim@sha256:193fe51b…
+#6 [final 2/5] WORKDIR /app
+#6 CACHED
+#7 [final 3/5] COPY package.json package-lock.json .npmrc ./
+#7 CACHED
+#8 [final 4/5] RUN npm ci --omit=dev && npm cache clean --force
+#8 CACHED
+#9 [final 5/5] COPY src ./src
+#9 DONE 0.0s
+#10 naming to docker.io/library/tienda-api:latest done
+```
+
+**La construcción termina bien, con el fallo dentro**, y sin rastro de `comprobar` ni de `dependencias`. Con `COPY --from=comprobar`, la final depende de esa etapa, y Docker tiene que construirla: los tipos se comprueban siempre. (La capturamos con otro nombre de imagen, cambiado por `tienda-api`.)
+
+### USER node: sin root dentro del contenedor
+
+Dentro de un contenedor, el programa es `root` salvo que digas otra cosa. En la [lección 1](/fase-7/imagen-contenedor-docker/) lo viste con `whoami` en nginx.
+
+Parece inofensivo, pero es el usuario 0 del núcleo que comparten todos los contenedores. Docker le quita poderes, y aun así:
+
+- **Dentro**, puede cambiar el código de la API, instalar programas con `apt` o leer cualquier fichero.
+- **Fuera**, si aparece un fallo en Docker o en el núcleo que permite escapar del contenedor, escapa como `root` de la máquina.
+
+Es el <Term id="least-privilege">mínimo privilegio</Term> de la [lección de usuarios de la Fase 1](/fase-1/usuarios-y-permisos-linux/): la API solo necesita leer su código y abrir el puerto 3000. **`USER node`** hace que lo de detrás, y el contenedor al arrancar, se ejecute como `node`, un <Term id="user">usuario</Term> sin privilegios que trae la imagen base. El código lo copió `root`: `node` puede leerlo, pero no cambiarlo.
+
+`USER node` va al final, después de instalar: `npm ci` necesita escribir en `/app`, que es de `root`.
+
+### HEALTHCHECK: ¿la tienda está bien?
+
+`docker ps` dice `Up` mientras el proceso viva, pero la API puede estar en marcha y no servir: sin PostgreSQL, casi todas sus rutas fallan. Para eso, la ruta nueva, **`GET /salud`**:
+
+<ProjectCode file="tienda-api/33-imagen-pequena/src/app.ts" region="salud" />
+
+Hace la consulta más pequeña, `SELECT 1`. Si PostgreSQL contesta, `200` y `{"estado":"ok"}`; si no, `503 Service Unavailable`, con el formato de errores de la [Fase 4](/fase-4/errores-api-problem-details/). Para usar `pool`, `src/app.ts` gana también una línea arriba: `import { pool } from './bd.ts';`.
+
+La instrucción **`HEALTHCHECK`** le dice a Docker cómo preguntar. Es un <Term id="healthcheck">healthcheck</Term>, un chequeo de salud:
+
+- **`--interval=10s`**: pregunta cada 10 segundos. **`--timeout=3s`**: si tarda más de 3, cuenta como fallo.
+- **`CMD [...]`**: la orden que ejecuta dentro del contenedor. Si su <Term id="exit-code">código de salida</Term> es 0, todo bien; si es 1, mal. La imagen no trae `curl`, así que pregunta con el `fetch` de Node: `r.ok` es cierto con un `200`.
+- Tras **tres fallos seguidos** (el valor por defecto), Docker marca el contenedor `unhealthy`.
+
+Docker solo lo apunta: no reinicia un contenedor `unhealthy`. Lo usan otros: Compose, en la [lección 7](/fase-7/docker-compose/), y el balanceador, en la Fase 8.
+
+### Tus secretos no entran
+
+Una imagen se comparte: la subes a un <Term id="registry">registro</Term> ([lección 8](/fase-7/docker-hub-registro/)) o se la pasas a Luis. **Quien tiene la imagen puede leer cada fichero de cada capa**, aunque una capa de arriba lo borre. Si tu `.env` entra, entran tus secretos.
+
+Por eso el `.dockerignore` de la lección 3 deja fuera `.env` y `node_modules`: `docker build` no los manda, y `COPY . .` no los encuentra. La etapa final añade otra barrera: solo copia `src/`.
+
+## Pruébalo
+
+El objetivo: dejar la imagen de tu tienda en dos tercios de su tamaño, y demostrar que no se ejecuta como `root`, que no lleva tu `.env` y que Docker sabe si está bien.
+
+Las salidas son de Docker Engine 29 en un Mac, capturadas con otros nombres y otro puerto, cambiados por los de la lección. Tus IDs, huellas, tamaños y tiempos serán otros.
+
+### Guarda la imagen de antes
+
+Trabajas en `~/curso-backend/fase-3/tienda-api`, con la imagen `tienda-api` de la lección 3. Dale otro nombre, para compararla después:
+
+```sh
+cd ~/curso-backend/fase-3/tienda-api
+docker image tag tienda-api tienda-api:una-etapa
+```
+
+`docker image tag` añade una <Term id="tag">etiqueta</Term> a una imagen que ya existe, sin copiarla. Si sale bien, no escribe nada.
+
+### Actualiza tu proyecto
+
+Descarga el paso de esta lección y copia los tres ficheros que cambian: el `Dockerfile`, `src/app.ts`, con `/salud`, y el test nuevo, que comprueba los dos:
+
+```sh
+cd ~/curso-backend/fase-3
+curl -O https://backenddesdecero.com/practicas/tienda-api/33-imagen-pequena.tar.gz
+tar -xzf 33-imagen-pequena.tar.gz
+cd tienda-api
+cp ../33-imagen-pequena/Dockerfile .
+cp ../33-imagen-pequena/src/app.ts src/
+cp ../33-imagen-pequena/test/docker.test.ts test/
+```
+
+### Construye
+
+<TryIt
+  title="1. La imagen en tres etapas"
+  cmd="docker build --progress=plain -t tienda-api ."
+  output={`…
+#4 [dependencias 1/4] FROM docker.io/library/node:26-slim@sha256:193fe51b64e77981119c98c2002c9e32a70e2f006fb4d25068ce0558998917f0
+…
+#7 [dependencias 3/4] COPY package.json package-lock.json .npmrc ./
+#7 DONE 0.1s
+
+#8 [final 4/5] RUN npm ci --omit=dev && npm cache clean --force
+#8 2.824 added 53 packages, and audited 54 packages in 3s
+…
+#8 2.826 found 0 vulnerabilities
+#8 2.980 npm warn using --force Recommended protections disabled.
+#8 DONE 3.3s
+
+#9 [dependencias 4/4] RUN npm ci
+…
+#9 4.941 added 74 packages, and audited 75 packages in 5s
+…
+#9 4.948 4 moderate severity vulnerabilities
+…
+#9 DONE 5.0s
+
+#10 [comprobar 1/2] COPY . .
+#10 DONE 0.1s
+
+#11 [comprobar 2/2] RUN npm run check
+#11 0.199
+#11 0.199 > tienda-api@1.0.0 check
+#11 0.199 > tsc --noEmit
+#11 0.199
+#11 DONE 0.9s
+
+#12 [final 5/5] COPY --from=comprobar /app/src ./src
+#12 DONE 0.1s
+
+#13 exporting to image
+…
+#13 naming to docker.io/library/tienda-api:latest done
+…`}
+>
+
+Cada paso lleva el nombre de su etapa. Fíjate en tres cosas:
+
+- **`[comprobar 2/2] RUN npm run check`** se ejecuta, y `tsc` no dice nada: los tipos están bien.
+- **Los pasos se cruzan:** `[final 4/5]` empieza antes que `[dependencias 4/4]`. Las etapas que no dependen una de otra se construyen a la vez.
+- **Las vulnerabilidades:** 53 paquetes de producción y ninguna conocida; 74 con los de desarrollo, y 4.
+
+Los tres primeros pasos son iguales en `dependencias` y en `final`, y Docker los hace una vez. Los de `dependencias` son los de la lección 3: te saldrán `CACHED`, sin la salida de `npm ci`. Hemos quitado (`…`) líneas de `npm` y de Docker.
+
+</TryIt>
+
+<TryIt
+  title="2. Antes y después"
+  cmd="docker image ls tienda-api"
+  output={`IMAGE                  ID             DISK USAGE   CONTENT SIZE   EXTRA
+tienda-api:latest      9f5014a3df6c        435MB         92.1MB
+tienda-api:una-etapa   f525dc290ed6        596MB          145MB`}
+>
+
+**De 145 MB a 92 MB** de descarga, un 37 % menos: sobre todo TypeScript y compañía, unos 69 MB en disco, y los 34 MB de la caché de `npm`. Hemos ajustado el espacio entre columnas.
+
+</TryIt>
+
+### ¿Quién eres dentro?
+
+<TryIt
+  title="3. root antes, node ahora"
+  cmd={`docker run --rm tienda-api:una-etapa whoami\ndocker run --rm tienda-api whoami`}
+  output={`root
+node`}
+>
+
+`whoami` sustituye al `CMD` de la imagen, como `ls -a` en la lección 3: eres `root` en la de antes, y `node` en la nueva.
+
+</TryIt>
+
+<TryIt
+  title="4. Qué hay dentro, y de quién es"
+  cmd={`docker run --rm tienda-api ls -la\ndocker run --rm tienda-api touch src/hola.ts`}
+  output={`total 112
+drwxr-xr-x  1 root root  4096 Oct 14 04:38 .
+drwxr-xr-x  1 root root  4096 Oct 14 04:38 ..
+-rw-r--r--  1 root root   220 Oct 14 00:45 .npmrc
+drwxr-xr-x 48 root root  4096 Oct 14 04:38 node_modules
+-rw-r--r--  1 root root 86042 Oct 14 00:45 package-lock.json
+-rw-r--r--  1 root root  1470 Oct 14 00:45 package.json
+drwxr-xr-x  3 root root  4096 Oct 14 04:37 src
+touch: cannot touch 'src/hola.ts': Permission denied`}
+>
+
+`ls -la` lista `/app`, la carpeta de trabajo. **No hay `.env`**, ni `test/`, ni `scripts/`. Todo es de `root`, con los permisos de la [Fase 1](/fase-1/usuarios-y-permisos-linux/): `rw-r--r--` en los ficheros y `rwxr-xr-x` en las carpetas. Los demás, como `node`, no tienen la `w`: leen, pero no escriben. Por eso `touch`, que intenta crear un fichero en `src`, responde `Permission denied`.
+
+Si ves un `.env`, revisa tu `.dockerignore`.
+
+</TryIt>
+
+### ¿Está bien la tienda?
+
+Arranca el contenedor con la orden de la [lección 3](/fase-7/dockerfile/), la de tu sistema, y mira `docker ps`:
+
+<Tabs>
+
+<TabItem label="Mac y Windows">
+
+<TryIt
+  title="5. Arranca y mira su salud"
+  cmd={`docker run -d --name tienda -p 127.0.0.1:3000:3000 --env-file .env \\\n  -e DATABASE_URL=postgres://tienda:tienda@host.docker.internal:5432/tienda tienda-api\ndocker ps`}
+  output={`fc7d6fc6d6a8b7c4dfdb943cface315f12be95422b722df97cdbc5a899362507
+CONTAINER ID   IMAGE        COMMAND                  CREATED         STATUS                            PORTS                      NAMES
+fc7d6fc6d6a8   tienda-api   "docker-entrypoint.s…"   4 seconds ago   Up 4 seconds (health: starting)   127.0.0.1:3000->3000/tcp   tienda`}
+>
+
+`STATUS` dice **`(health: starting)`**: Docker aún no ha preguntado.
+
+</TryIt>
+
+</TabItem>
+
+<TabItem label="Linux">
+
+<TryIt
+  title="5. Arranca y mira su salud"
+  cmd={`docker run -d --name tienda --network host -e HOST=127.0.0.1 --env-file .env tienda-api\ndocker ps`}
+  output={`76d881de5c39336d3176f0dc31754a25392e7e09adbae477737e0fe2fad99e3c
+CONTAINER ID   IMAGE        COMMAND                  CREATED         STATUS                            PORTS     NAMES
+76d881de5c39   tienda-api   "docker-entrypoint.s…"   4 seconds ago   Up 4 seconds (health: starting)             tienda`}
+>
+
+`STATUS` dice **`(health: starting)`**: Docker aún no ha preguntado. `PORTS` sale vacío: con `--network host` no se publica nada. El chequeo pregunta a `127.0.0.1:3000`, que aquí es tu ordenador, y funciona igual.
+
+</TryIt>
+
+</TabItem>
+
+</Tabs>
+
+Espera unos segundos y repite `docker ps`:
+
+```text
+CONTAINER ID   IMAGE        COMMAND                  CREATED          STATUS                    PORTS                      NAMES
+fc7d6fc6d6a8   tienda-api   "docker-entrypoint.s…"   15 seconds ago   Up 15 seconds (healthy)   127.0.0.1:3000->3000/tcp   tienda
+```
+
+**`(healthy)`**: `/salud` respondió `200`. `docker logs tienda` enseña una petición a `/salud` cada 10 segundos: son las de Docker.
+
+Si el contenedor no aparece, mira `docker logs tienda`: ahí sale la configuración que falta. Si en Windows no llegabas a tu PostgreSQL en la lección 3, aquí verás `(unhealthy)`: la lección 6 lo resuelve. Nuestro PostgreSQL estaba en otro contenedor, como en la [lección 6](/fase-7/redes-docker/); los estados son los mismos.
+
+Ahora para PostgreSQL: en el Mac, `brew services stop postgresql@18`; en Ubuntu y WSL, `sudo pg_ctlcluster 18 main stop`. Espera medio minuto:
+
+<TryIt
+  title="6. Sin base de datos"
+  cmd="docker ps"
+  output={`CONTAINER ID   IMAGE        COMMAND                  CREATED          STATUS                      PORTS                      NAMES
+fc7d6fc6d6a8   tienda-api   "docker-entrypoint.s…"   58 seconds ago   Up 58 seconds (unhealthy)   127.0.0.1:3000->3000/tcp   tienda`}
+>
+
+**`(unhealthy)`**, tras tres preguntas fallidas, una cada 10 segundos. Sigue `Up`: Docker no lo reinicia. `curl -i http://localhost:3000/salud` responde `503 Service Unavailable`.
+
+Vuelve a arrancarlo (`start` en lugar de `stop`) y, a los pocos segundos, `docker ps` dice otra vez `(healthy)`.
+
+</TryIt>
+
+<SelfCheck question="Reto: en src/app.ts, escribe pool.querry en lugar de pool.query y vuelve a construir la imagen. ¿Qué pasa con tu imagen tienda-api?">
+
+La construcción se para en `comprobar`:
+
+```text
+#10 [comprobar 2/2] RUN npm run check
+#10 0.649 src/app.ts(99,16): error TS2551: Property 'querry' does not exist on type 'Pool'. Did you mean 'query'?
+#10 ERROR: process "/bin/sh -c npm run check" did not complete successfully: exit code: 1
+…
+ERROR: failed to build: failed to solve: process "/bin/sh -c npm run check" did not complete successfully: exit code: 1
+```
+
+`tsc` termina con código 1 y Docker no crea la imagen: `tienda-api` sigue siendo la buena. Sin `comprobar`, se habría construido, y `/salud` respondería `503` siempre. Deja `pool.query` como estaba.
+
+</SelfCheck>
+
+Para terminar, borra el contenedor y la imagen de antes:
+
+<TryIt
+  title="7. Limpia"
+  cmd={`docker rm -f tienda\ndocker image rm tienda-api:una-etapa`}
+  output={`tienda
+Untagged: tienda-api:una-etapa
+Deleted: sha256:f525dc290ed654db29abdee7ab8afa106cc5a44261d74eaa4c43cd8bc5ab183e`}
+>
+
+`docker rm -f` para y borra el contenedor a la vez. La imagen `tienda-api` se queda: la usarás en las lecciones siguientes.
+
+</TryIt>
+
+## Ya lo has visto
+
+- **`devDependencies`.** En la [Fase 3](/fase-3/typescript-con-node/), `--save-dev` separó lo que solo sirve para desarrollar. `--omit=dev` usa esa lista.
+- **`www-data` y `postgres`.** En la [Fase 1](/fase-1/usuarios-y-permisos-linux/), cada servidor tenía su usuario. `USER node` es lo mismo.
+- **`ps` que no está.** En la [lección 1](/fase-7/imagen-contenedor-docker/), `docker exec web ps` no encontró `ps`: las imágenes ya vienen recortadas.
+
+## Errores comunes
+
+- **Borrar en otro `RUN`.** `RUN npm cache clean --force` en su propia línea no ahorra nada: la caché sigue en la capa de `npm ci`.
+- **Copiar `node_modules` de la etapa de instalación.** `COPY --from=dependencias /app/node_modules` se lleva también las de desarrollo.
+- **`USER node` demasiado pronto.** Justo después de `WORKDIR /app`, `npm ci` se ejecuta como `node` y no puede escribir en `/app`, que es de `root`: `EACCES: permission denied, mkdir '/app/node_modules'`.
+- **Un `HEALTHCHECK` con `curl` en una imagen sin `curl`.** La orden falla siempre, y el contenedor sale `unhealthy` aunque la API vaya bien.
+
+## Resumen
+
+- Lo que sobra en una imagen cuesta en descarga y en superficie de ataque: menos programas, menos fallos conocidos y menos herramientas para un atacante.
+- `slim` es la base del curso: Debian mínimo, con *glibc* y una shell. Alpine usa *musl*, que puede romper paquetes nativos; distroless no tiene shell.
+- En un Dockerfile multi-stage, solo la última etapa es la imagen. Las otras instalan y comprueban, y la final copia de ellas lo que necesita; si no copia nada de una, BuildKit se la salta.
+- `npm ci --omit=dev && npm cache clean --force`, en el mismo `RUN`, deja solo las dependencias de producción.
+- `USER node` ejecuta la API sin privilegios, y `HEALTHCHECK` hace que `docker ps` diga `healthy` o `unhealthy` según `/salud`.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Luis quiere añadir RUN rm -rf /root/.npm en una línea nueva, al final del Dockerfile de una etapa, para que la imagen pese menos. ¿Lo consigue?"
+  review="Un Dockerfile, tres etapas"
+>
+
+<QuizOption text="Sí: la caché desaparece de la imagen y la descarga baja 34 MB.">
+
+Desaparece de la vista, pero sigue en la capa de `npm ci`, que se descarga entera.
+
+</QuizOption>
+
+<QuizOption text="No: hay que borrarla en el mismo RUN que la crea." correct>
+
+Cada `RUN` es una capa, y la de `npm ci` ya lleva la caché. Por eso el Dockerfile instala y limpia en un solo `RUN`.
+
+</QuizOption>
+
+<QuizOption text="No: Docker no deja borrar ficheros de una imagen después de crearlos.">
+
+Sí deja, y el fichero deja de verse. Pero sigue ocupando sitio en su capa.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Ana cambia COPY --from=comprobar /app/src ./src por COPY src ./src, porque «es lo mismo». Al día siguiente sube un error de tipos y la imagen se construye sin quejarse. ¿Por qué?"
+  review="Por qué la final copia de comprobar"
+>
+
+<QuizOption text="Porque Docker guarda en caché el resultado de npm run check y no lo repite.">
+
+Con el código cambiado, la caché no valdría y `npm run check` se repetiría. El problema es que ni se intenta.
+
+</QuizOption>
+
+<QuizOption text="Porque tsc --noEmit no encuentra errores dentro de un contenedor.">
+
+`tsc` funciona igual dentro, como viste en el reto. Lo que pasa es que no se ejecuta.
+
+</QuizOption>
+
+<QuizOption text="Porque BuildKit se salta comprobar: la final ya no copia nada de ella." correct>
+
+BuildKit solo construye las etapas de las que depende la final. Sin `--from=comprobar`, la comprobación sobra, y no se ejecuta.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Tu API usa un paquete de npm que trae código nativo compilado. Cambias FROM node:26-slim por node:26-alpine para ahorrar 20 MB, y la imagen ya no arranca. ¿Qué es lo más probable?"
+  review="Alpine usa otra biblioteca de C"
+>
+
+<QuizOption text="Que alpine no trae Node 26, sino una versión más antigua de Node.">
+
+`node:26-alpine` trae Node 26, como su nombre dice. Lo que cambia es la biblioteca de C que hay debajo.
+
+</QuizOption>
+
+<QuizOption text="Que el código nativo está compilado para glibc y alpine usa musl." correct>
+
+Muchos paquetes nativos se publican compilados para *glibc*, y sobre *musl* pueden no tener versión o fallar al cargar.
+
+</QuizOption>
+
+<QuizOption text="Que alpine no tiene shell, y Node necesita una para poder arrancar.">
+
+La que no tiene shell es distroless, y aun así Node arranca en ella. Alpine sí trae una, `sh`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Tu contenedor sale (unhealthy) en docker ps, pero curl a /v2/productos responde bien desde tu ordenador. ¿Qué miras primero?"
+  review="HEALTHCHECK: ¿la tienda está bien?"
+>
+
+<QuizOption text="Nada: unhealthy solo es un aviso, y Docker reiniciará el contenedor él solo.">
+
+Docker no reinicia un contenedor por estar `unhealthy`: solo lo apunta. Y algo va mal: o la base de datos, o la propia comprobación.
+
+</QuizOption>
+
+<QuizOption text="Que la API tenga más memoria: unhealthy significa que va lenta.">
+
+`unhealthy` no mide memoria: dice que la orden del `HEALTHCHECK` falló tres veces seguidas, por error o por pasarse de `--timeout`.
+
+</QuizOption>
+
+<QuizOption text="La orden del HEALTHCHECK y lo que responde /salud dentro del contenedor." correct>
+
+Si `/v2/productos` va bien, la base de datos responde: lo más probable es que falle la propia comprobación, por ejemplo con `curl` en una imagen que no lo trae, o con un puerto equivocado. `docker inspect tienda` guarda las últimas comprobaciones y su resultado.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Alguien consigue ejecutar órdenes dentro de tu contenedor, que tiene USER node. ¿Qué puede hacer?"
+  review="USER node: sin root dentro del contenedor"
+>
+
+<QuizOption text="Leer el código y la configuración de la API, pero no cambiarlo." correct>
+
+`node` lee `/app`, pero no puede escribir en él ni instalar nada. Lo que la API sabe, él también: el mínimo privilegio reduce el daño, no lo quita.
+
+</QuizOption>
+
+<QuizOption text="Nada: un usuario sin privilegios no puede ejecutar órdenes.">
+
+Puede ejecutar todo lo que no pida permisos especiales: leer ficheros, hacer peticiones…
+
+</QuizOption>
+
+<QuizOption text="Lo mismo que con root: dentro de un contenedor los usuarios no cuentan.">
+
+Los permisos de Linux funcionan igual dentro: `touch` respondió `Permission denied`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Luis borra .env de tu .dockerignore «porque la imagen final solo copia src/». ¿Está a salvo tu .env?"
+  review="Tus secretos no entran"
+>
+
+<QuizOption text="Sí: lo que no llega a la imagen final no se puede leer.">
+
+No estará en la final, pero `COPY . .` lo mete en la etapa `comprobar`, que se guarda en la caché. Basta con que alguien cambie la final sin pensarlo.
+
+</QuizOption>
+
+<QuizOption text="No: Docker publica todas las etapas cuando subes la imagen a un registro.">
+
+Al registro solo va la imagen final. Las etapas se quedan en tu caché, que tampoco es buen sitio para un secreto.
+
+</QuizOption>
+
+<QuizOption text="No del todo: entra en la etapa comprobar, en tu caché." correct>
+
+Con `.dockerignore`, el `.env` ni sale de tu carpeta; sin él, solo te protege que la final copie `src/`. Un secreto no debería depender de una sola barrera.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Multi-stage builds](https://docs.docker.com/build/building/multi-stage/) y [Building best practices](https://docs.docker.com/build/building/best-practices/), de la documentación de Docker, en inglés.
+- [La referencia de `HEALTHCHECK`](https://docs.docker.com/reference/dockerfile/#healthcheck) y [la de `USER`](https://docs.docker.com/reference/dockerfile/#user), en inglés.
+- [Docker and Node.js Best Practices](https://github.com/nodejs/docker-node/blob/main/docs/BestPractices.md), de los que mantienen las imágenes de Node, en inglés: el usuario `node`, `NODE_ENV` y alpine.
+- [Distroless](https://github.com/GoogleContainerTools/distroless), el proyecto de Google, en inglés.

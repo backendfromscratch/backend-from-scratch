@@ -1,0 +1,546 @@
+---
+translationKey: dockerfile
+title: "Dockerfile desde cero: la API en un contenedor"
+description: "Escribe el Dockerfile de una API de Node instrucción a instrucción, deja tus secretos fuera con .dockerignore, construye la imagen y arráncala."
+sidebar:
+  label: Dockerfile
+  order: 3
+lesson:
+  oneLiner: "Un Dockerfile es la receta de una imagen: de qué imagen partes, qué copias, qué ejecutas al construirla y qué programa arranca. Con ocho instrucciones, la API de la tienda cabe en una imagen que arranca igual en cualquier ordenador con Docker, sin instalar Node ni sus dependencias."
+  objectives:
+    - Leer y escribir un Dockerfile para una API de Node, instrucción a instrucción.
+    - Dejar fuera de la imagen tus secretos y las dependencias de tu ordenador con .dockerignore.
+    - Construir la imagen y arrancarla con su configuración, conectada al PostgreSQL de tu ordenador.
+    - Explicar por qué CMD va en forma exec y cómo se apaga bien un servidor que es el PID 1.
+  prerequisites: [layers]
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Luis quiere probar la API de la tienda en su portátil. Solo tiene Docker: ni Node 26, ni las dependencias. En la [lección 1](/fase-7/imagen-contenedor-docker/) arrancaste nginx con una orden porque alguien había hecho su <Term id="image">imagen</Term>. De tu API no hay imagen: la tienes que hacer tú.
+
+Para eso escribes un <Term id="dockerfile">Dockerfile</Term>: un fichero de texto con los pasos que hiciste a mano en la Fase 3, uno por línea. `docker build` lo lee y fabrica la imagen. Desde ese momento, Luis, un servidor o tú mismo dentro de un año arrancáis exactamente la misma API.
+
+## La analogía
+
+<Analogy>
+
+Imagina que Ana deja una receta a un cocinero que nunca ha visto su cocina. Tiene que ser exacta: «parte de esta cocina ya equipada; trabaja en esta encimera; coge de la cesta estos ingredientes; cuécelos así; al abrir el restaurante, sirve este plato».
+
+El cocinero solo usa lo que va en la cesta. Por eso Ana elige qué mete en ella, y su cartera, con las llaves de casa, no entra.
+
+<div slot="limits">
+
+- El cocinero cocina cada vez que alguien pide. Docker ejecuta la receta una vez, al construir la imagen; cada contenedor arranca el plato ya hecho.
+- «Esta cocina» puede cambiar si el dueño la reforma. En un Dockerfile, la imagen de partida se puede fijar por su huella y no cambia nunca.
+- El cocinero recuerda lo que hizo la última vez: es la caché de la lección 2.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### El Dockerfile de la tienda
+
+Este es el fichero entero, `Dockerfile`, sin extensión, en la carpeta del proyecto:
+
+<ProjectCode file="tienda-api/32-dockerfile/Dockerfile" />
+
+Las líneas con `#` son comentarios. Cada instrucción empieza por una palabra en mayúsculas, y Docker las ejecuta de arriba abajo. Es la misma receta del laboratorio de la [lección 2](/fase-7/capas-docker/). Ahora, pieza a pieza.
+
+### FROM: la imagen de partida, fijada por su huella
+
+**`FROM`** dice de qué imagen partes: todo lo demás se construye encima de sus capas. `node:26-slim` es Node 26 sobre un Debian mínimo, la que miraste con `docker history`. La [lección 4](/fase-7/docker-multi-stage/) la compara con otras más pequeñas.
+
+Detrás va `@sha256:193f…`, su huella (*digest*). La etiqueta `26-slim` pasa a otra imagen con cada versión nueva de Node o de Debian; la huella nombra siempre exactamente la misma. Es la idea del `save-exact` de tu [`.npmrc`](/fase-3/que-es-node-js/#el-npmrc-tres-líneas-contra-los-ataques-de-2025): **la versión cambia cuando tú decides**, no cuando alguien publica. La lección 8 cuenta cómo actualizarla.
+
+### WORKDIR: la carpeta de trabajo
+
+**`WORKDIR /app`** crea la carpeta `/app` dentro de la imagen y entra en ella, como un `mkdir` y un `cd`. Las instrucciones siguientes trabajan ahí, y el contenedor arrancará en ella.
+
+### COPY y RUN: primero las dependencias
+
+**`COPY origen destino`** copia ficheros de tu carpeta a la imagen. Aquí copia tres a `./`, es decir, a `/app`:
+
+- **`package.json` y `package-lock.json`**: lo que necesita `npm ci`. Van solos, antes que el código, por la caché: cambiar `src/` no repetirá la instalación (lección 2).
+- **`.npmrc`**: las reglas del proyecto para npm. Sin él, `npm ci` dentro de la imagen ejecutaría los scripts de instalación de cada paquete, justo lo que tu `.npmrc` apaga con `ignore-scripts`, y como `root`, el usuario con el que corre `RUN`.
+
+**`RUN npm ci`** ejecuta una orden **al construir la imagen**, no al arrancarla. `npm ci` instala exactamente lo que dice el *lockfile*, dentro de un Linux: las dependencias son las de Linux, aunque construyas en un Mac. Es la capa más grande: 161 MB.
+
+### COPY . . y el .dockerignore: qué entra en la imagen
+
+**`COPY . .`** copia el resto del proyecto a `/app`. El primer punto es la carpeta que le diste a `docker build`, el **contexto**: Docker la empaqueta y se la manda al motor. Lo que no está en el contexto, `COPY` no lo encuentra.
+
+Un fichero **`.dockerignore`**, junto al Dockerfile, dice qué se queda fuera, como `.gitignore` para Git:
+
+<ProjectCode file="tienda-api/32-dockerfile/.dockerignore" />
+
+Línea a línea:
+
+- **`node_modules`**: tus dependencias, quizá instaladas para macOS. La imagen tiene las suyas, de `npm ci`; copiar las tuyas encima las pisaría.
+- **`.env`**: tus <Term id="secret">secretos</Term>. Una imagen se comparte, y quien la tiene puede leer todos sus ficheros. Es la regla de la [Fase 1](/fase-1/variables-de-entorno/#los-secretos-fuera-del-código) y de la [lección 8 de la Fase 6](/fase-6/rate-limiting-secretos/): un secreto que viaja en una imagen está tan filtrado como uno que llegó a Git.
+- **`.git`, `*.log`, `Dockerfile` y `.dockerignore`**: la historia de Git, los logs y los propios ficheros de Docker. La API no los usa.
+
+Las pruebas, `test/`, sí entran: en la lección 4, la comprobación de tipos que se hace al construir también las revisa.
+
+### ENV HOST=0.0.0.0: escuchar en todas las direcciones
+
+**`ENV`** deja una <Term id="environment-variable">variable de entorno</Term> en la ficha de la imagen: todos sus contenedores arrancan con ella. Desde este paso, `src/config.ts` lee `HOST`, la dirección en la que escucha el servidor, y `src/servidor.ts` la usa:
+
+<ProjectCode file="tienda-api/32-dockerfile/src/servidor.ts" region="servidor" />
+
+Sin `HOST`, el servidor escucha en `127.0.0.1`, como desde la [Fase 3](/fase-3/servidor-http-node/): solo tu ordenador llega a él. Dentro de un contenedor, **`127.0.0.1` es el propio contenedor**. Lo que llega por el puerto publicado entra por la red del contenedor, no por su `127.0.0.1`, así que nadie llegaría. `0.0.0.0` significa «todas mis direcciones».
+
+¿Rompe eso la regla de la Fase 3? No: quién llega al contenedor lo decide el puerto publicado. Con `-p 127.0.0.1:3000:3000`, solo tu ordenador. La [lección 6](/fase-7/redes-docker/) lo cuenta a fondo.
+
+`ENV` es para valores por defecto, nunca para secretos: `docker history` enseña cada `ENV` a quien tenga la imagen.
+
+### EXPOSE: solo documenta
+
+**`EXPOSE 3000`** apunta en la ficha que el programa escucha en el 3000. No abre ni publica nada: eso lo hace `docker run -p`. Sirve para quien lee el Dockerfile, y para algunas herramientas.
+
+### CMD en forma exec: node es el PID 1
+
+**`CMD`** dice qué programa arranca cada contenedor. Va en **forma exec**, una lista entre corchetes: `["node", "src/servidor.ts"]`. Docker arranca `node` directamente, y `node` es el <Term id="pid">PID</Term> 1.
+
+Hay otra forma, la **forma shell**: `CMD node src/servidor.ts`, sin corchetes. Docker la convierte en `sh -c "node src/servidor.ts"`. Entonces el PID 1 es `sh`, y `node` es su hijo. `docker stop` manda `SIGTERM` al PID 1, `sh` no se la pasa a `node`, y a los diez segundos llega `SIGKILL`. Lo comprobarás en el reto de «Pruébalo».
+
+La imagen de Node arranca antes un script suyo, `docker-entrypoint.sh`, que se cambia por tu `CMD` sin dejar rastro: `node` sigue siendo el 1.
+
+### Apagarse bien: el PID 1 y las señales
+
+Como viste en la [lección 1](/fase-7/imagen-contenedor-docker/#docker-stop-primero-una-señal-después-sigkill), Linux no termina el PID 1 por una <Term id="signal">señal</Term> que no haya preparado. Por eso `servidor.ts` prepara dos:
+
+<ProjectCode file="tienda-api/32-dockerfile/src/servidor.ts" region="apagar" />
+
+- **`for (const senal of ['SIGTERM', 'SIGINT'])`**: lo mismo para `SIGTERM`, la de `docker stop`, y `SIGINT`, la de <kbd>Ctrl</kbd> + <kbd>C</kbd> ([Fase 1](/fase-1/procesos-y-senales/)).
+- **`process.once(senal, …)`**: la función se ejecuta la primera vez que llega esa señal.
+- **`servidor.close(…)`**: deja de aceptar conexiones y espera a que acaben las peticiones a medias. Después, `pool.end()` cierra las conexiones con PostgreSQL y `process.exit(0)` termina con código 0, «todo bien».
+- **`setTimeout(…, 5000).unref()`**: si una conexión no acaba nunca, como un <Term id="websocket">WebSocket</Term> abierto, sale igual a los 5 segundos. `unref()` evita que ese reloj, por sí solo, mantenga vivo el programa.
+
+Sin esto, `docker stop` tarda diez segundos y corta lo que estuviera a medias. Con esto, menos de dos décimas.
+
+### La base de datos está fuera del contenedor
+
+Tu `.env` dice `DATABASE_URL=postgres://tienda:tienda@localhost:5432/tienda`. Dentro del contenedor, `localhost` es el contenedor, y allí no hay PostgreSQL: la API respondería `500` y su log diría `connect ECONNREFUSED 127.0.0.1:5432`.
+
+Cómo llegar al PostgreSQL de tu ordenador depende de tu Docker:
+
+- **Docker Desktop** da a los contenedores un nombre para el ordenador donde corren: **`host.docker.internal`**. Basta con cambiar `localhost` por ese nombre.
+- **En Linux, con Docker Engine,** ese nombre no existe, y aunque lo añadieras, tu PostgreSQL solo acepta conexiones de `localhost`. Abrirlo a la red de Docker es tocar su configuración. Es más sencillo **`--network host`**: el contenedor no tiene red propia, usa la de tu Linux, y su `localhost` es el tuyo. Como el servidor queda en tu red, `HOST` vuelve a `127.0.0.1`.
+
+En las lecciones [5](/fase-7/volumenes-docker/) y [6](/fase-7/redes-docker/), PostgreSQL pasa a un contenedor y la API lo encuentra por su nombre, igual en todos los sistemas.
+
+## Pruébalo
+
+El objetivo: meter la tienda en una imagen, llamarla con `curl` y averiguar cuánto tarda en pararse con y sin su `SIGTERM`.
+
+Las salidas son de Docker Engine 29 en un Mac, dentro de una máquina virtual con Linux, como la de Docker Desktop. Las capturamos con otro puerto y otros nombres, que hemos cambiado por los de la lección: nada más cambia. Tus IDs, huellas, tamaños y tiempos serán otros.
+
+### Actualiza tu proyecto
+
+Partes de tu proyecto de la lección 8 de la Fase 6. Descarga el paso de esta lección y copia los dos ficheros de Docker, los dos de `src/` que cambian y su prueba:
+
+```sh
+cd ~/curso-backend/fase-3
+curl -O https://backenddesdecero.com/practicas/tienda-api/32-dockerfile.tar.gz
+tar -xzf 32-dockerfile.tar.gz
+cd tienda-api
+cp ../32-dockerfile/Dockerfile ../32-dockerfile/.dockerignore .
+cp ../32-dockerfile/src/config.ts ../32-dockerfile/src/servidor.ts src/
+cp ../32-dockerfile/test/docker.test.ts test/
+```
+
+Si tu `npm start` está en marcha, páralo con <kbd>Ctrl</kbd> + <kbd>C</kbd>: el contenedor necesitará el puerto 3000. PostgreSQL, en cambio, tiene que estar en marcha.
+
+<TryIt
+  title="1. Construye la imagen"
+  cmd="docker build -t tienda-api ."
+  output={`[+] Building 8.7s (10/10) FINISHED                                docker:colima
+ => [internal] load build definition from Dockerfile                       0.0s
+ => => transferring dockerfile: 1.34kB                                     0.0s
+ => [internal] load metadata for docker.io/library/node:26-slim@sha256:19  0.0s
+ => [internal] load .dockerignore                                          0.0s
+ => => transferring context: 531B                                          0.0s
+ => [1/5] FROM docker.io/library/node:26-slim@sha256:193fe51b64e77981119c  0.0s
+ => => resolve docker.io/library/node:26-slim@sha256:193fe51b64e77981119c  0.0s
+ => [internal] load build context                                          0.0s
+ => => transferring context: 521.24kB                                      0.0s
+ => CACHED [2/5] WORKDIR /app                                              0.0s
+ => [3/5] COPY package.json package-lock.json .npmrc ./                    0.0s
+ => [4/5] RUN npm ci                                                       4.0s
+ => [5/5] COPY . .                                                         0.1s
+ => exporting to image                                                     4.5s
+ => => exporting layers                                                    3.5s
+…
+ => => naming to docker.io/library/tienda-api:latest                       0.0s
+ => => unpacking to docker.io/library/tienda-api:latest                    0.9s`}
+>
+
+Palabra a palabra: **`docker build`** construye una imagen; **`-t tienda-api`** le pone nombre, con la etiqueta `latest`; y **`.`** es el contexto, la carpeta actual.
+
+Mientras construye, las líneas se reescriben; al terminar queda este resumen:
+
+- **`load build context`**: lo que manda tu carpeta, 521 kB. Sin `.dockerignore`, con `node_modules`, serían cientos de MB.
+- **`[1/5]` a `[5/5]`**: tus cinco pasos con capa, con sus segundos. `npm ci` es el lento; la primera vez, con las descargas, tardará más.
+- **`docker:colima`**, arriba a la derecha, es el Docker que construyó: capturamos con Colima, otro programa que arranca el motor en una máquina virtual. Tú verás `docker:desktop-linux` o `docker:default`. Nuestro `WORKDIR` salió `CACHED` por otra imagen anterior con el mismo principio.
+
+Si termina con `open Dockerfile: no such file or directory`, no estás en la carpeta del proyecto, o no copiaste el Dockerfile.
+
+</TryIt>
+
+<TryIt
+  title="2. ¿Qué hay dentro?"
+  cmd={`docker image ls tienda-api\ndocker run --rm tienda-api ls -a`}
+  output={`IMAGE               ID             DISK USAGE   CONTENT SIZE   EXTRA
+tienda-api:latest   014e1da6acd6        596MB          145MB
+.
+..
+.env.ejemplo
+.gitignore
+.npmrc
+.nvmrc
+bd
+drizzle
+drizzle.config.ts
+ejemplos
+node_modules
+package-lock.json
+package.json
+scripts
+src
+test
+tsconfig.json`}
+>
+
+La imagen descarga 145 MB comprimidos y ocupa 596 MB en tu disco, como viste en la lección 2. `ls -a` sustituye a `node` y lista `/app`: está `.env.ejemplo`, pero **tu `.env` no**. El `node_modules` es el de `npm ci`.
+
+</TryIt>
+
+Ahora arráncala. La configuración llega al arrancar, de tu `.env`:
+
+<Tabs>
+
+<TabItem label="Mac y Windows">
+
+<TryIt
+  title="3. Arranca la tienda"
+  cmd={`docker run -d --name tienda -p 127.0.0.1:3000:3000 --env-file .env \\\n  -e DATABASE_URL=postgres://tienda:tienda@host.docker.internal:5432/tienda tienda-api\ndocker logs tienda`}
+  output={`5997d2d44291920a5f786dcf151b3dc2f83822096e2e409b6a446202abbd79a7
+{"level":30,"time":1791953348446,"pid":1,"hostname":"5997d2d44291","msg":"La tienda escucha en http://localhost:3000"}`}
+>
+
+- **`--env-file .env`**: crea dentro una variable por cada línea de tu `.env`.
+- **`-e DATABASE_URL=…`**: cambia solo esa. Si una variable está en los dos, gana `-e`.
+- **`-p 127.0.0.1:3000:3000`**, **`-d`** y **`--name`**, como en la lección 1. La `\` del final sigue la orden en la línea siguiente.
+
+En el log, fíjate en **`"pid":1`**: tu servidor es el primer proceso. `hostname` es el ID del contenedor.
+
+En Windows, tu PostgreSQL vive en WSL, y no siempre se llega a él desde un contenedor. Si el paso 4 devuelve un `500`, mira «Errores comunes».
+
+</TryIt>
+
+</TabItem>
+
+<TabItem label="Linux">
+
+<TryIt
+  title="3. Arranca la tienda"
+  cmd={`docker run -d --name tienda --network host -e HOST=127.0.0.1 --env-file .env tienda-api\ndocker logs tienda`}
+  output={`5d83d8067905c2a11448b7ff038a0596ed61d10e0bba3b1c3b6c6a6af22eb5d1
+{"level":30,"time":1791953357301,"pid":1,"hostname":"portatil","msg":"La tienda escucha en http://localhost:3000"}`}
+>
+
+- **`--network host`**: el contenedor usa la red de tu Linux. Sin `-p`: el puerto 3000 ya es el tuyo.
+- **`-e HOST=127.0.0.1`**: el servidor vuelve a escuchar solo en tu ordenador.
+- **`--env-file .env`**: crea dentro una variable por cada línea de tu `.env`, también `DATABASE_URL` con su `localhost`, que aquí es el tuyo.
+
+En el log, fíjate en **`"pid":1`**: tu servidor es el primer proceso. Con `--network host`, `hostname` es el nombre de tu ordenador; hemos puesto `portatil`.
+
+</TryIt>
+
+</TabItem>
+
+</Tabs>
+
+<TryIt
+  title="4. Pídele los productos"
+  cmd="curl -s 127.0.0.1:3000/v2/productos"
+  output={`[{"id":1,"nombre":"Camiseta","precioCentimos":2000,"stock":40,"categorias":["Ropa"]},{"id":2,"nombre":"Taza","precioCentimos":850,"stock":60,"categorias":["Hogar","Regalos"]},{"id":3,"nombre":"Sudadera","precioCentimos":3500,"stock":25,"categorias":["Ropa"]},{"id":4,"nombre":"Gorra","precioCentimos":1500,"stock":15,"categorias":["Ropa","Regalos"]}]`}
+>
+
+Los productos de tu PostgreSQL, servidos por una API que corre en un contenedor, sin tu Node. Tus datos pueden ser otros si los cambiaste.
+
+</TryIt>
+
+<TryIt
+  title="5. Párala"
+  cmd={`time docker stop tienda\ndocker logs tienda | tail -1`}
+  output={`tienda
+docker stop tienda  0.01s user 0.01s system 12% cpu 0.151 total
+{"level":30,"time":1791953349966,"pid":1,"hostname":"5997d2d44291","msg":"SIGTERM: la tienda se apaga"}`}
+>
+
+**0,151 segundos**: `SIGTERM` llegó a `node` y la región `apagar` cerró todo. La última línea del log lo cuenta. En bash, `time` escribe `real 0m0.151s`.
+
+</TryIt>
+
+Bórralo con `docker rm tienda`: la imagen se queda.
+
+### Cambia una línea y reconstruye
+
+Ahora, un experimento. En `src/servidor.ts`, quita `'SIGTERM', ` de la lista, para que solo quede `'SIGINT'`:
+
+```ts
+for (const senal of ['SIGINT'] as const) {
+```
+
+Reconstruye, con `--progress=plain` para leer cada paso como en la lección 2:
+
+<TryIt
+  title="6. ¿Qué capas se repiten?"
+  cmd="docker build --progress=plain -t tienda-api ."
+  output={`…
+#6 [2/5] WORKDIR /app
+#6 CACHED
+
+#7 [3/5] COPY package.json package-lock.json .npmrc ./
+#7 CACHED
+
+#8 [4/5] RUN npm ci
+#8 CACHED
+
+#9 [5/5] COPY . .
+#9 DONE 0.2s
+…`}
+>
+
+Solo `COPY . .` se ejecuta: sus ficheros cambiaron. `npm ci` sale de la caché, porque `package.json`, el *lockfile* y `.npmrc` son los mismos. Es el orden de Luis de la lección 2.
+
+</TryIt>
+
+Arranca otra vez la tienda con la orden del paso 3 y, cuando el log diga que escucha, párala:
+
+<TryIt
+  title="7. Sin SIGTERM"
+  cmd={`time docker stop tienda\ndocker ps -a --filter name=tienda`}
+  output={`tienda
+docker stop tienda  0.01s user 0.01s system 0% cpu 11.420 total
+CONTAINER ID   IMAGE        COMMAND                  CREATED          STATUS                                PORTS     NAMES
+f05a4cda5d83   tienda-api   "docker-entrypoint.s…"   14 seconds ago   Exited (137) Less than a second ago             tienda`}
+>
+
+**Más de diez segundos**, y `Exited (137)`: 128 más 9, `SIGKILL`. Nadie escuchaba `SIGTERM`, el PID 1 la ignoró, y Docker esperó y lo mató. `--filter name=tienda` deja solo los contenedores con ese nombre.
+
+</TryIt>
+
+Vuelve a poner `'SIGTERM', `, reconstruye y borra el contenedor con `docker rm tienda`.
+
+<SelfCheck question="Reto: arranca la imagen como si CMD estuviera en forma shell, con docker run -d --name prueba --env-file .env tienda-api sh -c 'node src/servidor.ts'. ¿Cuánto tarda docker stop prueba, y qué pid dice su log?">
+
+Unos 10 segundos (`10.143 total` en nuestra prueba), y el `pid` del log ya no es 1 (tu número puede ser otro):
+
+```text
+{"level":30,…,"pid":7,…,"msg":"La tienda escucha en http://localhost:3000"}
+```
+
+El PID 1 es `sh`, que recibe `SIGTERM` y no se la pasa a `node`, aunque `node` sí sepa apagarse. El log no dice `SIGTERM: la tienda se apaga`: `node` murió con `SIGKILL`. Bórralo con `docker rm prueba`.
+
+</SelfCheck>
+
+## Ya lo has visto
+
+- **`npm ci` y `npm start`.** Son los pasos de la Fase 3: `RUN npm ci` es tu instalación, y `CMD` es lo que hace tu `npm start`, sin npm en medio.
+- **`.gitignore`.** `.dockerignore` es su pareja: los dos dejan fuera `node_modules` y `.env`.
+- **El `pid` de tus logs.** pino lo escribe en cada línea desde la [Fase 3](/fase-3/errores-y-logs-node/). En tu ordenador es un número grande; en el contenedor, 1.
+
+## Errores comunes
+
+- **El servidor escucha en `127.0.0.1` dentro.** El log dice que escucha, pero `curl` responde `curl: (52) Empty reply from server`, o un error de conexión parecido. Falta `ENV HOST=0.0.0.0`.
+- **`localhost` en `DATABASE_URL`.** La API responde `500`, y `docker logs` dice `connect ECONNREFUSED 127.0.0.1:5432`: busca PostgreSQL dentro del contenedor. En Windows, si tampoco llega con `host.docker.internal`, sigue con `curl -s 127.0.0.1:3000/`, que no usa la base de datos; la lección 6 lo resuelve.
+- **Secretos en la imagen.** Un `.env` sin `.dockerignore`, o un `ENV CLAVE=…`, viaja con la imagen a quien la reciba.
+- **`CMD` en forma shell.** `docker stop` tarda diez segundos y termina con `137`.
+- **Cambiar el código y no reconstruir.** El contenedor ejecuta la imagen, no tu carpeta: tras `docker build`, borra el contenedor y arranca otro.
+- **`port is already allocated`.** Otro programa, quizá tu `npm start`, usa el 3000: páralo.
+
+## Resumen
+
+- Un Dockerfile es la receta de una imagen: `FROM` la base, `WORKDIR` la carpeta, `COPY` tus ficheros, `RUN` órdenes al construir, `ENV` y `EXPOSE` datos de la ficha, y `CMD` el programa del contenedor.
+- La base se fija por su huella, y el `.npmrc` va con `package.json` para que `npm ci` cumpla sus reglas dentro.
+- `.dockerignore` deja fuera `node_modules` y `.env`: los secretos llegan al arrancar, con `--env-file` o `-e`.
+- Dentro de un contenedor, el servidor escucha en `0.0.0.0` y `localhost` es el contenedor; `-p 127.0.0.1:` decide quién llega.
+- `CMD` en forma exec hace de `node` el PID 1, y atender `SIGTERM` le permite pararse en décimas, no en diez segundos.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Construyes tu imagen y la arrancas con -p 127.0.0.1:3000:3000. El log dice que escucha, pero curl contesta Empty reply from server. ¿Qué falla?"
+  review="ENV HOST=0.0.0.0: escuchar en todas las direcciones"
+>
+
+<QuizOption text="Falta EXPOSE 3000: sin él, Docker no deja pasar nada al puerto.">
+
+`EXPOSE` solo documenta; el puerto lo publica `-p`, y ya lo has puesto. La petición llega al contenedor.
+
+</QuizOption>
+
+<QuizOption text="El servidor solo escucha dentro de su propio 127.0.0.1." correct>
+
+Lo publicado entra por la red del contenedor, no por su `127.0.0.1`. Con `HOST=0.0.0.0` escucha en todas sus direcciones, y `-p 127.0.0.1:` sigue limitando quién llega.
+
+</QuizOption>
+
+<QuizOption text="PostgreSQL no responde, y sin base de datos el servidor no contesta nada.">
+
+Sin base de datos, la API contesta igual: un `500` en las rutas que la usan. Una respuesta vacía dice que nadie atendió la conexión.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Luis propone poner ENV WEBHOOK_SECRET=… en el Dockerfile para no tener que pasarlo al arrancar. ¿Qué le dices?"
+  review="ENV HOST=0.0.0.0: escuchar en todas las direcciones"
+>
+
+<QuizOption text="Que no: cualquiera con la imagen lo lee en docker history." correct>
+
+`ENV` queda en la ficha de la imagen, y la imagen se comparte. Los secretos llegan al arrancar, con `--env-file` o `-e`, y no se guardan en ella.
+
+</QuizOption>
+
+<QuizOption text="Que sí: ENV solo existe mientras el contenedor está en marcha.">
+
+`ENV` se guarda en la imagen al construirla, y todos sus contenedores lo heredan. Por eso vale para valores por defecto, como `HOST`.
+
+</QuizOption>
+
+<QuizOption text="Que sí, siempre que .env esté en .dockerignore.">
+
+`.dockerignore` decide qué ficheros entran por `COPY`. Una línea `ENV` del Dockerfile entra igual, con el secreto escrito.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Otra API tiene CMD node servidor.js. docker stop tarda diez segundos y el contenedor acaba con Exited (137). ¿Por qué?"
+  review="CMD en forma exec: node es el PID 1"
+>
+
+<QuizOption text="docker stop espera siempre diez segundos, por si el programa tiene trabajo pendiente.">
+
+Espera como mucho diez. Con la forma exec y la región `apagar`, la tienda paró en 0,151 segundos.
+
+</QuizOption>
+
+<QuizOption text="137 es un error de la API: algo falló al cerrar las conexiones.">
+
+137 es 128 más 9: el proceso murió por `SIGKILL`, la señal que manda Docker cuando se acaba la espera.
+
+</QuizOption>
+
+<QuizOption text="En forma shell, el PID 1 es sh, y la señal de parada no llega a node." correct>
+
+Docker arranca `sh -c "node servidor.js"`. `sh` recibe `SIGTERM` y no se la pasa a `node`; a los diez segundos llega `SIGKILL`. Con `CMD ["node", "servidor.js"]`, `node` es el PID 1.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Cambias un mensaje en src/v2.ts, reconstruyes la imagen y haces docker start tienda. La API sigue con el mensaje antiguo. ¿Qué pasa?"
+  review="Errores comunes"
+>
+
+<QuizOption text="La caché guardó el fichero viejo: hay que construir con --no-cache.">
+
+La caché vio el cambio: `COPY . .` se ejecutó. La imagen nueva tiene tu mensaje.
+
+</QuizOption>
+
+<QuizOption text="El contenedor salió de la imagen anterior: hay que borrarlo y arrancar otro." correct>
+
+`docker start` arranca el mismo contenedor, con la imagen de cuando se creó. Una imagen nueva solo llega a contenedores nuevos: `docker rm tienda` y otro `docker run`.
+
+</QuizOption>
+
+<QuizOption text="Docker copia src/ al arrancar: hay que guardar el fichero antes de docker start.">
+
+`COPY` actúa al construir, no al arrancar. El contenedor no ve tu carpeta.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Tu PostgreSQL está en marcha en tu Mac, pero la API del contenedor dice connect ECONNREFUSED 127.0.0.1:5432. ¿Qué ocurre?"
+  review="La base de datos está fuera del contenedor"
+>
+
+<QuizOption text="PostgreSQL rechaza las conexiones de Docker por seguridad.">
+
+`ECONNREFUSED 127.0.0.1` dice que nadie escucha en esa dirección. La API ni siquiera ha llegado a tu PostgreSQL.
+
+</QuizOption>
+
+<QuizOption text="--env-file no lee DATABASE_URL: las URL tienen que ir con -e.">
+
+`--env-file` crea una variable por línea, sea cual sea su valor. La variable llegó: apunta a otro sitio.
+
+</QuizOption>
+
+<QuizOption text="localhost, dentro del contenedor, es el propio contenedor." correct>
+
+La `DATABASE_URL` de tu `.env` dice `localhost`, y allí no hay PostgreSQL. Con Docker Desktop, cámbiala con `-e` por `host.docker.internal`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="El mes que viene sale una versión nueva de node:26-slim. Tu Dockerfile dice FROM node:26-slim@sha256:193fe51b…. ¿Qué pasa al reconstruir?"
+  review="FROM: la imagen de partida, fijada por su huella"
+>
+
+<QuizOption text="Usa la misma imagen de siempre, hasta que cambies la línea." correct>
+
+La huella nombra un contenido concreto. La etiqueta `26-slim` pasa a la imagen nueva, pero tu `FROM` no la sigue: actualizas cuando tú decides.
+
+</QuizOption>
+
+<QuizOption text="Usa la nueva: la huella solo comprueba que la descarga llegó entera.">
+
+Con `@sha256:…`, Docker pide justo esa imagen, no la que tenga hoy la etiqueta. La etiqueta queda como nota para quien lee.
+
+</QuizOption>
+
+<QuizOption text="Falla: la huella ya no coincide con la etiqueta 26-slim.">
+
+Docker usa la huella y no compara con la etiqueta. La construcción funciona igual que el primer día.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [La referencia del Dockerfile](https://docs.docker.com/reference/dockerfile/), de la documentación de Docker, en inglés: cada instrucción, con la forma exec y la forma shell.
+- [Building best practices](https://docs.docker.com/build/building/best-practices/), en inglés: las recomendaciones de Docker para escribir un Dockerfile.
+- [Build context](https://docs.docker.com/build/concepts/context/), en inglés: qué manda `docker build` al motor y cómo funciona `.dockerignore`.
+- [La referencia de `docker stop`](https://docs.docker.com/reference/cli/docker/container/stop/), en inglés: la señal, la espera y cómo cambiarlas.

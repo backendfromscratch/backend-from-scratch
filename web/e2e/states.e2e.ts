@@ -4,6 +4,7 @@ import { strings as cryptoStrings } from '../src/playgrounds/crypto-keys/strings
 import { recorded } from '../src/playgrounds/dns-lookup/fixtures';
 import { strings as dnsStrings } from '../src/playgrounds/dns-lookup/strings';
 import { strings as tcpStrings } from '../src/playgrounds/tcp-handshake/strings';
+import { strings as dockerStrings } from '../src/playgrounds/docker-layers/strings';
 import { strings as sqlStrings } from '../src/playgrounds/sql-playground/strings';
 import { expectAccessible, hydrate, open, settled, themes } from './axe';
 
@@ -113,6 +114,33 @@ for (const theme of themes) {
       await lab.getByRole('button', { name: t.run, exact: true }).click();
       await expect(lab.locator('.sql-lab__notice')).toContainText('es un comando de psql');
       await expectAccessible(page, '.sql-lab');
+    });
+
+    test('Docker layers lab: a build, a change in src/, the wrong order and multi-stage', async ({
+      page,
+    }) => {
+      const t = dockerStrings.es;
+      const lab = page.locator('.docker-lab');
+      // The marks fade in: without motion, axe sees their final colours.
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      await open(page, '/fase-7/capas-docker/', theme);
+      await hydrate(page, '.docker-lab');
+
+      await lab.getByRole('button', { name: t.build, exact: true }).click();
+      await expectAccessible(page, '.docker-lab');
+
+      await lab.getByRole('button', { name: t.change.src }).click();
+      await lab.getByRole('button', { name: t.rebuild, exact: true }).click();
+      await expect(lab.locator('.docker-lab__layer--cached').first()).toBeVisible();
+      await expectAccessible(page, '.docker-lab');
+
+      await lab.locator('input[value="wrong"]').check();
+      await lab.getByRole('button', { name: t.build, exact: true }).click();
+      await expectAccessible(page, '.docker-lab');
+
+      await lab.locator('input[value="on"]').check();
+      await lab.getByRole('button', { name: t.build, exact: true }).click();
+      await expectAccessible(page, '.docker-lab');
     });
 
     test('cryptography lab: encrypt, decrypt, the wrong key and a signature', async ({ page }) => {

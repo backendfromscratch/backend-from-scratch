@@ -80,6 +80,20 @@ export const playgrounds: Playground[] = [
     },
   },
   {
+    id: 'docker-layers',
+    phase: 7,
+    level: 'lab',
+    lesson: 'layers',
+    title: {
+      es: 'Las capas de una imagen Docker y su caché',
+      en: 'A Docker image’s layers and their cache',
+    },
+    summary: {
+      es: 'Construye la imagen de la tienda, cambia un fichero y mira qué capas se reutilizan y cuáles se rehacen. Después, cambia el orden del Dockerfile o pásalo a multi-stage.',
+      en: 'Build the shop’s image, change a file and see which layers are reused and which are rebuilt. Then change the Dockerfile’s order or make it multi-stage.',
+    },
+  },
+  {
     id: 'sql-playground',
     phase: 5,
     level: 'playground',

@@ -90,10 +90,12 @@ jobs:
   projects:
     name: guided projects (node 26)
     runs-on: ubuntu-24.04
-    # Phase 6's steps run argon2 and several servers per test file: the job takes close to 10 minutes.
-    timeout-minutes: 20
-    # From Phase 5 the steps keep their data in PostgreSQL 18, the version the lessons install.
-    # Pinned by digest, like the Actions. Its port is published on the runner only.
+    # Phase 6's steps run argon2 and several servers per test file, and Phase 7 adds Docker image
+    # builds and a Docker Compose run: the job took 18 minutes on its first run.
+    timeout-minutes: 30
+    # From Phase 5 the steps keep their data in PostgreSQL 18, the version the lessons install, and
+    # from Phase 7 the rate limiter's Redis store is tested against Redis 8. Pinned by digest, like
+    # the Actions. Their ports are published on the runner only.
     services:
       postgres:
         image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336 # 18
@@ -103,6 +105,15 @@ jobs:
           - 127.0.0.1:5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+      redis:
+        image: redis:8@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6 # 8
+        ports:
+          - 127.0.0.1:6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
           --health-interval 2s
           --health-timeout 5s
           --health-retries 15
@@ -130,8 +141,11 @@ jobs:
             -c "CREATE ROLE shop LOGIN PASSWORD 'shop'" -c "CREATE DATABASE shop_test OWNER shop"
 
       # Every step, even after one fails, so the log shows all the failures at once. `npm ci`
-      # installs exactly the lockfile, and each step's .npmrc turns off install scripts.
+      # installs exactly the lockfile, and each step's .npmrc turns off install scripts. The Redis
+      # store's tests use database 1 of the Redis service (without the variable they are skipped).
       - name: install, types and tests of every step
+        env:
+          REDIS_URL_TESTS: redis://127.0.0.1:6379/1
         run: |
           failed=""
           for step in projects/*/[0-9][0-9]-*/; do
@@ -139,6 +153,52 @@ jobs:
             if ! (cd "$step" && npm ci && { [ "$(npm pkg get scripts.check)" = "{}" ] || npm run check; } && npm test); then
               failed="$failed $step"
             fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::These steps failed:$failed"
+            exit 1
+          fi
+
+      # From Phase 7: every step with a Dockerfile builds its image, as the lessons do; and the
+      # Docker Compose step brings up the whole shop (API, PostgreSQL and Redis), answers on its
+      # published port and is removed with its data. Its .env is the step's example (.env.ejemplo or
+      # .env.example) with new random secrets, as the README asks the reader to do. The two
+      # languages' Compose projects publish the same ports, so they run one after the other.
+      - name: docker images and docker compose
+        if: ${{ !cancelled() }}
+        run: |
+          failed=""
+          for dockerfile in projects/*/[0-9][0-9]-*/Dockerfile; do
+            step="$(dirname "$dockerfile")"
+            echo "::group::docker build $step"
+            docker build "$step" || failed="$failed $step"
+            echo "::endgroup::"
+          done
+          for step in projects/*/34-*/; do
+            [ -f "$step/compose.yaml" ] || continue
+            echo "::group::docker compose $step"
+            for example in "$step/.env.ejemplo" "$step/.env.example"; do
+              [ -f "$example" ] && break
+            done
+            while IFS= read -r line; do
+              case "$line" in
+                [!#]*SECRET*=* | [!#]*PASSWORD*=*) echo "${line%%=*}=$(openssl rand -hex 32)" ;;
+                *) echo "$line" ;;
+              esac
+            done < "$example" > "$step/.env"
+            case "$step" in
+              projects/tienda-api/*) route=salud ;;
+              *) route=health ;;
+            esac
+            # The API publishes a range of ports (one per copy): ask Compose which one it took.
+            if ! (cd "$step" && docker compose up --build --wait --wait-timeout 180) ||
+              ! address="$(cd "$step" && docker compose port api 3000)" ||
+              ! curl --fail --silent --show-error "http://$address/$route"; then
+              (cd "$step" && docker compose logs)
+              failed="$failed $step"
+            fi
+            (cd "$step" && docker compose down -v)
             echo "::endgroup::"
           done
           if [ -n "$failed" ]; then

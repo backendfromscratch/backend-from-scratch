@@ -65,6 +65,9 @@ describe('languageOf', () => {
     expect(languageOf('a/tsconfig.json')).toBe('jsonc');
     expect(languageOf('a/ejemplos/pedido.proto')).toBe('proto');
     expect(languageOf('a/bd/migraciones/002-stock.sql')).toBe('sql');
+    expect(languageOf('a/33-imagen-pequena/Dockerfile')).toBe('dockerfile');
+    expect(languageOf('a/34-compose/compose.yaml')).toBe('yaml');
+    expect(languageOf('a/34-compose/.dockerignore')).toBe('ini');
     expect(languageOf('a/.npmrc')).toBe('ini');
     expect(() => languageOf('a/foto.png')).toThrow();
   });
