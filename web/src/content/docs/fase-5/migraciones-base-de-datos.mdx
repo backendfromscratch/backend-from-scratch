@@ -9,7 +9,7 @@ lesson:
   oneLiner: "Una migración es un fichero numerado con un cambio de tus tablas, que se aplica una sola vez y en orden. La base de datos apunta en una tabla las aplicadas, y cada una entra entera o no entra: los datos que ya había se quedan."
   objectives:
     - Explicar por qué borrar las tablas y crearlas otra vez deja de servir cuando hay datos de verdad.
-    - Escribir un ejecutor de migraciones de unas 30 líneas, con una tabla que apunta las aplicadas y una transacción por migración.
+    - Escribir un ejecutor de migraciones de unas 35 líneas, con una tabla que apunta las aplicadas y una transacción por migración.
     - Añadir una columna NOT NULL a una tabla con filas, en tres pasos, y planear un cambio de nombre con expandir y contraer.
     - Explicar por qué una migración aplicada no se edita.
   prerequisites: [node-postgres]
@@ -26,14 +26,14 @@ import QuizOption from '~/components/QuizOption.astro';
 
 ## El problema
 
-Ana quiere que la API diga cuántas unidades quedan de cada producto: una columna nueva, `stock`, en `productos`. En las lecciones 4 y 5, para cambiar una tabla editabas `bd/esquema.sql` y ejecutabas `npm run bd:crear`, que borra las tablas y las crea otra vez.
+Ana quiere que la API diga cuántas unidades quedan de cada producto: una columna nueva, `stock`, en `productos`. En la [lección 4](/fase-5/modelado-datos-normalizacion/) y en la [5](/fase-5/postgresql-node-js/), para cambiar una tabla editabas `bd/esquema.sql` y ejecutabas `npm run bd:crear`, que borra las tablas y las crea otra vez.
 
 Mira qué hace ese script con un pedido de verdad. Con la API en marcha, crea uno. Después, detén el servidor con <kbd>Ctrl</kbd> + <kbd>C</kbd>, ejecuta `bd:crear`, arráncalo otra vez y pide el pedido:
 
 <TryIt
   title="Un pedido, antes y después de bd:crear"
-  cmd={`curl -s -w '\\n' -X POST localhost:3000/v2/pedidos -H 'Content-Type: application/json' -d '{"productoId":2,"cantidad":1}'\nnpm run bd:crear\ncurl -s -w '\\n' localhost:3000/v2/pedidos/26`}
-  output={`{"id":26,"productoId":2,"cantidad":1,"estado":"pendiente","creadoEn":"2026-10-13T23:10:38.774Z"}
+  cmd={`curl -s -w '\\n' --json '{"productoId":2,"cantidad":1}' localhost:3000/v2/pedidos\nnpm run bd:crear\ncurl -s -w '\\n' localhost:3000/v2/pedidos/26`}
+  output={`{"id":26,"productoId":2,"cantidad":1,"estado":"pendiente","creadoEn":"2026-10-13T23:31:18.522Z"}
 
 > tienda-api@1.0.0 bd:crear
 > node --env-file-if-exists=.env scripts/crear-bd.ts
@@ -58,7 +58,7 @@ El albañil mira la lista, hace las que faltan en orden y apunta cada una al ter
 
 <div slot="limits">
 
-- Una obra se puede quedar a medias. Una migración en PostgreSQL no: si falla, no queda nada de ella.
+- Una obra se puede quedar a medias. Una migración de tu ejecutor no: si falla, no queda nada de ella.
 - En una casa ves si el enchufe está. En una base de datos no: por eso la lista de lo hecho vive dentro de ella, en una tabla.
 
 </div>
@@ -109,13 +109,13 @@ Tres reglas lo hacen funcionar:
 
 ### Cada migración, entera o nada
 
-Una migración con varias órdenes puede fallar a mitad. Si la primera ya hubiera cambiado la tabla, tu base de datos quedaría en un estado que no está en ningún fichero. Por eso el ejecutor mete cada migración en una **transacción**: un grupo de órdenes que PostgreSQL guarda todas juntas o ninguna.
+Una migración con varias órdenes puede fallar a mitad. Si la primera ya hubiera cambiado la tabla, tu base de datos quedaría en un estado que no está en ningún fichero. Por eso el ejecutor mete cada migración en una **<Term id="transaction">transacción</Term>**: un grupo de órdenes que PostgreSQL guarda todas juntas o ninguna.
 
 - `BEGIN` («empieza») abre la transacción.
 - `COMMIT` («confirma») guarda todo lo que se hizo desde el `BEGIN`.
-- `ROLLBACK` («marcha atrás») lo deshace todo, como si no hubiera pasado.
+- `ROLLBACK` («vuelta atrás») lo deshace todo, como si no hubiera pasado.
 
-En PostgreSQL, hasta un `ALTER TABLE` se deshace con `ROLLBACK`; en MySQL, no: se guarda al momento. Las transacciones las verás a fondo en la lección 8, «Transacciones».
+En PostgreSQL, hasta un `ALTER TABLE` se deshace con `ROLLBACK`; en MySQL, no: se guarda al momento. Las transacciones las verás a fondo en la [lección 8](/fase-5/transacciones-acid/).
 
 ### El ejecutor, pieza a pieza
 
@@ -123,14 +123,14 @@ El ejecutor es `scripts/migrar.ts`, y lo escribes tú, sin librerías, para ver 
 
 <ProjectCode file="tienda-api/20-migraciones/scripts/migrar.ts" region="carpeta" />
 
-- `pool` es el pool de conexiones de `src/bd.ts`, el de la lección 5.
-- `process.argv[2]` es lo que escribas detrás del nombre del script. Si no escribes nada, es `undefined`, y `??` usa lo de su derecha: la carpeta `bd/migraciones`.
+- `pool` es el <Term id="connection-pool">pool de conexiones</Term> de `src/bd.ts`, el de la [lección 5](/fase-5/postgresql-node-js/).
+- `process.argv[2]` es lo que escribas detrás del nombre del script. Si no escribes nada, es `undefined`, y `??` usa lo de su derecha: la carpeta `bd/migraciones`. `join` une los trozos de la ruta desde `import.meta.dirname`, la carpeta de este fichero.
 
 Después, qué falta por aplicar:
 
 <ProjectCode file="tienda-api/20-migraciones/scripts/migrar.ts" region="registro" />
 
-- `CREATE TABLE IF NOT EXISTS migraciones` crea la tabla de registro la primera vez. `nombre` es la clave primaria, así que no se repite, y `aplicada_en` se rellena sola con la hora (`DEFAULT now()`).
+- `CREATE TABLE IF NOT EXISTS migraciones` crea la tabla de registro la primera vez. `nombre` es la <Term id="primary-key">clave primaria</Term>, así que no se repite, y `aplicada_en` se rellena sola con la hora (`DEFAULT now()`).
 - `SELECT nombre FROM migraciones` lee las aplicadas, y `new Set(…)` las guarda en un conjunto: una lista a la que se pregunta «¿está este?» con `.has()`.
 - `readdir` lee los nombres de los ficheros de la carpeta. `filter` deja los `.sql`, `sort()` los ordena por nombre, y el segundo `filter` deja los que no están en el conjunto ([`filter` y `map`, en la Fase 3](/fase-3/javascript-para-backend/#elegir-y-transformar-una-lista-filter-y-map)).
 
@@ -142,13 +142,13 @@ Y aplicarlas, cada una en su transacción:
 - Dentro del `for`, lee cada fichero, se lo manda entero a PostgreSQL y apunta su nombre en `migraciones`, con un parámetro (`$1`), como en la lección 5.
 - **El cambio y su apunte van en la misma transacción:** quedan los dos, o ninguno.
 - Si algo falla, el `catch` hace `ROLLBACK`, escribe el error, deja un <Term id="exit-code">código de salida</Term> 1 y para con `break`: la siguiente puede depender de la que ha fallado.
-- `finally` se ejecuta pase lo que pase: devuelve la conexión (`release`) y cierra el pool, para que el programa termine. `try` y `catch` son los de la [lección 8 de la Fase 3](/fase-3/errores-y-logs-node/).
+- `finally` se ejecuta pase lo que pase: devuelve la conexión (`release`) y cierra el pool, para que el programa termine. `try` y `catch` son los de la [lección 8 de la Fase 3](/fase-3/errores-y-logs-node/#throw-lanza-try-y-catch-capturan).
 
-Poco más de 30 líneas, sin los comentarios. En `package.json`, `bd:crear` deja su sitio a `"bd:migrar": "node --env-file-if-exists=.env scripts/migrar.ts"`.
+Unas 35 líneas, sin los comentarios. En `package.json`, `bd:crear` deja su sitio a `"bd:migrar": "node --env-file-if-exists=.env scripts/migrar.ts"`.
 
 ### Añadir stock a una tabla que ya tiene filas
 
-Lo primero que se le ocurre a cualquiera es una sola orden: añade la columna `stock`, de tipo `integer`, que no pueda faltar (`NOT NULL`). Pruébala; como falla, no cambia nada:
+Lo primero que se le ocurre a cualquiera es una sola orden: la columna `stock`, entera (`integer`) y que no pueda faltar (`NOT NULL`). Pruébala: como falla, no cambia nada:
 
 <TryIt
   title="Una columna NOT NULL, de golpe"
@@ -183,7 +183,7 @@ Palabra a palabra:
 
 - `ALTER COLUMN stock SET DEFAULT 0`: un producto nuevo empieza con 0 si nadie dice otra cosa.
 - `ALTER COLUMN stock SET NOT NULL`: desde ahora no puede faltar. PostgreSQL lo comprueba en todas las filas, y pasa: el paso 2 las rellenó.
-- `ADD CONSTRAINT stock_no_negativo CHECK (stock >= 0)`: una restricción con nombre: el stock nunca es negativo.
+- `ADD CONSTRAINT stock_no_negativo CHECK (stock >= 0)`: una <Term id="constraint">restricción</Term> con nombre: el stock nunca es negativo.
 - Las tres van en una orden, separadas por comas.
 
 ¿Y `ADD COLUMN stock integer NOT NULL DEFAULT 10`, de una vez? En PostgreSQL funciona, pero los productos nuevos también empezarían con 10. Los tres pasos sirven siempre, también si el valor de cada fila se calcula con otras columnas.
@@ -215,7 +215,7 @@ Aquí la 002 no tiene filas que rellenar: los productos entran con su stock desd
 
 <ProjectCode file="tienda-api/20-migraciones/scripts/cargar-datos.ts" />
 
-Si ya hay productos, se niega, porque los repetiría: al contrario que `bd:crear`, **nunca borra nada**. En tu base de datos, contesta `La base de datos ya tiene productos`.
+Si ya hay productos, se niega, porque los repetiría: al contrario que `bd:crear`, **nunca borra nada**. En tu base de datos, contesta `La base de datos ya tiene productos: npm run bd:datos solo es para una vacía`.
 
 ### La API enseña el stock, solo en la versión 2
 
@@ -233,12 +233,12 @@ La versión 1 no cambia: su adaptador, `productoV1` en `src/v1.ts`, copia solo `
 
 Renombrar una columna es otra cosa: `ALTER TABLE productos RENAME COLUMN nombre TO titulo` tarda un instante, pero el servidor en marcha sigue pidiendo `nombre`, y falla hasta que llega el código nuevo. Con dos servidores que se actualizan por turnos, el código viejo y el nuevo conviven un rato.
 
-La solución es **expandir y contraer** (*expand and contract*): primero amplías, después recortas, y cada paso es una migración o un despliegue distinto:
+La solución es **expandir y contraer** (*expand and contract*): primero amplías, después recortas, y cada paso es una migración o un <Term id="deployment">despliegue</Term> distinto:
 
 | Paso | Qué cambia | Quién funciona |
 |---|---|---|
 | 1. Expandir | Una migración añade `titulo` y copia en ella cada `nombre` | El código viejo, que no la ve |
-| 2. Código nuevo | Lee `titulo` y escribe en las dos columnas | El viejo y el nuevo a la vez |
+| 2. Código nuevo | Lee `titulo` (si está vacía, `nombre`) y escribe en las dos columnas | El viejo y el nuevo a la vez |
 | 3. Contraer | Sin código viejo en marcha, una migración copia a `titulo` lo que el viejo escribió solo en `nombre`, y borra `nombre` | El nuevo |
 
 Nunca hay código pidiendo una columna que no existe.
@@ -253,7 +253,7 @@ Por eso, una migración que ya salió de tu ordenador no se toca: si estaba mal,
 
 Las herramientas de migraciones hacen lo mismo que tu ejecutor, y algo más:
 
-- **Generar el SQL.** drizzle-kit compara tus tablas, descritas en TypeScript, con su versión anterior y escribe la migración. Lo verás en la lección 9, «ORM», con tu ejecutor aplicándola.
+- **Generar el SQL.** drizzle-kit compara tus tablas, descritas en TypeScript, con su versión anterior y escribe la migración. Lo verás en la [lección 9](/fase-5/orm-drizzle-prisma/), con tu ejecutor aplicándola.
 - **Detectar ediciones.** Flyway, muy usado con Java, guarda una huella de cada migración aplicada y se niega a seguir si un fichero ha cambiado.
 - **Deshacer y esperar turno.** node-pg-migrate, para Node, deja escribir cómo deshacer cada migración, y usa un cerrojo para que dos servidores que arrancan a la vez no apliquen la misma.
 
@@ -297,7 +297,17 @@ Sigues en `~/curso-backend/fase-3/tienda-api`, con el código de la lección 5. 
 4. En `bd/datos.sql`, añade `stock` a los productos: 40, 60, 25 y 15.
 5. Añade `stock` en `src/datos.ts` y en `src/esquemas.ts`, como arriba.
 
-Los tests ahora preparan su base de datos con las migraciones. Descarga la carpeta de esta lección (desde `~/curso-backend/fase-3`, `curl -O https://backenddesdecero.com/practicas/tienda-api/20-migraciones.tar.gz` y `tar -xzf 20-migraciones.tar.gz`), copia su `test/` sobre el tuyo y, si te atascas, compara tu código con el suyo.
+Los tests ahora preparan su base de datos con las migraciones. Vienen en la carpeta de esta lección:
+
+```sh
+cd ~/curso-backend/fase-3
+curl -O https://backenddesdecero.com/practicas/tienda-api/20-migraciones.tar.gz
+tar -xzf 20-migraciones.tar.gz
+cd tienda-api
+cp ../20-migraciones/test/*.ts test/
+```
+
+Si te atascas, compara tu código con `20-migraciones`.
 
 ### Migra, dos veces
 
@@ -358,7 +368,7 @@ Referenced by:
 (4 rows)`}
 >
 
-Fíjate en `stock`, `not null` y `0` por defecto, y en `stock_no_negativo`. Los productos tienen 10, el stock de partida del paso 2: ya existían, así que no pasaron por `datos.sql`. `SELECT * FROM migraciones;` enseña el registro.
+Fíjate en `stock`, `not null` y `0` por defecto, y en `stock_no_negativo`. Los productos tienen 10, el stock de partida del paso 2: ya existían, así que no pasaron por `datos.sql`.
 
 </TryIt>
 
@@ -603,7 +613,7 @@ Como texto, `10-…` va antes que `2-…`, porque `1` va antes que `2`. Con tres
 
 <QuizOption text="Solo npm run bd:datos: crea las tablas y las llena.">
 
-`datos.sql` solo tiene `INSERT`: sin las tablas, falla con `relation "productos" does not exist`. Las tablas las crean las migraciones.
+`bd:datos` solo añade filas: sin las tablas, falla con `relation "productos" does not exist`. Las tablas las crean las migraciones.
 
 </QuizOption>
 

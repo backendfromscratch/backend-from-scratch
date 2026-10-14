@@ -4,6 +4,7 @@ import { strings as cryptoStrings } from '../src/playgrounds/crypto-keys/strings
 import { recorded } from '../src/playgrounds/dns-lookup/fixtures';
 import { strings as dnsStrings } from '../src/playgrounds/dns-lookup/strings';
 import { strings as tcpStrings } from '../src/playgrounds/tcp-handshake/strings';
+import { strings as sqlStrings } from '../src/playgrounds/sql-playground/strings';
 import { expectAccessible, hydrate, open, settled, themes } from './axe';
 
 // What the page scan does not see, because it only appears after something is done: the labs'
@@ -88,6 +89,30 @@ for (const theme of themes) {
       await lab.getByRole('button', { name: t.all }).click();
       await expect(lab.locator('.cors-lab__answer--true')).toHaveCount(2);
       await expectAccessible(page, '.cors-lab');
+    });
+
+    test('SQL playground: a result table, an error and a psql command', async ({ page }) => {
+      const t = sqlStrings.es;
+      const lab = page.locator('.sql-lab').first();
+      await open(page, '/fase-5/que-es-sql/', theme);
+      // The lesson has two playgrounds: the first one is enough.
+      await hydrate(page, '.sql-lab >> nth=0');
+
+      // The first run downloads PostgreSQL (WebAssembly) and loads the shop: give it time.
+      await lab.getByRole('button', { name: t.run, exact: true }).click();
+      await expect(lab.locator('table')).toBeVisible({ timeout: 30_000 });
+      await expectAccessible(page, '.sql-lab');
+
+      const box = lab.locator('textarea');
+      await box.fill('SELECT nombr FROM productos;');
+      await lab.getByRole('button', { name: t.run, exact: true }).click();
+      await expect(lab.locator('.sql-lab__error')).toContainText('does not exist');
+      await expectAccessible(page, '.sql-lab');
+
+      await box.fill('\\dt');
+      await lab.getByRole('button', { name: t.run, exact: true }).click();
+      await expect(lab.locator('.sql-lab__notice')).toContainText('es un comando de psql');
+      await expectAccessible(page, '.sql-lab');
     });
 
     test('cryptography lab: encrypt, decrypt, the wrong key and a signature', async ({ page }) => {

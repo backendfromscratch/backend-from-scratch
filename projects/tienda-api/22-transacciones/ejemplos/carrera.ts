@@ -36,6 +36,9 @@ async function comprarBien(productoId: number): Promise<boolean> {
 // Una taza de prueba con stock 1, y todos los compradores a la vez (Promise.all no espera a que
 // termine uno para lanzar el siguiente).
 async function carrera(nombre: string, comprar: (productoId: number) => Promise<boolean>) {
+  // Antes de empezar, abre las diez conexiones del pool: abrir una tarda más que la pausa de 50 ms,
+  // y sin esto algunos compradores llegarían tarde y cada carrera saldría distinta.
+  await Promise.all(Array.from({ length: COMPRADORES }, () => pool.query('SELECT pg_sleep(0.05)')));
   const { rows } = await pool.query(
     `INSERT INTO productos (nombre, precio_centimos, stock)
      VALUES ('Taza de la carrera', 850, 1) RETURNING id`,

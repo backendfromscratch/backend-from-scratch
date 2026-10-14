@@ -162,10 +162,12 @@ export async function cambiarEstado(id: number, estado: EstadoPedido): Promise<P
 }
 // #endregion avisos
 
+// #region buscar-pedido
 export async function buscarPedido(id: number): Promise<Pedido | undefined> {
   const [fila] = await bd.select().from(pedidos).where(eq(pedidos.id, id));
   return fila && aPedido(fila);
 }
+// #endregion buscar-pedido
 
 // #region crear-pedido
 // Lo que puede pasar al hacer un pedido: sale bien, el producto no existe o no queda bastante.
@@ -175,6 +177,7 @@ export type ResultadoPedido =
 // Quitar el stock y guardar el pedido, en una transacción: o las dos cosas, o ninguna. tx es la
 // transacción: todo lo que va por tx va por la misma conexión.
 export async function crearPedido(productoId: number, cantidad: number): Promise<ResultadoPedido> {
+  // #region quitar-stock
   return bd.transaction(async (tx): Promise<ResultadoPedido> => {
     // El UPDATE condicional de la lección 8, con el constructor de consultas: se lee casi igual que
     // el SQL (SET stock = stock - $2 WHERE id = $1 AND stock >= $2). Para la resta, un trozo de
@@ -185,6 +188,7 @@ export async function crearPedido(productoId: number, cantidad: number): Promise
       .set({ stock: sql`${productos.stock} - ${cantidad}` })
       .where(and(eq(productos.id, productoId), gte(productos.stock, cantidad)))
       .returning({ stock: productos.stock });
+    // #endregion quitar-stock
     if (quitado.length === 0) {
       // No ha cambiado ninguna fila: o no existe el producto, o no queda bastante. ¿Cuál?
       const [producto] = await tx
