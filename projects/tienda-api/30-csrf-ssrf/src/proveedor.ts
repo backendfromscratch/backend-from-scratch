@@ -78,8 +78,9 @@ export interface Identidad {
 }
 
 // La vuelta: comprueba el state, cambia el código por los tokens (con el secreto de la tienda y el
-// verificador) y comprueba el id_token: su firma, el emisor (iss), que es para esta tienda (aud),
-// el nonce y que no ha caducado. Si algo falla, devuelve undefined, y el motivo va al log.
+// verificador) y comprueba el id_token: el emisor (iss), que es para esta tienda (aud), el nonce y
+// que no ha caducado. Su firma no: el token llega directo del proveedor, y OpenID Connect permite
+// fiarse de esa conexión. Si algo falla, devuelve undefined, y el motivo va al log.
 export async function terminarInicio(
   vuelta: URL,
   guardado: InicioGuardado,

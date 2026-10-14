@@ -6,6 +6,7 @@ import { getConnInfo } from '@hono/node-server/conninfo';
 import { problema, tipo } from './problemas.ts';
 
 // #region almacen
+// #region almacen-interfaz
 // Dónde se guardan los intentos. Aquí, en la memoria del servidor: si se reinicia, se olvidan, y
 // con dos servidores cada uno llevaría su cuenta. En la Fase 7 el almacén será Redis, compartido
 // por todos: basta con escribir otro almacén con estas dos funciones, sin tocar el resto.
@@ -15,6 +16,7 @@ export interface AlmacenLimites {
   /** Apunta un intento de esa clave en ese instante. */
   apuntar(clave: string, instante: number): Promise<void>;
 }
+// #endregion almacen-interfaz
 
 export function crearAlmacenEnMemoria(): AlmacenLimites {
   const porClave = new Map<string, number[]>();
@@ -61,6 +63,7 @@ export function crearLimitador(
   const clave = (de: string) => `${limite.nombre}:${de}`;
   return {
     limite,
+    // #region comprobar
     // Mira cómo está esa clave, sin apuntar nada.
     async comprobar(de: string): Promise<Estado> {
       const ahora = reloj();
@@ -75,6 +78,7 @@ export function crearLimitador(
         reinicioEn: intentos.length === 0 ? 0 : segundosHasta(intentos[0]!),
       };
     },
+    // #endregion comprobar
     // Apunta un intento ahora.
     async apuntar(de: string): Promise<void> {
       await almacen.apuntar(clave(de), reloj());

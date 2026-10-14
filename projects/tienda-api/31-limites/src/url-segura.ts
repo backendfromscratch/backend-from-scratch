@@ -36,10 +36,13 @@ PROHIBIDAS.addSubnet('127.0.0.0', 8); // loopback: el propio servidor
 PROHIBIDAS.addSubnet('169.254.0.0', 16); // link-local: aquí están los metadatos de la nube
 PROHIBIDAS.addSubnet('172.16.0.0', 12); // privada
 PROHIBIDAS.addSubnet('192.168.0.0', 16); // privada
+PROHIBIDAS.addSubnet('192.0.0.0', 24); // reservada para protocolos
+PROHIBIDAS.addSubnet('198.18.0.0', 15); // reservada para pruebas de redes
 PROHIBIDAS.addSubnet('224.0.0.0', 4); // multicast
 PROHIBIDAS.addSubnet('240.0.0.0', 4); // reservada, con 255.255.255.255
 PROHIBIDAS.addAddress('::', 'ipv6'); // «ninguna»
 PROHIBIDAS.addAddress('::1', 'ipv6'); // loopback
+PROHIBIDAS.addSubnet('64:ff9b::', 96, 'ipv6'); // NAT64: una IPv4 escondida dentro de una IPv6
 PROHIBIDAS.addSubnet('fc00::', 7, 'ipv6'); // unique-local: las privadas de IPv6
 PROHIBIDAS.addSubnet('fe80::', 10, 'ipv6'); // link-local
 PROHIBIDAS.addSubnet('ff00::', 8, 'ipv6'); // multicast
@@ -127,7 +130,7 @@ export async function enviarJson(
           respuesta.destroy();
           return resolver({ error: `Responde ${status}, una redirección: no se sigue` });
         }
-        // 7. La respuesta se lee con un tope: una enorme llenaría la memoria del servidor.
+        // 7. La respuesta se lee con un tope: una que no acaba nunca tendría al servidor esperando.
         let leidos = 0;
         respuesta.on('data', (trozo: Buffer) => {
           leidos += trozo.length;

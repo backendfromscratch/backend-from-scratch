@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { paginaInsegura } from '../ejemplos/pagina-insegura.ts';
 import { app } from '../src/app.ts';
 import { listarProductos } from '../src/datos.ts';
-import { ejecutar, usarBd } from './bd.ts';
+import { usarBd } from './bd.ts';
 import { ANA, comoUsuario } from './identidades.ts';
 
 // Un producto con etiquetas en el nombre: lo crea Ana, que es admin.
@@ -52,15 +52,4 @@ test('las rutas JSON siguen igual, ahora con las cabeceras de seguridad', async 
 test('ejemplos/pagina-insegura.ts: pegando el nombre, la etiqueta llega entera al navegador', async () => {
   const pagina = paginaInsegura(await listarProductos());
   assert.ok(pagina.includes(`<li>${MALICIOSO}</li>`));
-});
-
-test('ejemplos/inyeccion.ts: con UNION, pegando el texto salen los emails y los hashes; con un parámetro, nada', async () => {
-  const { stdout } = await ejecutar('node', ['ejemplos/inyeccion.ts']);
-  const union = stdout.split('\nSe busca: ')[3]!;
-  assert.match(union, /^x' UNION SELECT email \|\| ' ' \|\| hash_contrasena FROM usuarios --$/m);
-  const pegando = union.slice(union.indexOf('Pegando'), union.indexOf('Con un parámetro'));
-  for (const email of ['ana@tienda.example', 'luis@tienda.example', 'carmen@ejemplo.com']) {
-    assert.match(pegando, new RegExp(`'${email} \\$argon2id\\$v=19\\$`));
-  }
-  assert.match(union, /Con un parámetro, encuentra: \[\]/);
 });

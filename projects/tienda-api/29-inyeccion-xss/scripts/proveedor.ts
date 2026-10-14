@@ -26,7 +26,7 @@ export async function arrancarProveedor(
 ) {
   const proveedor = new OAuth2Server();
   // La clave con la que firma los id_token (RS256: un par de claves, Fase 0). La pública la
-  // publica en /jwks, y la tienda la usa para comprobar la firma.
+  // publica en /jwks, para quien quiera comprobar la firma (la tienda no lo necesita: lección 4).
   await proveedor.issuer.keys.generate('RS256');
 
   // Antes de firmar cada token, le pone los datos de la persona.

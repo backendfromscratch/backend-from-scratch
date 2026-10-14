@@ -294,6 +294,7 @@ async function comprobarLimitesDeSesion(email: string, ip: string) {
   return comprobados;
 }
 
+// #region ruta-iniciar-sesion
 v2.openapi(contrato.iniciarSesion, async (c) => {
   const { email, contrasena } = c.req.valid('json');
   const porEmail = email.toLowerCase();
@@ -317,6 +318,7 @@ v2.openapi(contrato.iniciarSesion, async (c) => {
   await abrirSesion(c, usuario.id);
   return c.json(usuario, 200);
 });
+// #endregion ruta-iniciar-sesion
 // #endregion iniciar-sesion
 
 // #region cerrar-sesion

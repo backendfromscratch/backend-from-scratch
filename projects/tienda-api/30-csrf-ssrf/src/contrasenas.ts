@@ -10,8 +10,8 @@ import { promisify } from 'node:util';
 // 2 pasadas y 1 hilo. Es lento a propósito: unos 20 o 40 ms por hash. Para quien inicia sesión no se
 // nota; para quien prueba mil millones de contraseñas, son años. Y necesita memoria, que es lo que
 // más caro le sale a una tarjeta gráfica que prueba miles a la vez.
-// crypto.argon2 viene con Node desde la versión 24.7, y todavía es experimental: su forma podría
-// cambiar en otra versión. La alternativa estable es el paquete @node-rs/argon2.
+// crypto.argon2 viene con Node desde la versión 24.7, y la documentación de Node 26 ya no la marca
+// como experimental. Con un Node más antiguo, la alternativa es el paquete @node-rs/argon2.
 const PARAMETROS = {
   memory: 19_456, // en KiB: 19 MiB
   passes: 2,
