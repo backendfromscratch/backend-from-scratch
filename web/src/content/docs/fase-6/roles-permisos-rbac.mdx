@@ -1,0 +1,609 @@
+---
+translationKey: authorization
+title: "Roles y permisos (RBAC): quién puede hacer qué"
+description: "Autorización en una API: roles y permisos (RBAC), cada cliente con solo sus pedidos (BOLA), cuándo responder 401, 403 o 404, y el mínimo privilegio."
+sidebar:
+  label: Autorización
+  order: 5
+lesson:
+  oneLiner: "Con RBAC, cada cuenta tiene un rol (cliente, reparto o admin) y cada rol, una lista de permisos; el código pregunta por permisos, nunca por roles. Y no basta: cada ruta que recibe un id comprueba también de quién es ese dato, para que un cliente vea sus pedidos y no los de otro."
+  objectives:
+    - Organizar la autorización con roles y permisos, y comprobar permisos en el código, no nombres de roles.
+    - Comprobar de quién es cada pedido, para cerrar el fallo más común de las APIs (BOLA).
+    - Elegir entre 401, 403 y 404 cuando alguien no puede hacer lo que pide.
+    - Dar a cada rol y a cada clave solo los permisos que necesita, y explicar por qué un agujero de seguridad se cierra sin aviso.
+  prerequisites: [oauth]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Al terminar la lección 4, «OAuth», la tienda ya sabe quién le habla: Marta entra con su contraseña o con el proveedor, y Reparto Rápido, con su clave. Pero saber quién eres no ha cambiado qué puedes hacer. La API sigue dando todos los pedidos a cualquiera, y crear productos sigue pidiendo el `ADMIN_TOKEN` compartido de la [introducción](/fase-6/).
+
+Imagina que Carmen, una clienta, mira su pedido en `/v2/pedidos/27` y prueba con el 26. Si la API contesta, Carmen está leyendo el pedido de Marta. No ha roto nada: ha cambiado un número.
+
+No es un caso de libro. En 2018, una API del servicio de correos de Estados Unidos dejaba a cualquier usuario con sesión consultar los datos de otros: unos 60 millones de cuentas ([KrebsOnSecurity](https://krebsonsecurity.com/2018/11/usps-site-exposed-data-on-60-million-users/), en inglés). **¿Cómo decide la tienda qué puede hacer cada uno, y de quién es cada dato?**
+
+## La analogía
+
+<Analogy>
+
+En una empresa, las llaves no se reparten persona a persona: se reparten por puesto. Quien entra de mensajero recibe el llavero de mensajería, que abre el almacén y el muelle de carga, pero no la caja fuerte. Quien entra de contable recibe otro. El puesto es el rol; cada llave del llavero, un permiso.
+
+Y cada empleado tiene su taquilla. Todas son iguales y están numeradas, y su llave abre la suya, no la de al lado. Poder abrir taquillas no basta: tiene que ser la tuya.
+
+<div slot="limits">
+
+- Un llavero entregado es difícil de recuperar. En la tienda, el rol vive en la base de datos y se consulta en cada petición: si cambias el de alguien, la siguiente petición ya lo nota.
+- Una taquilla ajena se ve, aunque no se abra. La API hace algo más: a quien pide un pedido ajeno le contesta que no existe.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Tres roles, y una lista de permisos para cada uno
+
+Empieza por lo que cada uno debe poder hacer en la tienda:
+
+| | Cliente (Marta, Carmen) | Reparto (la clave de Reparto Rápido) | Admin (Ana, Luis) |
+|---|---|---|---|
+| Hacer pedidos | Sí | No | No |
+| Ver pedidos | Los suyos | Todos | Todos |
+| Cambiar o cancelar pedidos | Los suyos | No | Todos |
+| Marcar un pedido como enviado | No | Sí | Sí |
+| Crear y borrar productos | No | No | Sí |
+
+Cada fila es un **permiso** y cada columna, un **rol**. Organizar así la autorización se llama **<Term id="rbac">RBAC</Term>**, control de acceso basado en roles. En el código, `src/permisos.ts`:
+
+<ProjectCode file="tienda-api/28-roles/src/permisos.ts" region="permisos" />
+
+- **`Rol` y `Permiso`** son tipos de TypeScript ([lección 3 de la Fase 3](/fase-3/typescript-con-node/)): si escribes `'pedidos:ver-todo'`, sin la `s`, `npm run check` falla.
+- **Los nombres, `recurso:acción`**, son una costumbre común: se leen solos.
+- **`PERMISOS`** es la tabla de arriba: cada rol, con su lista.
+
+Admin no tiene `pedidos:crear`: en esta tienda, un pedido es siempre de un cliente, y Ana no compra con su cuenta de administradora.
+
+### El código pregunta por permisos, no por roles
+
+Lo tentador es escribir `if (rol !== 'admin')` en cada ruta. El día que llegue un rol nuevo, «atención al cliente», que debe ver todos los pedidos sin tocar los productos, tendrás que encontrar cada `if` y decidir uno por uno. Con permisos, añades una línea a `PERMISOS`, y las rutas no cambian.
+
+<ProjectCode file="tienda-api/28-roles/src/permisos.ts" region="puede" />
+
+- **`rolDe`** saca el rol de la cuenta de la sesión o, si no hay sesión, de la clave de API.
+- **`puede`** contesta sí o no: ¿la lista de su rol incluye ese permiso?
+
+Cada ruta dice qué necesita con `exigir`, un <Term id="middleware">middleware</Term>:
+
+<ProjectCode file="tienda-api/28-roles/src/permisos.ts" region="exigir" />
+
+- **`...permisos`** acepta uno o varios, y basta con tener alguno. Las rutas de ver pedidos usan `exigir('pedidos:ver-propios', 'pedidos:ver-todos')`.
+- **En `src/contrato.ts`**, cada ruta lo lleva en su lista: `middleware: [exigir('productos:gestionar')]`. Va antes de validar el cuerpo, como el guardia de la [lección de middleware](/fase-3/que-es-middleware/#un-guardia-que-responde-401).
+
+### 401, 403 o 404
+
+`exigir` da dos respuestas distintas, las de la [lección de códigos de estado](/fase-2/codigos-de-estado-http/#401-o-403-no-sé-quién-eres-o-no-puedes) de la Fase 2:
+
+- **Sin identidad, `401`**, con `WWW-Authenticate`: la misma respuesta de `noIdentificado` que viste en la lección 3, «JWT». Identificarse puede arreglarlo.
+- **Con identidad y sin permiso, `403`**, sin `WWW-Authenticate`: identificarse otra vez no cambia nada.
+
+Y hay un tercer caso, que `exigir` no ve: el pedido existe, pero es de otra persona. Ahí la tienda contesta `404`, porque [el 404 también sirve para esconder](/fase-2/codigos-de-estado-http/#el-404-también-sirve-para-esconder): un `403` le confirmaría a Carmen que el 26 existe.
+
+### Cada cliente, sus pedidos: BOLA
+
+`exigir` deja pasar a Carmen por `GET /v2/pedidos/:id`, porque tiene `pedidos:ver-propios`. Pero ¿qué pedido pide? **El rol dice qué tipo de cosas puedes hacer; solo el dato dice de quién es.** Olvidar esa segunda comprobación se llama **<Term id="bola">BOLA</Term>** (*Broken Object Level Authorization*, «autorización rota a nivel de objeto»).
+
+Es el primero del [OWASP API Security Top 10](https://api-security.owasp.org/editions/2023/en/0x11-t10) de 2023, la lista de los fallos más graves de las APIs. El quinto, *Broken Function Level Authorization*, es la otra mitad: una ruta sin su `exigir`.
+
+Primero, cada pedido necesita un dueño. Es la segunda parte de la migración 009:
+
+<ProjectCode file="tienda-api/28-roles/bd/migraciones/009-roles.sql" region="cliente-pedidos" />
+
+- **`cliente_id` puede ser `NULL`:** los 25 pedidos de ejemplo se hicieron cuando la tienda no tenía cuentas, y nadie sabe de quién son. Solo los ven admin y reparto.
+- **El índice empieza por el cliente:** la lista de un cliente sale rápida, como en la [lección de índices](/fase-5/indices-sql-explain/).
+
+Después, cada ruta que recibe un id lo comprueba, en `src/v2.ts`:
+
+<ProjectCode file="tienda-api/28-roles/src/v2.ts" region="pedido-visible" />
+
+- **Con el permiso de «todos»**, cualquier pedido; si no, solo uno cuyo `clienteId` sea el de la sesión.
+- **Uno ajeno vuelve como `undefined`**, igual que uno que no existe, y la ruta contesta el mismo `404`.
+- **La misma función** sirve para ver, cambiar y cancelar un pedido, y para su flujo de eventos: una comprobación, en un solo sitio.
+
+La lista no recibe un id, pero también filtra:
+
+<ProjectCode file="tienda-api/28-roles/src/v2.ts" region="solo-los-suyos" />
+
+`clienteId` se queda en `undefined` para quien ve todos; para un cliente, es su id, y `src/paginacion.ts` añade a la consulta la condición `cliente_id = …`.
+
+Al crear un pedido, el dueño sale de la sesión (`c.var.usuario`), **nunca del cuerpo de la petición**: si el JSON pudiera traer un `clienteId`, cualquiera haría pedidos a nombre de otro.
+
+### Adiós al ADMIN_TOKEN: ser admin es el rol de una cuenta
+
+La primera parte de la migración da un rol a cada cuenta y a cada clave:
+
+<ProjectCode file="tienda-api/28-roles/bd/migraciones/009-roles.sql" region="roles" />
+
+- **`DEFAULT 'cliente'`:** Marta, y quien se dé de alta mañana, son clientes.
+- **`CHECK`** solo admite los roles que existen, y una clave nunca es `cliente`: un programa no tiene pedidos propios.
+- **Hacer admin a alguien es un `UPDATE` a mano**, nunca una ruta de la API.
+
+`ADMIN_TOKEN` desaparece de `src/config.ts` y de `.env.ejemplo`, y `src/middleware/solo-admin.ts`, con él. Con él se van los problemas de la introducción: Ana y Luis entran cada uno con su cuenta, así que la tienda sabe quién hace cada petición; quitarle el acceso a uno es cambiar su rol, sin tocar al otro; y la clave de reparto no es de admin.
+
+### Mínimo privilegio, también para la clave de reparto
+
+Reparto Rápido necesita ver los pedidos y marcarlos como enviados, y nada más. Para eso tiene una ruta nueva, `POST /v2/pedidos/{id}/envio`, con `exigir('pedidos:enviar')`.
+
+Si su clave se filtra, en un log o en un repositorio, quien la encuentre ve pedidos y los marca como enviados, pero no crea productos ni cancela nada. Es el <Term id="least-privilege">mínimo privilegio</Term> de la [lección de permisos de la Fase 1](/fase-1/usuarios-y-permisos-linux/), aplicado a la API. **Cada permiso de más es daño posible si la clave se filtra.**
+
+Se podría apretar más: el reparto ve también los pedidos pendientes, que no necesita. Una tienda más estricta le daría solo los pagados.
+
+### Un cambio que rompe, a propósito
+
+Hasta hoy, `GET /v2/pedidos` contestaba a cualquiera. Desde esta lección, sin identidad, responde `401`, y un programa que listaba pedidos sin identificarse deja de funcionar: un <Term id="breaking-change">cambio que rompe</Term>.
+
+En la [lección de versionado](/fase-4/versionado-api/#avisar-antes-de-apagar-deprecation-sunset-y-link) aprendiste a avisar antes, con `Deprecation` y `Sunset`, y a dejar meses de margen. Aquí no hay aviso, y `/v1`, que usa las mismas rutas, se cierra igual. El aviso protege la comodidad de quien usa la API; aquí lo que está en juego son los datos de los clientes, y **cada día de aviso es un día en que cualquiera lee todos los pedidos**.
+
+Un agujero de seguridad se cierra en cuanto se ve. Después, se avisa a los socios y se les da una forma de identificarse: Reparto Rápido ya tiene su clave.
+
+## Pruébalo
+
+El objetivo: hacer las mismas peticiones como cinco identidades (nadie, Marta, Carmen, Reparto Rápido y Ana) y comprobar que cada una ve y hace solo lo suyo.
+
+Vas a intentar leer el pedido de otra persona en tu propia tienda, en `localhost`. Hacerlo en un sistema que no es tuyo, sin permiso, es un delito.
+
+### Escribe el código
+
+Partes de tu proyecto de la lección 4, «OAuth»:
+
+1. Crea `src/permisos.ts` y `bd/migraciones/009-roles.sql`.
+2. En `src/esquema.ts`, `rol` en `usuarios` y en `clavesApi`, y `clienteId` en `pedidos`. Genera la foto de drizzle-kit con `npm run bd:generar -- --name=roles`, como en la lección 1.
+3. En `src/contrato.ts`, cambia `soloAdmin` por `exigir`, añade `exigir` a las rutas de pedidos y la ruta `enviarPedido`. En `src/v2.ts`, `pedidoVisible`, la lista y el envío. En `src/v1.ts`, `exigir`.
+4. Borra `src/middleware/solo-admin.ts`, `ADMIN_TOKEN` de `src/config.ts` y su línea de tu `.env`: un secreto que ya no protege nada no debe quedarse por ahí.
+
+Lo demás (el rol en `usuarios.ts`, `sesiones.ts` y `claves.ts`, `clienteId` en `datos.ts` y `paginacion.ts`, la clave por cuenta en `idempotencia.ts`), cópialo del paso. Las cuentas con su rol y las pruebas vienen en su carpeta:
+
+```sh
+cd ~/curso-backend/fase-3
+curl -O https://backenddesdecero.com/practicas/tienda-api/28-roles.tar.gz
+tar -xzf 28-roles.tar.gz
+cd tienda-api
+cp ../28-roles/bd/cuentas.sql ../28-roles/bd/datos.sql bd/
+cp ../28-roles/test/*.ts test/
+```
+
+<TryIt
+  title="1. La migración de los roles"
+  cmd="npm run bd:migrar"
+  output={`> tienda-api@1.0.0 bd:migrar
+> node --env-file-if-exists=.env scripts/migrar.ts
+
+Aplicada: 009-roles.sql`}
+>
+
+Las salidas son de Node 26.11.1 y PostgreSQL 18; tus ids, claves y horas serán otros.
+
+</TryIt>
+
+<TryIt
+  title="2. Las cuentas de práctica, con su rol"
+  cmd={`npm run bd:datos
+psql -d tienda -c 'SELECT id, email, rol FROM usuarios ORDER BY id;'`}
+  output={`> tienda-api@1.0.0 bd:datos
+> node --env-file-if-exists=.env scripts/cargar-datos.ts
+
+Cuentas de práctica listas (sus contraseñas están en el README)
+La base de datos ya tiene productos: los de ejemplo no se cargan otra vez
+ id |        email        |   rol
+----+---------------------+---------
+  1 | marta@ejemplo.com   | cliente
+  2 | ana@tienda.example  | admin
+  3 | luis@tienda.example | admin
+  4 | carmen@ejemplo.com  | cliente
+  5 | pablo@ejemplo.com   | cliente
+(5 rows)`}
+>
+
+Marta es la cuenta de la lección 1, cliente por defecto. Las otras cuatro son las de práctica, con su contraseña en el README del proyecto: Ana y Luis, admin; Carmen y Pablo, clientes. Si ya las tenías, la orden solo les pone el rol. Si tus ids son otros, usa los tuyos.
+
+</TryIt>
+
+<TryIt
+  title="3. Las pruebas de esta lección"
+  cmd="npm test -- test/roles.test.ts"
+  output={`> tienda-api@1.0.0 test
+> node --env-file=test/.env --test --test-concurrency=1 test/roles.test.ts
+
+✔ la lista de pedidos: sin identidad, 401; un cliente ve los suyos; admin y reparto, todos (66.764616ms)
+✔ un pedido de otro: 404, como si no existiera, también su flujo de eventos (10.839107ms)
+✔ cambiar o cancelar un pedido de otro: 404; el suyo, sí; admin, cualquiera (8.999871ms)
+✔ hacer un pedido pide una sesión de cliente, y el pedido es de quien lo hace (6.869437ms)
+✔ la misma Idempotency-Key de dos clientes: cada uno, su propio pedido (8.256291ms)
+✔ la empresa de reparto marca como enviado un pedido pagado, y nada más (12.429818ms)
+✔ los productos los gestiona admin: un cliente o el reparto, 403 sin WWW-Authenticate (7.783491ms)
+✔ /v1 tiene las mismas protecciones (4.202195ms)
+ℹ tests 8
+ℹ suites 0
+ℹ pass 8
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 832.183598`}
+>
+
+Cada prueba hace la misma petición como varias identidades y compara los códigos. Si una falla, su nombre dice qué regla no se cumple.
+
+</TryIt>
+
+### Entra como cada uno
+
+Arranca la API con `npm start` y, en otra terminal, abre una sesión para Marta, Carmen y Ana, cada una en su fichero:
+
+<TryIt
+  title="4. Tres sesiones"
+  cmd={`curl -s -w '\\n' -c marta.txt --json '{"email":"marta@ejemplo.com","contrasena":"una frase larga que solo sé yo"}' localhost:3000/v2/sesion
+curl -s -w '\\n' -c carmen.txt --json '{"email":"carmen@ejemplo.com","contrasena":"carmen-practica-2026"}' localhost:3000/v2/sesion
+curl -s -w '\\n' -c ana.txt --json '{"email":"ana@tienda.example","contrasena":"ana-practica-2026"}' localhost:3000/v2/sesion`}
+  output={`{"id":1,"email":"marta@ejemplo.com","rol":"cliente"}
+{"id":4,"email":"carmen@ejemplo.com","rol":"cliente"}
+{"id":2,"email":"ana@tienda.example","rol":"admin"}`}
+>
+
+La respuesta trae ahora el `rol`. La quinta identidad es la clave de Reparto Rápido de la lección 3: guárdala en esta terminal con `CLAVE=`, seguido de la tuya.
+
+</TryIt>
+
+### Sin identidad: el cambio que rompe
+
+<TryIt
+  title="5. La lista de pedidos, sin entrar"
+  cmd={`curl -s -i -w '\\n' 'localhost:3000/v2/pedidos?limite=3'
+curl -s -o /dev/null -w '%{http_code}\\n' localhost:3000/v1/pedidos`}
+  output={`HTTP/1.1 401 Unauthorized
+content-type: application/problem+json
+vary: Origin
+www-authenticate: Bearer realm="tienda-api"
+x-request-id: 12ef6c5f-fe1d-48e1-9f3e-aea0eb936953
+content-length: 121
+Date: Wed, 14 Oct 2026 00:17:12 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"type":"about:blank","title":"Unauthorized","status":401,"detail":"Inicia sesión, o identifícate con tu clave de API"}
+401`}
+>
+
+Es la primera petición de la introducción, que entonces devolvía tres pedidos. Ahora, `401` con su `www-authenticate`. La última línea es `/v1`: cerrada igual.
+
+</TryIt>
+
+### Cada cliente, sus pedidos
+
+Marta y Carmen hacen un pedido cada una:
+
+<TryIt
+  title="6. Dos pedidos nuevos"
+  cmd={`curl -s -w '\\n' -b marta.txt --json '{"productoId":2,"cantidad":1}' localhost:3000/v2/pedidos
+curl -s -w '\\n' -b carmen.txt --json '{"productoId":1,"cantidad":2}' localhost:3000/v2/pedidos`}
+  output={`{"id":26,"productoId":2,"cantidad":1,"estado":"pendiente","creadoEn":"2026-10-14T00:17:12.525Z","clienteId":1}
+{"id":27,"productoId":1,"cantidad":2,"estado":"pendiente","creadoEn":"2026-10-14T00:17:12.532Z","clienteId":4}`}
+>
+
+Fíjate en `clienteId`: el cuerpo no lo mandaba, sale de la sesión. Si sale `401`, el fichero de la cookie no está en esta carpeta.
+
+</TryIt>
+
+<TryIt
+  title="7. La lista de cada una"
+  cmd={`curl -s -w '\\n' -b marta.txt localhost:3000/v2/pedidos
+curl -s -w '\\n' -b carmen.txt localhost:3000/v2/pedidos`}
+  output={`[{"id":26,"productoId":2,"cantidad":1,"estado":"pendiente","creadoEn":"2026-10-14T00:17:12.525Z","clienteId":1}]
+[{"id":27,"productoId":1,"cantidad":2,"estado":"pendiente","creadoEn":"2026-10-14T00:17:12.532Z","clienteId":4}]`}
+>
+
+La misma ruta, dos respuestas: cada una ve el suyo. Los 25 pedidos de ejemplo no salen, porque no son de nadie.
+
+</TryIt>
+
+Ahora Carmen hace lo de la introducción: probar números.
+
+<TryIt
+  title="8. Carmen prueba números"
+  cmd={`curl -s -w '\\n' -b carmen.txt localhost:3000/v2/pedidos/26
+curl -s -o /dev/null -w '%{http_code} ' -b carmen.txt 'localhost:3000/v2/pedidos/[24-27]'; echo`}
+  output={`{"type":"about:blank","title":"Not Found","status":404,"detail":"No existe ese pedido"}
+404 404 404 200`}
+>
+
+El 26, de Marta, recibe el mismo `404` que un pedido que no existe. Al recorrer del 24 al 27, solo contesta el suyo. `; echo` añade el salto de línea del final.
+
+</TryIt>
+
+### La clave de reparto: lo justo
+
+<TryIt
+  title="9. Todos los pedidos, y uno sin pagar"
+  cmd={`curl -s -w '\\n' -H "Authorization: Bearer $CLAVE" 'localhost:3000/v2/pedidos?limite=3'
+curl -s -w '\\n' -H "Authorization: Bearer $CLAVE" -X POST localhost:3000/v2/pedidos/26/envio`}
+  output={`[{"id":27,"productoId":1,"cantidad":2,"estado":"pendiente","creadoEn":"2026-10-14T00:17:12.532Z","clienteId":4},{"id":26,"productoId":2,"cantidad":1,"estado":"pendiente","creadoEn":"2026-10-14T00:17:12.525Z","clienteId":1},{"id":25,"productoId":2,"cantidad":2,"estado":"pendiente","creadoEn":"2026-10-08T09:00:00.000Z","clienteId":null}]
+{"type":"https://tienda.example/problemas/estado-del-pedido","title":"El estado del pedido no lo permite","status":409,"detail":"El pedido está pendiente: solo se envía uno pagado"}`}
+>
+
+El reparto ve los de todos, también el 25, sin dueño. Pero el pedido de Marta no se puede enviar: aún no está pagado. Si la primera línea es un `401`, `CLAVE` está vacía.
+
+</TryIt>
+
+Que lo pague la pasarela de la [lección de webhooks](/fase-4/webhooks-idempotencia/), y vuelta a intentarlo:
+
+<TryIt
+  title="10. Pagado y enviado"
+  cmd={`npm run pasarela -- 26
+curl -s -w '\\n' -H "Authorization: Bearer $CLAVE" -X POST localhost:3000/v2/pedidos/26/envio`}
+  output={`> tienda-api@1.0.0 pasarela
+> node --env-file-if-exists=.env scripts/pasarela.ts 26
+
+→ POST /v2/webhooks/pagos {"id":"evt_f9b68169-f8b2-4ee7-930d-7cddf934da8d","tipo":"pago.completado","pedidoId":26}
+← 200 {"recibido":"evt_f9b68169-f8b2-4ee7-930d-7cddf934da8d","repetido":false}
+{"id":26,"productoId":2,"cantidad":1,"estado":"enviado","creadoEn":"2026-10-14T00:17:12.525Z","clienteId":1}`}
+>
+
+El webhook firmado marca el 26 como pagado, y el envío ya funciona: `enviado`. Marta lo verá así en su lista.
+
+</TryIt>
+
+<TryIt
+  title="11. Lo que no le toca"
+  cmd={`curl -s -i -w '\\n' -H "Authorization: Bearer $CLAVE" --json '{"nombre":"Pegatina","precioCentimos":150}' localhost:3000/v2/productos
+curl -s -w '\\n' -H "Authorization: Bearer $CLAVE" -X POST localhost:3000/v2/pedidos/27/cancelacion`}
+  output={`HTTP/1.1 403 Forbidden
+content-type: application/problem+json
+vary: Origin
+x-request-id: ded8c56b-39cb-4fa7-8642-4a6e99736a96
+content-length: 103
+Date: Wed, 14 Oct 2026 00:17:22 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"type":"about:blank","title":"Forbidden","status":403,"detail":"Tu cuenta no tiene permiso para esto"}
+{"type":"about:blank","title":"Forbidden","status":403,"detail":"Tu cuenta no tiene permiso para esto"}`}
+>
+
+Crear un producto y cancelar un pedido: `403` las dos veces. Fíjate en lo que falta en las cabeceras: no hay `www-authenticate`, porque la tienda sabe quién es.
+
+</TryIt>
+
+### La misma petición, cinco identidades
+
+<TryIt
+  title="12. El pedido 26, para cada uno"
+  cmd={`curl -s -o /dev/null -w 'nadie    %{http_code}\\n' localhost:3000/v2/pedidos/26
+curl -s -o /dev/null -w 'marta    %{http_code}\\n' -b marta.txt localhost:3000/v2/pedidos/26
+curl -s -o /dev/null -w 'carmen   %{http_code}\\n' -b carmen.txt localhost:3000/v2/pedidos/26
+curl -s -o /dev/null -w 'reparto  %{http_code}\\n' -H "Authorization: Bearer $CLAVE" localhost:3000/v2/pedidos/26
+curl -s -o /dev/null -w 'ana      %{http_code}\\n' -b ana.txt localhost:3000/v2/pedidos/26`}
+  output={`nadie    401
+marta    200
+carmen   404
+reparto  200
+ana      200`}
+>
+
+Tres respuestas distintas para la misma URL: «identifícate», «aquí está» y «no existe». El texto delante de `%{http_code}` solo etiqueta cada línea.
+
+</TryIt>
+
+<SelfCheck question="Reto: repite las cinco líneas con POST /v2/productos y el cuerpo de la Pegatina de la introducción. ¿Qué código recibe cada uno? Si alguien la crea, bórrala con su sesión.">
+
+Solo Ana la crea:
+
+```
+nadie    401
+marta    403
+carmen   403
+reparto  403
+ana      201
+```
+
+Sin `-o /dev/null`, la línea de Ana enseña el producto, `{"id":6,"nombre":"Pegatina","precioCentimos":150,"stock":0,"categorias":[]}`: el 6, porque el 5 fue la Pegatina de la introducción. `curl -s -w '%{http_code}\n' -X DELETE -b ana.txt localhost:3000/v2/productos/6` la borra con un `204`. Es lo que hacía el `ADMIN_TOKEN`, ahora con la cuenta de Ana.
+
+</SelfCheck>
+
+Al terminar, borra los ficheros con `rm marta.txt carmen.txt ana.txt`: son sesiones abiertas.
+
+## Ya lo has visto
+
+- **Un documento compartido.** Al compartir un documento en Google Drive eliges «Lector», «Comentador» o «Editor»: un rol, no una lista de permisos para cada persona.
+- **Los grupos de Linux.** En la [lección de permisos de la Fase 1](/fase-1/usuarios-y-permisos-linux/), un fichero da permisos a un grupo, y basta con meter a alguien en el grupo: la misma idea que un rol.
+- **El número de tu pedido en la URL.** Muchas tiendas enseñan `/pedidos/12345`. Si cambiar ese número enseñara el pedido de otra persona, sería BOLA: no lo pruebes en webs ajenas.
+
+## Errores comunes
+
+- **Comprobar los permisos solo en el frontend,** escondiendo el botón: cualquiera puede llamar a la API con `curl`.
+- **Comprobar que hay sesión y olvidar de quién es el dato.** Cada ruta que recibe un id necesita su comprobación, también la de eventos y la de `/v1`.
+- **Tomar el dueño del cuerpo de la petición** en vez de la sesión.
+- **Preguntar por roles en el código** (`rol === 'admin'`) en vez de por permisos.
+- **Responder `403` a un pedido ajeno,** que confirma que existe, o `401` a quien está identificado y no puede.
+- **Compartir entre cuentas algo guardado por clave.** Con la misma `Idempotency-Key`, Pablo recibiría el pedido de Carmen; por eso `idempotencia.ts` guarda cada clave con su cuenta.
+- **Confiar en ids al azar en vez de comprobar.** Un id difícil de adivinar ayuda, pero acaba en enlaces, logs y capturas.
+- **Dar a un programa más permisos «por si acaso».**
+
+## Resumen
+
+- La autorización decide qué puede hacer quien ya está identificado. Con RBAC, cada cuenta tiene un rol y cada rol, una lista de permisos.
+- El código pregunta por permisos (`exigir('productos:gestionar')`), nunca por nombres de roles: un rol nuevo es una línea más en la tabla.
+- El rol no basta: cada ruta que recibe un id comprueba de quién es el dato. Olvidarlo es BOLA, el primer fallo del OWASP API Security Top 10.
+- Sin identidad, `401`; identificado y sin permiso, `403`; un dato ajeno, `404`, para no confirmar que existe.
+- Cada rol y cada clave, con lo justo. Y un agujero de seguridad se cierra en cuanto se ve, aunque rompa a algún cliente.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Un compañero escribe if (rol !== 'admin') en tres rutas de pedidos. Mañana llega un rol nuevo, «atención al cliente», que debe ver todos los pedidos sin tocar los productos. ¿Qué le propones?"
+  review="El código pregunta por permisos, no por roles"
+>
+
+<QuizOption text="Añadir el rol nuevo a cada if que deba dejarle pasar: así cada ruta dice qué roles admite y no se olvida ninguna.">
+
+Cada rol nuevo obliga a revisar todas las rutas, y una olvidada no da ningún error: deja pasar a quien no debe, o deja fuera a quien sí. La lista de quién puede qué acaba repartida por todo el código.
+
+</QuizOption>
+
+<QuizOption text="Que las rutas pidan un permiso, como pedidos:ver-todos, y que el rol nuevo lo reciba en la tabla." correct>
+
+Las rutas no cambian: el rol nuevo es una línea en `PERMISOS`, con `pedidos:ver-todos` y sin `productos:gestionar`.
+
+</QuizOption>
+
+<QuizOption text="Hacer admin a quien trabaje en atención al cliente: para ver todos los pedidos hace falta ser admin.">
+
+Ver todos los pedidos es un permiso, no un rol. Con admin también podrían borrar productos: lo contrario del mínimo privilegio.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Una ruta GET /pedidos/:id tiene exigir('pedidos:ver-propios', 'pedidos:ver-todos') y nada más. Carmen, clienta, pide el pedido de Marta. ¿Qué pasa?"
+  review="Cada cliente, sus pedidos: BOLA"
+>
+
+<QuizOption text="Carmen lo ve: exigir mira lo que permite su rol, no de quién es ese pedido." correct>
+
+Es BOLA. Hace falta la segunda comprobación, la de `pedidoVisible`: si no tiene «todos», solo un pedido suyo.
+
+</QuizOption>
+
+<QuizOption text="La tienda responde 403: ver-propios no deja ver los pedidos de otros clientes.">
+
+`exigir` no sabe qué pedido se pide: solo mira si el rol tiene alguno de esos permisos, y Carmen tiene `ver-propios`.
+
+</QuizOption>
+
+<QuizOption text="PostgreSQL lo impide: la clave foránea de cliente_id solo deja leer las filas de ese cliente.">
+
+Una clave foránea solo exige que el cliente exista. Quién puede leer la fila lo decide la API.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Pablo, cliente, con su sesión, intenta borrar un producto. Otra petición, sin cookie ni clave, intenta lo mismo. ¿Qué responde la tienda a cada una?"
+  review="401, 403 o 404"
+>
+
+<QuizOption text="A las dos, 401: ninguna está autorizada a borrar productos, y 401 significa «no autorizado».">
+
+El nombre del `401` despista: significa «no sé quién eres». A Pablo la tienda sí lo conoce.
+
+</QuizOption>
+
+<QuizOption text="A Pablo, 401: su sesión no sirve para esa ruta, así que para ella no está identificado.">
+
+Una sesión identifica en todas las rutas. Lo que le falta a Pablo es un permiso, y eso es un `403`.
+
+</QuizOption>
+
+<QuizOption text="A Pablo, 403; a la petición sin identidad, 401 con WWW-Authenticate." correct>
+
+Pablo está identificado y no tiene `productos:gestionar`. La otra petición no dice quién es: identificarse podría cambiar la respuesta.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un lunes descubres que GET /v2/pedidos da los pedidos de todos los clientes a cualquiera. Un socio lo usa sin identificarse. ¿Qué haces?"
+  review="Un cambio que rompe, a propósito"
+>
+
+<QuizOption text="Anunciarlo con Deprecation y Sunset, y cerrarlo dentro de seis meses, como cualquier cambio que rompe.">
+
+Seis meses de aviso son seis meses con los datos de los clientes abiertos. El aviso es para cambios de diseño, no para agujeros.
+
+</QuizOption>
+
+<QuizOption text="Cerrarlo hoy, también en /v1, y dar al socio una forma de identificarse con sus permisos." correct>
+
+Un agujero de seguridad se cierra en cuanto se ve. Después, se avisa al socio y se le da su clave, con lo justo.
+
+</QuizOption>
+
+<QuizOption text="Cerrarlo solo en /v2: /v1 ya está obsoleta, y su Sunset dice cuándo desaparece.">
+
+Hasta esa fecha, `/v1` seguiría dando los mismos pedidos a cualquiera. Un agujero se cierra en todas las puertas.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Reparto Rápido pide una clave de admin: «así no tendremos que pediros más permisos». ¿Qué le contestas?"
+  review="Mínimo privilegio, también para la clave de reparto"
+>
+
+<QuizOption text="Que sí, si la guardan bien: una clave guardada como secreto no se filtra.">
+
+Las claves se filtran: en un log, un repositorio o un portátil. Cuando pasa, lo que importa es qué permite.
+
+</QuizOption>
+
+<QuizOption text="Que sí: la tienda solo guarda su hash, así que aunque se filtre nadie puede usarla.">
+
+El hash protege la copia de la base de datos. Quien tenga la clave misma la usa como Reparto Rápido.
+
+</QuizOption>
+
+<QuizOption text="Una de reparto, para ver y enviar pedidos: si se filtra, el daño se queda ahí." correct>
+
+Es el mínimo privilegio: con una clave de admin, quien la encontrara podría crear y borrar productos y cancelar pedidos.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="El frontend de otra tienda envía {productoId, cantidad, clienteId} al crear un pedido, y la API guarda ese clienteId. ¿Qué problema tiene?"
+  review="Cada cliente, sus pedidos: BOLA"
+>
+
+<QuizOption text="Cualquiera puede hacer pedidos a nombre de otro cliente cambiando ese número." correct>
+
+El dueño tiene que salir de la sesión, como `c.var.usuario` en la tienda, nunca de lo que manda el cliente.
+
+</QuizOption>
+
+<QuizOption text="Ninguno, si el frontend pone siempre el id de quien ha iniciado sesión.">
+
+La API no solo recibe peticiones de su frontend: con `curl`, cualquiera manda el `clienteId` que quiera.
+
+</QuizOption>
+
+<QuizOption text="Ninguno, si la ruta tiene exigir('pedidos:crear'): comprueba que ese clienteId es el de la sesión.">
+
+`exigir` solo mira si el rol tiene el permiso. No lee el cuerpo, ni sabe qué `clienteId` trae.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [API1:2023 Broken Object Level Authorization](https://api-security.owasp.org/editions/2023/en/0xa1-broken-object-level-authorization) (OWASP, en inglés): BOLA, con ejemplos de ataques y cómo evitarlo.
+- [OWASP API Security Top 10, 2023](https://api-security.owasp.org/editions/2023/en/0x11-t10) (OWASP, en inglés): los diez fallos más graves de las APIs.
+- [Authorization Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Authorization_Cheat_Sheet.html) (OWASP, en inglés): mínimo privilegio, denegar por defecto y comprobar en cada petición.
+- [USPS Site Exposed Data on 60 Million Users](https://krebsonsecurity.com/2018/11/usps-site-exposed-data-on-60-million-users/) (KrebsOnSecurity, en inglés): un caso real de BOLA.

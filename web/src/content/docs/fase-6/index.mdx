@@ -1,0 +1,236 @@
+---
+translationKey: phase-6
+title: "Autenticación y autorización: la diferencia"
+description: "Autenticación es saber quién eres; autorización, qué puedes hacer. Mira qué deja hacer hoy tu API a cualquiera y cómo lo cierra esta fase."
+sidebar:
+  label: Introducción
+  order: 0
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+
+Al terminar la Fase 5, la <Term id="api">API</Term> de la tienda guarda sus datos en PostgreSQL y ya no olvida nada. Pero se los da a cualquiera que se los pida: no sabe quién le habla.
+
+En esta fase le das **cuentas, sesiones y permisos**: la tienda sabrá quién hace cada petición y qué puede hacer cada uno. Y aprenderás los ataques que recibe cualquier backend, haciéndolos contra tu propio servidor para después cerrarlos.
+
+## Quién eres y qué puedes hacer
+
+Imagina la tienda al final de esta fase. Marta, una clienta, escribe su correo y su contraseña en el formulario para entrar. El servidor comprueba la contraseña y, desde ese momento, sabe que las peticiones que llegan de su navegador son de Marta.
+
+Después, Marta consulta sus pedidos. El servidor le da los suyos, y ninguno de otro cliente. Si intenta crear un producto, el servidor le dice que no: eso solo lo hacen Ana y Luis, que llevan la tienda.
+
+Son dos preguntas distintas, y cada una tiene su nombre:
+
+| | Autenticación | Autorización |
+|---|---|---|
+| La pregunta | ¿Quién eres? | ¿Puedes hacer esto? |
+| En la tienda | Marta da su contraseña, y el servidor sabe que es Marta | Marta ve sus pedidos, pero no los de otros, y no puede crear productos |
+| Cuándo | Al entrar; después, la sesión lo recuerda | En cada petición |
+| Si falla | `401`: no sé quién eres | `403`: sé quién eres, y no puedes |
+| Dónde la ves | Lecciones 1 a 4 | Lección 5 |
+
+La **<Term id="authentication">autenticación</Term>** comprueba quién eres. La **<Term id="authorization">autorización</Term>** decide qué puedes hacer, sabiendo ya quién eres. Van siempre en ese orden: no se puede decidir qué puede hacer alguien sin saber quién es. En inglés son *authentication* y *authorization*, y a veces se acortan en *authn* y *authz*.
+
+Los dos códigos ya los viste en la [lección 3 de la Fase 2](/fase-2/codigos-de-estado-http/), y allí quedó algo pendiente: el nombre del `401`, *Unauthorized* («no autorizado»), despista. Con las palabras de esta fase, un `401` dice «no estás autenticado», y un `403`, «no estás autorizado». El nombre viene de HTTP/1.0, de 1996, y nadie lo cambia porque millones de programas lo usan así.
+
+<Analogy>
+
+En un hotel, la recepción te pide el DNI y la reserva al llegar: comprueba quién eres. Es la autenticación. Después te da una tarjeta, y la tarjeta abre tu habitación, el gimnasio y el ascensor, pero no la habitación de al lado ni la cocina. Es la autorización: qué puertas se abren para ti.
+
+Nadie te vuelve a pedir el DNI en cada puerta: la tarjeta recuerda que ya lo enseñaste. En la web, eso es la sesión, de la lección 2.
+
+<div slot="limits">
+
+La tarjeta del hotel lleva grabado qué puertas abre, y cada puerta lo comprueba sola. En la tienda, el navegador solo lleva un número al azar: quién eres y qué puedes hacer lo busca el servidor en su base de datos, en cada petición. Y una tarjeta perdida se anula en recepción; una sesión se anula borrándola en el servidor, no en el navegador.
+
+</div>
+
+</Analogy>
+
+## Lo que tu API deja hacer hoy
+
+Mira primero qué contesta la API al final de la Fase 5 a alguien que no dice quién es. Arráncala con `npm start` en tu proyecto, `~/curso-backend/fase-3/tienda-api`, y en otra terminal pide los pedidos:
+
+<TryIt
+  title="Los pedidos, sin entrar"
+  cmd={`curl -s -w '\\n' 'localhost:3000/v2/pedidos?limite=3'`}
+  output={`[{"id":25,"productoId":2,"cantidad":2,"estado":"pendiente","creadoEn":"2026-10-08T09:00:00.000Z"},{"id":24,"productoId":1,"cantidad":1,"estado":"pendiente","creadoEn":"2026-10-08T02:00:00.000Z"},{"id":23,"productoId":3,"cantidad":4,"estado":"pendiente","creadoEn":"2026-10-07T19:00:00.000Z"}]`}
+>
+
+Los tres pedidos más recientes, sin que nadie te pregunte quién eres. `?limite=3` es la página de tres de la [lección de paginación](/fase-4/paginacion-api/), para que la salida quepa.
+
+Fíjate en lo que no hay: ningún pedido dice de quién es. La tienda no podría negarte uno aunque quisiera, porque no lo sabe. En una tienda de verdad, cada pedido llevaría un nombre, una dirección y un teléfono: los datos de una persona, a la vista de cualquiera.
+
+</TryIt>
+
+¿Y todos? No hace falta saber nada de la tienda: basta con probar números seguidos.
+
+<TryIt
+  title="Los 25, de una vez"
+  cmd={`curl -s -w '\\n' 'localhost:3000/v2/pedidos/[1-25]' | head -3`}
+  output={`{"id":1,"productoId":2,"cantidad":2,"estado":"enviado","creadoEn":"2026-10-01T09:00:00.000Z"}
+{"id":2,"productoId":3,"cantidad":3,"estado":"enviado","creadoEn":"2026-10-01T16:00:00.000Z"}
+{"id":3,"productoId":1,"cantidad":4,"estado":"enviado","creadoEn":"2026-10-01T23:00:00.000Z"}`}
+>
+
+`[1-25]` es una función de `curl`: pide `/v2/pedidos/1`, `/v2/pedidos/2`… hasta el 25, uno detrás de otro. `head -3` enseña solo las tres primeras líneas ([lección 2 de la Fase 1](/fase-1/comandos-linux-archivos/)); sin él, verías los 25 pedidos, uno por línea, en menos de un segundo.
+
+Las comillas hacen falta. Sin ellas, zsh, la shell del Mac, lee los corchetes como un patrón de nombres de fichero y contesta `zsh: no matches found`.
+
+</TryIt>
+
+Y no solo se puede leer. Sin entrar, cualquiera puede cancelar el pedido de otro: `curl -X POST localhost:3000/v2/pedidos/24/cancelacion` contesta `200` y el pedido pasa a `cancelado`. Lo comprobamos, pero no lo hagas ahora: la API no tiene forma de devolverlo a `pendiente`, y tus datos de práctica dejarían de coincidir con los de las lecciones.
+
+### El token de administración: una llave para todos
+
+Crear un producto sí pide algo. Prueba sin nada:
+
+<TryIt
+  title="Un producto, sin token"
+  cmd={`curl -s -w '\\n' --json '{"nombre":"Pegatina","precioCentimos":150}' localhost:3000/v2/productos`}
+  output={`{"type":"about:blank","title":"Unauthorized","status":401,"detail":"Hace falta un token válido"}`}
+>
+
+Un `401`, con la forma de Problem Details de la [lección 2 de la Fase 4](/fase-4/errores-api-problem-details/). La ruta pasa antes por `soloAdmin`, el guardia de la [lección de middleware de la Fase 3](/fase-3/que-es-middleware/): pide la cabecera `Authorization` con el `ADMIN_TOKEN` de tu `.env`. `--json` manda el cuerpo como JSON, con su `Content-Type`.
+
+</TryIt>
+
+Ahora con el token. Míralo en tu `.env`, cópialo en una variable de la shell, crea el producto y bórralo, para dejar tus datos como estaban:
+
+<TryIt
+  title="Con el token"
+  cmd={`grep ADMIN_TOKEN .env
+TOKEN=6bb3a19879dcf82e36c2e623dff47255dfb115160d44ae38
+curl -s -w '\\n' -H "Authorization: Bearer $TOKEN" --json '{"nombre":"Pegatina","precioCentimos":150}' localhost:3000/v2/productos
+curl -s -w '%{http_code}\\n' -X DELETE -H "Authorization: Bearer $TOKEN" localhost:3000/v2/productos/5`}
+  output={`ADMIN_TOKEN=6bb3a19879dcf82e36c2e623dff47255dfb115160d44ae38
+{"id":5,"nombre":"Pegatina","precioCentimos":150,"stock":0,"categorias":[]}
+204`}
+>
+
+El token es el que creaste con `openssl rand -hex 24` en la [lección 8 de la Fase 3](/fase-3/errores-y-logs-node/): pon el tuyo detrás de `TOKEN=`. Con él, la Pegatina nace con el id 5, y el `DELETE` la borra: `204`, sin cuerpo. `-w '%{http_code}\n'` hace que `curl` escriba el código de la respuesta.
+
+Si tu id es otro, usa el tuyo en el `DELETE`. PostgreSQL no reutiliza el 5: tu próximo producto será el 6. Si sale `401`, el token no es el de tu `.env`, o `TOKEN` está vacía porque la creaste en otra terminal.
+
+</TryIt>
+
+Funciona, y tiene cuatro problemas:
+
+- **Quien lo sepa es admin.** El token no dice de quién es: entra quien lo lleve, como la entrada de concierto de la [lección de cabeceras de la Fase 2](/fase-2/cabeceras-http/). Si Luis lo pega en un chat, o se queda en un portátil robado, quien lo encuentre crea, cambia y borra productos.
+- **No dice quién hizo qué.** Mira la terminal del servidor: la línea del producto dice `"metodo":"POST","ruta":"/v2/productos","estado":201`, y ningún nombre. Para tu API, Ana y Luis son la misma persona.
+- **No se le puede quitar a uno solo.** Si alguien deja de trabajar en la tienda, la única forma de cerrarle la puerta es cambiar el token y dárselo otra vez a todos los demás.
+- **Todo o nada.** La empresa de reparto de la Fase 4, que solo debería marcar pedidos como enviados, tendría que recibir el mismo token, y con él podría borrar productos.
+
+**Un <Term id="secret">secreto</Term> compartido no identifica a una persona, sino a un grupo.** En la lección 5, `ADMIN_TOKEN` desaparece: ser admin pasa a ser el rol de un usuario con su propia cuenta.
+
+## Cómo lo ve quien ataca
+
+Hasta ahora has mirado tu API como quien la construye: qué rutas tiene y qué devuelve cada una. En esta fase la miras también como quien quiere usarla para lo que no debe. Esa persona busca una de tres cosas:
+
+- **Datos.** Correos, direcciones, teléfonos y contraseñas de tus clientes. Se venden, o se prueban en otras webs, porque mucha gente repite contraseña.
+- **Dinero.** Pedidos sin pagar, precios cambiados, o cuentas ajenas con una tarjeta guardada.
+- **Acceso.** Tu servidor, para otra cosa: mandar spam, guardar ficheros, o llegar desde él a la base de datos y a lo que haya detrás.
+
+Y probar le cuesta casi nada. La orden de los 25 pedidos tardó menos de un segundo, y un programa puede repetirla con miles de números, o con miles de contraseñas, toda la noche. En la [lección 2 de la Fase 1](/fase-1/comandos-linux-archivos/) viste uno en el log de práctica: un escáner que a las tres de la madrugada pedía `/.env`, un fichero que suele guardar secretos. Nadie eligió ese servidor a mano: estos programas recorren internet entero y prueban en todas las puertas.
+
+**Por eso no hace falta que tu tienda sea famosa para que la ataquen: basta con que esté en internet.** Y la cuenta no es justa: quien defiende tiene que acertar en cada ruta, y a quien ataca le basta un fallo. Esta fase repasa, uno por uno, los sitios por donde se cuela alguien.
+
+En las lecciones vas a atacar tu propia tienda, siempre en `localhost`: hacerlo contra un sistema que no es tuyo, sin permiso, es un delito en casi todos los países (en España, el [artículo 197 bis del Código Penal](https://www.boe.es/buscar/act.php?id=BOE-A-1995-25444#a197bis)).
+
+## Lo que vas a construir
+
+Al final de la fase, la tienda tiene cuentas. Marta crea la suya con su correo y una contraseña, o entra con la cuenta que ya tiene en otro sitio, como con «Iniciar sesión con Google». Desde ese momento, sus pedidos son suyos: solo ella y quien lleva la tienda los ven. Ana y Luis son administradores, cada uno con su cuenta, y la empresa de reparto tiene su propia clave, que solo sirve para lo que necesita.
+
+Lección a lección, la API gana esto:
+
+| Lección | Lo que gana la API de la tienda | Carpeta |
+|---|---|---|
+| 1. Contraseñas | Cuentas de cliente, con la contraseña guardada como un <Term id="hash">hash</Term> lento y con sal: ni tú puedes leerla | `24-contrasenas` |
+| 2. Sesiones | Entrar y salir, con la sesión en una <Term id="cookie">cookie</Term>, y una ruta que dice quién eres | `25-sesiones` |
+| 3. JWT | Un token firmado, hecho, leído y roto a propósito, y la clave propia de la empresa de reparto | `26-jwt-claves` |
+| 4. OAuth | «Iniciar sesión con…», contra un proveedor de práctica que funciona en tu ordenador | `27-oauth` |
+| 5. Autorización | Roles y permisos: cada cliente ve solo sus pedidos, y el `ADMIN_TOKEN` desaparece | `28-roles` |
+| 6. Inyección | Una página de la tienda, `/tienda`, rota a propósito con un script escondido en un producto, y arreglada | `29-inyeccion-xss` |
+| 7. CSRF y SSRF | Las peticiones de otra web, rechazadas, y la dirección de aviso de la empresa de reparto, comprobada | `30-csrf-ssrf` |
+| 8. Rate limiting | Un límite de intentos: tras diez contraseñas mal, un `429`, «demasiadas peticiones» | `31-limites` |
+| 9. OWASP | Nada nuevo: repasas las cabeceras de seguridad, buscas paquetes con fallos conocidos y ordenas todo lo anterior | — |
+
+Una de estas mejoras rompe algo a propósito. En la lección 5, la lista de todos los pedidos deja de estar abierta de un día para otro, sin los meses de aviso de la [lección de versionado](/fase-4/versionado-api/). Verás por qué un agujero de seguridad no espera.
+
+## Lo que vas a aprender
+
+Al terminar esta fase sabrás:
+
+- Distinguir autenticación de autorización, y qué código devolver cuando falla cada una.
+- Guardar contraseñas como se debe, con un hash lento y con sal (argon2id), y por qué nunca se cifran.
+- Iniciar sesión con una cookie, y qué es un JWT, para qué sirve y por qué no es una sesión mejor.
+- Qué hace por dentro «Iniciar sesión con Google» (OAuth 2.0 y OpenID Connect).
+- Dar a cada rol sus permisos, y comprobar que cada cliente solo ve lo suyo: el fallo más común de las APIs.
+- Reconocer y frenar en tu código la <Term id="sql-injection">inyección SQL</Term>, el XSS, el <Term id="csrf">CSRF</Term> y el SSRF.
+- Limitar cuántas veces se puede intentar algo, y mantener los secretos fuera del código.
+- Leer el OWASP Top 10 como un mapa de todo lo anterior.
+
+## Las lecciones
+
+1. [Contraseñas](/fase-6/guardar-contrasenas-hash/)
+2. [Sesiones](/fase-6/sesiones-cookies/)
+3. [JWT](/fase-6/que-es-jwt/)
+4. [OAuth](/fase-6/oauth-openid-connect/)
+5. [Autorización](/fase-6/roles-permisos-rbac/)
+6. [Inyección](/fase-6/inyeccion-sql-xss/)
+7. [CSRF y SSRF](/fase-6/csrf-ssrf/)
+8. [Rate limiting](/fase-6/rate-limiting-secretos/)
+9. [OWASP](/fase-6/owasp-top-10/)
+
+## Dónde vas a practicar
+
+Todo se hace en tu ordenador, como en la Fase 5:
+
+| Dónde | Para qué | Desde |
+|---|---|---|
+| Tu proyecto, `tienda-api`, con `curl` | Cada lección le añade algo, y lo pruebas en `http://localhost:3000` | La lección 1 |
+| El navegador, con <Term id="devtools">DevTools</Term> | Ver la cookie de tu sesión, las peticiones que salen y los ataques en la consola | La lección 2 |
+| Un proveedor de inicio de sesión de práctica | Hace de Google en tu ordenador, en `localhost:9000`, sin cuenta en ningún sitio | La lección 4 |
+| Una segunda web, en `127.0.0.1:4000` | Hace de web enemiga que intenta comprar en tu tienda con tu sesión | La lección 7 |
+
+El proveedor y la segunda web vienen como scripts en el proyecto: los arrancas con una orden. DevTools se abre como en la [introducción de la Fase 2](/fase-2/#antes-de-empezar-devtools).
+
+- **En Windows,** todo se hace en WSL, como desde la [Fase 0](/fase-0/#antes-de-empezar-la-terminal).
+- **Las salidas** están capturadas con Node 26.11.1 y PostgreSQL 18. Tus ids, hashes, tokens y horas serán otros.
+- **Sin Docker todavía:** llega en la Fase 7.
+
+## Antes de empezar
+
+Necesitas lo mismo que en la Fase 5, y nada nuevo:
+
+- **PostgreSQL 18 en marcha,** con el rol `tienda` y sus dos bases de datos, `tienda` y `tienda_test`, como en la [introducción de la Fase 5](/fase-5/).
+- **Tu proyecto,** en `~/curso-backend/fase-3/tienda-api`, al día con la última lección de la Fase 5 y con `DATABASE_URL` en su `.env`.
+- **Node 26.**
+
+Para guardar contraseñas, la lección 1 usa argon2, que ya viene dentro de Node. Compruébalo:
+
+<TryIt
+  title="argon2, dentro de Node"
+  cmd={`node --version
+node -p "typeof require('node:crypto').argon2"`}
+  output={`v26.11.1
+function`}
+>
+
+`node -p` ejecuta una línea de JavaScript y escribe el resultado. `function` dice que el módulo `crypto` de Node tiene una función `argon2`. Llegó en Node 24.7 y aún está marcada como experimental: la lección 1 te cuenta qué significa y qué usar si no la tienes.
+
+Si sale `undefined`, tu Node es anterior: instala el 26 con nvm, como en la [introducción de la Fase 3](/fase-3/). Los paquetes que hacen falta más adelante se instalan en su lección, con su versión exacta.
+
+</TryIt>
+
+### Si prefieres empezar limpio
+
+Si tu proyecto se ha quedado a medias, empieza con el final de la Fase 5, la carpeta `23-orm`. Se descarga y se pone en su sitio como en la [introducción de la Fase 4](/fase-4/#si-prefieres-empezar-limpio), cambiando el nombre de la carpeta: desde `~/curso-backend/fase-3`, `curl -O https://backenddesdecero.com/practicas/tienda-api/23-orm.tar.gz`, `tar -xzf 23-orm.tar.gz`, `mv tienda-api tienda-api-antes` y `mv 23-orm tienda-api`.
+
+Después, dentro de la carpeta, `npm install`, copia tu `.env` con `cp ../tienda-api-antes/.env .` y ejecuta `npm run bd:migrar`. Tu base de datos sigue siendo la misma: la orden solo aplica las <Term id="migration">migraciones</Term> que le falten, y si no falta ninguna, dice `No hay migraciones nuevas: la base de datos está al día`.
+
+Cada lección de esta fase tiene también su carpeta, de `24-contrasenas` a `31-limites`. Se descargan igual, y sirven para comparar cuando te atasques.
+
+Empieza por la [lección 1, «Contraseñas»](/fase-6/guardar-contrasenas-hash/): la tienda tendrá su primera cuenta, y verás por qué la contraseña de Marta no puede leerla nadie, ni siquiera tú.

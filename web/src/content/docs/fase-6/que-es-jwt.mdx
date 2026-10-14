@@ -1,0 +1,593 @@
+---
+translationKey: jwt
+title: "Qué es JWT y cuándo usarlo en vez de sesiones"
+description: "Qué es un JWT y cómo funciona: cabecera, datos y firma, por qué cualquiera lo lee, qué sale mal y cuándo usarlo en vez de una sesión o una clave de API."
+sidebar:
+  label: JWT
+  order: 3
+lesson:
+  oneLiner: "Un JWT es un token que lleva dentro quién eres y hasta cuándo vale, con una firma para que nadie lo cambie. Cualquiera puede leerlo, y no se puede anular antes de que caduque: por eso, para personas en un navegador, es mejor una sesión. Los JWT encajan entre servicios, y un programa se identifica con una clave de API."
+  objectives:
+    - Leer un JWT pieza a pieza (cabecera, datos y firma) y explicar por qué está firmado, pero no cifrado.
+    - Comprobar un JWT como se debe, con la firma, el algoritmo, la caducidad y la audiencia, y reconocer los fallos típicos.
+    - Elegir entre una sesión y un JWT, y explicar por qué un JWT no es una sesión mejor.
+    - Dar a un programa su propia clave de API, guardada como hash y enviada en Authorization Bearer.
+  prerequisites: [sessions]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+
+## El problema
+
+La empresa de reparto de la [Fase 4](/fase-4/), Reparto Rápido, quiere que su programa marque los pedidos como enviados. Pero un programa no tiene navegador ni escribe contraseñas en un formulario. ¿Cómo le dice a la tienda quién es? Hoy, la única forma sería darle el `ADMIN_TOKEN`, y en la [introducción](/fase-6/) viste lo que supone.
+
+Mientras lo piensas, Luis lee en un foro: «Las sesiones en la base de datos están anticuadas. Usad JWT: el servidor no guarda nada». ¿Tiene razón?
+
+Esta lección responde a las dos: qué es un JWT y para qué sirve, y cómo se identifica un programa.
+
+## La analogía
+
+<Analogy>
+
+En el guardarropa de un teatro te dan un tique con un número, el 47. El tique no dice nada: el abrigo, y de quién es, están en el guardarropa. Si lo pierdes y avisas, lo anulan en el momento. Es la sesión de la lección 2.
+
+En un festival te ponen una pulsera que lo dice todo, «Zona VIP · sábado», con un holograma que solo fabrica la organización. Cada barra la comprueba mirándola, sin llamar a nadie. Pero cualquiera que la vea lee lo que pone, y si te la roban, sirve hasta el domingo: ninguna barra se entera. Eso es un JWT.
+
+<div slot="limits">
+
+- Un holograma se imita con paciencia. La firma de un JWT no se fabrica sin el secreto, si es largo y al azar.
+- Una pulsera se lee de un vistazo. Un JWT parece un galimatías, pero no está cifrado: se lee con una orden.
+- La pulsera va atada a tu muñeca. Un JWT, no: quien lo copia, entra.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Tres partes separadas por puntos
+
+Este es un JWT que ha hecho el ejemplo de esta lección, `ejemplos/jwt.ts`:
+
+```text
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2wiOiJjbGllbnRlIiwic3ViIjoiYW5hIiwiaXNzIjoidGllbmRhLWFwaSIsImF1ZCI6InRpZW5kYS1hcGkiLCJpYXQiOjE3OTE5MzU3NDEsImV4cCI6MTc5MTkzNjY0MX0.Wx16t9ET5ufCZ5ma_vfxfFyScpSceG7b9s6Buq-XiQg
+```
+
+Tiene tres partes, separadas por puntos:
+
+| Parte | Qué lleva | En este token |
+|---|---|---|
+| Cabecera (*header*) | Cómo está firmado | `{"alg":"HS256","typ":"JWT"}` |
+| Datos (*payload*) | Lo que el token afirma | `{"rol":"cliente","sub":"ana","iss":"tienda-api","aud":"tienda-api","iat":1791935741,"exp":1791936641}` |
+| Firma (*signature*) | 32 bytes que demuestran que nadie ha cambiado las otras dos | No se lee: son bytes |
+
+Un <Term id="jwt">JWT</Term> (*JSON Web Token*, «yot», como la palabra inglesa *jot*) es eso: <Term id="json">JSON</Term> firmado que cabe en una cabecera. Los nombres de los datos son cortos porque viajan en cada petición, y los define el RFC 7519:
+
+- **`sub`** (*subject*): de quién habla el token.
+- **`iss`** (*issuer*): quién lo ha emitido.
+- **`aud`** (*audience*): para quién es, qué servidor debe aceptarlo.
+- **`iat`** y **`exp`** (*issued at*, *expiration*): cuándo se hizo y cuándo caduca, en segundos desde el 1 de enero de 1970. `1791935741` es el 13 de octubre de 2026 a las 23:55:41 UTC, y `exp`, quince minutos después.
+
+`rol` no es estándar: quien emite el token añade los datos que quiera.
+
+### Firmado, no cifrado
+
+Las dos primeras partes van en **base64url**. Base64 escribe cualquier dato con 64 caracteres que se pueden imprimir: letras, cifras, `+` y `/`. La variante url cambia esos dos por `-` y `_`, que caben en una URL, y quita los `=` del final. Por eso todo JWT empieza por `eyJ`: es `{"` en base64.
+
+No hay ninguna clave: cualquier programa lo deshace. **Un JWT está firmado, no <Term id="encryption">cifrado</Term>: quien lo tenga lee todo lo que lleva.** Nunca metas en él nada que no pueda ver quien lo porte.
+
+La firma no esconde nada. Garantiza dos cosas: que lo emitió quien tiene la clave, y que nadie ha cambiado ni una letra.
+
+### Firmar y comprobar: un secreto o un par de claves
+
+La cabecera dice en `alg` cómo se ha firmado. Hay dos familias:
+
+- **HS256:** un <Term id="hmac">HMAC</Term>-SHA256 de las dos primeras partes con un <Term id="secret">secreto</Term>, como la firma de los [webhooks de la Fase 4](/fase-4/webhooks-idempotencia/#la-firma-un-hmac-del-cuerpo-con-un-secreto). El mismo secreto firma y comprueba: quien puede comprobar, puede fabricar.
+- **RS256 o ES256:** una <Term id="digital-signature">firma digital</Term> con una <Term id="private-key">clave privada</Term>, que cualquiera comprueba con la <Term id="public-key">pública</Term>, como en [TLS](/fase-0/tls-y-https/#dos-llaves-la-criptografía-de-clave-pública). Solo el emisor firma. Así firma Google los tokens de «Iniciar sesión con Google», y publica sus claves públicas para que cualquier web los compruebe (lección 4, «OAuth»).
+
+El ejemplo usa HS256 con `jose`, la biblioteca de JWT más usada en Node, sin dependencias:
+
+<ProjectCode file="tienda-api/26-jwt-claves/ejemplos/jwt.ts" region="crear" />
+
+- `new SignJWT({ rol: 'cliente' })` empieza el token con un dato propio.
+- `setProtectedHeader` escribe la cabecera, y cada `set…`, un dato estándar. `'15m'` son quince minutos.
+- `.sign(secreto)` calcula la firma. El secreto sale de la <Term id="environment-variable">variable de entorno</Term> `JWT_SECRETO` o, si no existe, son 32 bytes al azar, otros en cada ejecución.
+
+Comprobar es más que leer:
+
+<ProjectCode file="tienda-api/26-jwt-claves/ejemplos/jwt.ts" region="comprobar" />
+
+- `jwtVerify` rehace la firma con el secreto y la compara. Si cuadra, mira `exp`, `iss` y `aud`.
+- **`algorithms: ['HS256']`: el algoritmo lo decide quien comprueba, nunca el token.** Ahora verás por qué.
+- Si algo falla, `jose` lanza un error con un código que dice qué, como `ERR_JWT_EXPIRED`.
+
+### Lo que sale mal
+
+El RFC 8725 recoge los fallos vistos de verdad. Los que más importan:
+
+- **`alg: none`.** El estándar permite tokens sin firma, con `"alg":"none"`. Una biblioteca que obedece a la cabecera acepta uno fabricado por cualquiera, con la firma vacía. En 2015, [varias lo aceptaban](https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/). La defensa: la lista `algorithms`.
+- **Leer sin comprobar.** Las bibliotecas traen una función para leer los datos sin mirar la firma (en `jose`, `decodeJwt`). Decidir con ella es creerse lo que diga quien envía el token.
+- **No mirar `exp` ni `aud`.** Sin caducidad, un token robado vale para siempre. Sin audiencia, un token que la tienda hizo para la pasarela de pago valdría también en la tienda. `jose` mira `exp` si el token lo lleva, pero `aud` e `iss` solo si se los pides.
+- **Un secreto corto.** Con un token en la mano, se prueban secretos en otro ordenador, millones por segundo, como con las contraseñas de la lección 1. `jose` acepta uno de tres letras sin quejarse. Usa 32 bytes al azar.
+- **Guardarlo donde JavaScript lo lee.** Muchas webs lo guardan en localStorage. Si alguien ejecuta su JavaScript en la página (el XSS de la lección 6), se lo lleva. Una cookie `HttpOnly` [no se puede leer desde JavaScript](/fase-2/cookies-httponly-secure-samesite/#cookies-o-localstorage).
+
+Y el más grande, que no es un fallo de código: **no se puede anular**.
+
+### Sesiones o JWT
+
+El argumento del foro de Luis es cierto a medias: con JWT, el servidor no guarda nada. Mira lo que cuesta:
+
+| | Sesión (lección 2) | JWT |
+|---|---|---|
+| Qué lleva el cliente | Un id al azar de 43 caracteres, que no dice nada | Los datos firmados: 216 caracteres en el ejemplo, en cada petición |
+| Qué guarda el servidor | Una fila por sesión | Nada, solo el secreto o la clave para comprobar |
+| Cómo se comprueba | Una consulta por <Term id="primary-key">clave primaria</Term> | Un cálculo, sin base de datos |
+| Cerrar sesión o anularla | Se borra la fila: no vale en la siguiente petición | No se puede: vale hasta `exp` |
+| Si a alguien le quitas un permiso | En la siguiente petición | Cuando caduque su token |
+
+Para anular un JWT antes de tiempo, el servidor tiene que apuntar los anulados y consultarlos en cada petición: una tabla y una consulta, lo que el JWT prometía ahorrar. El arreglo habitual, un JWT de quince minutos y un segundo token para renovarlo guardado en la base de datos, vuelve a ser una sesión con más piezas.
+
+Y el ahorro es pequeño: la tienda ya habla con PostgreSQL en casi cada petición, y buscar por clave primaria es de lo más rápido que hace ([lección de índices](/fase-5/indices-sql-explain/)).
+
+**La respuesta del curso: sesiones para las personas en un navegador; JWT entre servicios.** Un JWT encaja cuando un servidor tiene que fiarse de otro sin preguntarle. Por ejemplo, la tienda podría dar a la pasarela de pago un token de un minuto con `aud: pasarela-de-pago`. Y un proveedor de identidad te dice quién eres con un JWT, el `id_token` de OpenID Connect de la lección 4.
+
+### Las claves de API: cómo se identifica un programa
+
+¿Y Reparto Rápido? Su programa funciona en un servidor, día y noche, sin nadie delante. Un JWT que no caduca sería una llave imposible de quitar. Necesita una **<Term id="api-key">clave de API</Term>**: un texto largo y al azar que lo identifica, como una sesión que no caduca y se anula borrándola. Así se crea, en `src/claves.ts`:
+
+<ProjectCode file="tienda-api/26-jwt-claves/src/claves.ts" region="crear-clave" />
+
+- **`randomBytes(32)`**: 256 bits al azar, como el id de la sesión. Nadie la adivina.
+- **`tienda_` delante:** quien la encuentre en un log o en un repositorio sabe de dónde es. GitHub reconoce así las de otras empresas y avisa si se suben: `ghp_` son de GitHub, y `sk_live_`, de Stripe.
+- **La tabla guarda su <Term id="hash">hash</Term>, nunca la clave:** la clave se enseña una vez, al crearla. Basta SHA-256, rápido: argon2 frena a quien prueba contraseñas probables (lección 1), y de una clave al azar no hay lista que probar.
+
+En cada petición la busca un <Term id="middleware">middleware</Term> nuevo, `src/middleware/clave.ts`:
+
+<ProjectCode file="tienda-api/26-jwt-claves/src/middleware/clave.ts" region="cargar-clave" />
+
+- Lee `Authorization: Bearer …`, la [cabecera de la Fase 2](/fase-2/cabeceras-http/#authorization-quién-eres). El prefijo la distingue de un id de sesión, que también puede llegar así.
+- `claveDe` la busca por su hash y apunta en `usada_en` cuándo se usó: una clave olvidada se puede borrar.
+
+Sin sesión ni clave, `exigirIdentidad` contesta `401` con `WWW-Authenticate: Bearer realm="tienda-api"`, el desafío que describe el RFC 6750. De momento, la clave solo identifica: `GET /v2/yo` dice quién eres. Qué puede hacer Reparto Rápido con ella llega en la lección 5, «Autorización».
+
+## Pruébalo
+
+El objetivo: hacer un JWT, leerlo sin el secreto y ver cómo se rechazan cuatro trampas. Después, dar a Reparto Rápido su clave y comprobar que una falsa no entra y que la tienda no guarda la buena.
+
+Romperás tokens tuyos, en tu ordenador: hacerlo contra un sistema ajeno sin permiso es un delito.
+
+### Escribe el código
+
+Partes de tu proyecto de la lección 2, «Sesiones».
+
+<TryIt
+  title="1. Instala jose"
+  cmd="npm install jose@6.2.12"
+  output={`added 1 package, and audited 71 packages in 5s
+
+9 packages are looking for funding
+  run \`npm fund\` for details
+
+4 moderate severity vulnerabilities
+
+To address all issues (including breaking changes), run:
+  npm audit fix --force
+
+Run \`npm audit\` for details.`}
+>
+
+Un solo paquete: `jose` no depende de nadie. Las 4 *vulnerabilities* son las de drizzle-kit, de la lección 9 de la Fase 5, «ORM». Las salidas de esta lección son de Node 26.11.1 y PostgreSQL 18.6.
+
+</TryIt>
+
+Añade la tabla a `src/esquema.ts`:
+
+<ProjectCode file="tienda-api/26-jwt-claves/src/esquema.ts" region="claves-api" />
+
+`unique()` impide dos hashes iguales y crea el índice con el que se busca cada clave.
+
+<TryIt
+  title="2. Genera la migración"
+  cmd="npm run bd:generar -- --name=claves-api"
+  output={`> tienda-api@1.0.0 bd:generar
+> drizzle-kit generate --name=claves-api
+
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/Users/ana/curso-backend/fase-3/tienda-api/drizzle.config.ts'
+9 tables
+categorias 2 columns 0 indexes 0 fks
+claves_api 5 columns 0 indexes 0 fks
+claves_idempotencia 6 columns 0 indexes 0 fks
+eventos_procesados 2 columns 0 indexes 0 fks
+pedidos 5 columns 1 indexes 1 fks
+productos 4 columns 0 indexes 0 fks
+productos_categorias 2 columns 1 indexes 2 fks
+sesiones 4 columns 0 indexes 1 fks
+usuarios 4 columns 1 indexes 0 fks
+
+[✓] Your SQL migration file ➜ drizzle/0004_claves-api.sql 🚀`}
+>
+
+Como en las lecciones 1 y 2: `drizzle/0004_claves-api.sql` tiene el `CREATE TABLE`. Si sale `No schema changes`, no guardaste `esquema.ts`.
+
+</TryIt>
+
+Escribe con ese SQL, y con comentarios que lo expliquen, `bd/migraciones/007-claves-api.sql`:
+
+<ProjectCode file="tienda-api/26-jwt-claves/bd/migraciones/007-claves-api.sql" region="claves-api" />
+
+<TryIt
+  title="3. Aplícala"
+  cmd="npm run bd:migrar"
+  output={`> tienda-api@1.0.0 bd:migrar
+> node --env-file-if-exists=.env scripts/migrar.ts
+
+Aplicada: 007-claves-api.sql`}
+>
+
+Solo la nueva: las otras seis ya estaban.
+
+</TryIt>
+
+Después:
+
+1. Crea `src/claves.ts` y `src/middleware/clave.ts`.
+2. En `src/entorno.ts`, añade `clave?: ClaveApi`. En `src/app.ts`, `app.use(cargarClave)` justo después de `app.use(cargarSesion)`.
+3. Cambia `exigirIdentidad` (`src/middleware/sesion.ts`), para que también valga una clave; `esquemaYo` (`src/esquemas.ts`), `verYo` (`src/contrato.ts`) y la ruta `/yo` (`src/v2.ts`), que ahora dicen si eres una persona o una clave. Lo que no has visto aquí, cópialo del paso.
+4. Añade a `package.json` el script `crear-clave` (la línea marcada):
+
+<ProjectCode file="tienda-api/26-jwt-claves/package.json" mark={19} />
+
+El ejemplo, el script y las pruebas vienen en la carpeta de esta lección:
+
+```sh
+cd ~/curso-backend/fase-3
+curl -O https://backenddesdecero.com/practicas/tienda-api/26-jwt-claves.tar.gz
+tar -xzf 26-jwt-claves.tar.gz
+cd tienda-api
+cp ../26-jwt-claves/ejemplos/jwt.ts ejemplos/
+cp ../26-jwt-claves/scripts/crear-clave.ts scripts/
+cp ../26-jwt-claves/test/*.ts test/
+```
+
+Si te atascas, compara con `26-jwt-claves`. `npm test` debería acabar con `fail 0`.
+
+### Un JWT, hecho, leído y roto
+
+<TryIt
+  title="4. El ejemplo, de principio a fin"
+  cmd="node ejemplos/jwt.ts"
+  output={`El token:
+eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJyb2wiOiJjbGllbnRlIiwic3ViIjoiYW5hIiwiaXNzIjoidGllbmRhLWFwaSIsImF1ZCI6InRpZW5kYS1hcGkiLCJpYXQiOjE3OTE5MzU3NDEsImV4cCI6MTc5MTkzNjY0MX0.Wx16t9ET5ufCZ5ma_vfxfFyScpSceG7b9s6Buq-XiQg
+
+Cabecera: { alg: 'HS256', typ: 'JWT' }
+Datos: {
+  rol: 'cliente',
+  sub: 'ana',
+  iss: 'tienda-api',
+  aud: 'tienda-api',
+  iat: 1791935741,
+  exp: 1791936641
+}
+Firma: 32 bytes
+
+Tal cual: vale
+Con los datos cambiados: rechazado (ERR_JWS_SIGNATURE_VERIFICATION_FAILED)
+Con alg: none y sin firma: rechazado (ERR_JOSE_ALG_NOT_ALLOWED)
+Caducado hace un minuto: rechazado (ERR_JWT_EXPIRED)
+Para otra audiencia: rechazado (ERR_JWT_CLAIM_VALIDATION_FAILED)`}
+>
+
+No necesita PostgreSQL ni el servidor. Tu token y tus horas serán otros. Fíjate en las cuatro trampas:
+
+- **Datos cambiados:** `sub` pasa de `ana` a `luis` con la firma de antes, que ya no cuadra.
+- **`alg: none`:** `none` no está en `algorithms`.
+- **Caducado:** firma buena, pero `exp` ya pasó.
+- **Otra audiencia:** firma buena, pero es para `pasarela-de-pago`.
+
+Si sale `Cannot find package 'jose'`, falta el paso 1.
+
+</TryIt>
+
+Ahora léelo sin el secreto y sin `jose`, como lo leería cualquiera que lo copie:
+
+<TryIt
+  title="5. Leerlo con base64"
+  cmd={`TOKEN=$(node ejemplos/jwt.ts | sed -n 2p)
+echo "$TOKEN" | cut -d. -f1 | base64 -d
+echo
+echo "$(echo "$TOKEN" | cut -d. -f2)=" | base64 -d
+echo`}
+  output={`{"alg":"HS256","typ":"JWT"}
+{"rol":"cliente","sub":"ana","iss":"tienda-api","aud":"tienda-api","iat":1791936340,"exp":1791937240}`}
+>
+
+`sed -n 2p` se queda con la segunda línea, el token, y `cut -d. -f1`, con la primera parte entre puntos ([lección de pipes de la Fase 1](/fase-1/pipes-y-redirecciones/)). `base64 -d` la descodifica. Cada `echo` suelto añade un salto de línea.
+
+¿Y el `=` de la segunda? base64url quita el relleno del final, y el `base64` de macOS, sin él, se come los últimos caracteres: `"exp":179193724`, sin el `0}`. En Linux sale bien con o sin `=`. A estos datos les falta justo uno.
+
+</TryIt>
+
+<SelfCheck question="Reto: HS256 es el HMAC de la Fase 4. Calcula tú la firma de un token con openssl y compárala con su tercera parte.">
+
+Pon tú el secreto y firma las dos primeras partes, con el punto en medio:
+
+```sh
+export JWT_SECRETO=el-secreto-de-la-tienda
+TOKEN=$(node ejemplos/jwt.ts | sed -n 2p)
+echo "$TOKEN" | cut -d. -f3
+printf '%s' "$(echo "$TOKEN" | cut -d. -f1-2)" | openssl dgst -sha256 -hmac "$JWT_SECRETO" -binary | base64 | tr '+/' '-_' | tr -d '='
+```
+
+```text
+tpRTdN2Id47QFizppbdAXTb9TfVHHz38N-kw0YmMi88
+tpRTdN2Id47QFizppbdAXTb9TfVHHz38N-kw0YmMi88
+```
+
+Las dos líneas son iguales. `-binary` da los 32 bytes del HMAC, y `tr` los pasa de base64 a base64url. **Con el secreto, cualquiera firma lo que quiera**: por eso vive en el `.env`, y nunca es una contraseña.
+
+</SelfCheck>
+
+### La clave de Reparto Rápido
+
+Arranca el servidor con `npm start` y abre otra terminal en la carpeta del proyecto.
+
+<TryIt
+  title="6. Crea la clave"
+  cmd={`npm run crear-clave -- "Reparto Rápido"`}
+  output={`> tienda-api@1.0.0 crear-clave
+> node --env-file-if-exists=.env scripts/crear-clave.ts Reparto Rápido
+
+Clave 1, para «Reparto Rápido»:
+tienda_oRvHGjxjVpyje4LLXtvfO0smsuVPShwYa7Q_6fqHJEs
+Cópiala ahora: la tienda solo guarda su hash y no te la puede volver a enseñar.`}
+>
+
+Lo que va detrás de `--` le llega al script, y las comillas hacen de `Reparto Rápido` un solo nombre. Tu clave será otra: cópiala.
+
+</TryIt>
+
+<TryIt
+  title="7. Quién soy, con la clave"
+  cmd={`CLAVE=tienda_oRvHGjxjVpyje4LLXtvfO0smsuVPShwYa7Q_6fqHJEs
+curl -s -w '\\n' -H "Authorization: Bearer $CLAVE" localhost:3000/v2/yo`}
+  output={`{"tipo":"clave","id":1,"nombre":"Reparto Rápido"}`}
+>
+
+Pon tu clave detrás de `CLAVE=`. La tienda reconoce a un programa, no a una persona: `tipo` es `clave`. Si sale `401`, la variable está vacía o le falta un carácter.
+
+</TryIt>
+
+<TryIt
+  title="8. Con una clave falsa"
+  cmd={`curl -s -i -H 'Authorization: Bearer tienda_oRvHGjxjVpyje4LLXtvfO0smsuVPShwYa7Q_6fqHJEx' localhost:3000/v2/yo`}
+  output={`HTTP/1.1 401 Unauthorized
+content-type: application/problem+json
+vary: Origin
+www-authenticate: Bearer realm="tienda-api"
+x-request-id: c604a4e5-a675-41ac-8fbf-dd6e3ca9d06d
+content-length: 121
+Date: Tue, 13 Oct 2026 23:56:43 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"type":"about:blank","title":"Unauthorized","status":401,"detail":"Inicia sesión, o identifícate con tu clave de API"}`}
+>
+
+La misma clave con la última letra cambiada: `401`, y `www-authenticate` dice cómo identificarse. La tienda no cuenta si se parece a una buena: solo «no sé quién eres».
+
+</TryIt>
+
+<TryIt
+  title="9. Lo que guarda la tienda"
+  cmd={`psql -d tienda -c "SELECT id, nombre, encode(hash, 'hex') AS hash, usada_en FROM claves_api;"
+printf '%s' "$CLAVE" | shasum -a 256`}
+  output={` id |     nombre     |                               hash                               |           usada_en
+----+----------------+------------------------------------------------------------------+-------------------------------
+  1 | Reparto Rápido | 78abd27a4bd57adf98424194ddaabeb9fe16df2b1fd3e9f4716464d0855d3919 | 2026-10-13 23:56:38.798764+00
+(1 row)
+
+78abd27a4bd57adf98424194ddaabeb9fe16df2b1fd3e9f4716464d0855d3919  -`}
+>
+
+`encode(hash, 'hex')` escribe los bytes en hexadecimal: el SHA-256 de tu clave, el mismo que calcula `shasum`. **La clave no está en ninguna parte**, y quien copie la tabla no puede usarla. `usada_en` es la hora del paso 7.
+
+Para anular la clave basta con borrar su fila: la siguiente petición recibe `401`. Es lo que un JWT no puede hacer.
+
+</TryIt>
+
+## Ya lo has visto
+
+- **«Iniciar sesión con Google».** La web recibe de Google un JWT firmado con su clave privada: el `id_token` de la lección 4.
+- **Una cabecera que empieza por `eyJ`.** En la pestaña *Network* de DevTools, muchas webs envían `Authorization: Bearer eyJ…`: un JWT, que lees con `base64` como aquí. No lo pegues en una web que «descodifica tokens»: [un token real no se enseña](/fase-2/cabeceras-http/#authorization-quién-eres).
+- **Las claves de los servicios que usas.** Un servicio de mapas o de pagos te da una clave, y te la enseña una sola vez.
+
+## Errores comunes
+
+- **Meter en el JWT lo que nadie debe leer.** Va en base64url, no cifrado.
+- **Dejar que el token elija el algoritmo, o leerlo sin comprobarlo.** Fija `algorithms` y usa `jwtVerify`, nunca `decodeJwt`, para decidir.
+- **Usar JWT de días como sesión.** No se pueden anular. Para personas en un navegador, una sesión.
+- **Un secreto corto, o el mismo para dos cosas.** 32 bytes al azar, uno por uso: no reutilices el `WEBHOOK_SECRET`.
+- **La clave de API en la URL o en el frontend.** Las URL acaban en los logs, y el JavaScript de una página lo lee cualquiera. Va en `Authorization`, desde un servidor.
+- **Guardar la clave tal cual.** Guarda su hash, y enséñala una sola vez.
+
+## Resumen
+
+- Un JWT son tres partes en base64url: cabecera, datos y firma. Está firmado, no cifrado: cualquiera lo lee.
+- HS256 firma con un secreto compartido, un HMAC; RS256 y ES256, con una clave privada que se comprueba con la pública.
+- Comprobar es mirar la firma con un algoritmo fijo, `exp`, `iss` y `aud`. `alg: none` y leer sin comprobar son los fallos clásicos.
+- Un JWT no se puede anular antes de `exp`. Sesiones para personas en un navegador; JWT entre servicios y como `id_token`.
+- Un programa se identifica con una clave de API: larga, al azar, guardada como hash, enviada en `Authorization: Bearer` y anulada borrándola.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Un compañero mete la dirección y el teléfono de la clienta en los datos del JWT de su app: «va firmado, así que está protegido». ¿Qué le dices?"
+  review="Firmado, no cifrado"
+>
+
+<QuizOption text="Que tiene razón: sin el secreto, nadie puede leer los datos de un JWT.">
+
+El secreto hace falta para firmar, no para leer. Los datos van en base64url, y los leíste con `base64`, sin secreto.
+
+</QuizOption>
+
+<QuizOption text="Que cualquiera que tenga el token puede leerlos: la firma impide cambiarlos, no verlos." correct>
+
+La firma garantiza quién lo emitió y que no ha cambiado. Lo que no deba ver quien porte el token no va dentro.
+
+</QuizOption>
+
+<QuizOption text="Que solo los puede leer el navegador de la clienta, porque es el único que tiene el token.">
+
+Lo tiene también quien lo copie de un log, de la red o de localStorage. Y desde ahí, se lee con una orden.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Alguien envía a una API un token con alg: none en la cabecera, sub: luis en los datos y la firma vacía, y la API le deja entrar como Luis. ¿Dónde está el fallo?"
+  review="Lo que sale mal"
+>
+
+<QuizOption text="En el secreto de la API: era demasiado corto, y lo han adivinado.">
+
+Con `alg: none` no hace falta ningún secreto: el token dice que no lleva firma. El secreto ni se usa.
+
+</QuizOption>
+
+<QuizOption text="En el token: ha caducado, y una biblioteca deja de mirar la firma de los tokens caducados.">
+
+Ninguna biblioteca hace eso. La caducidad y la firma se comprueban por separado, y las dos tienen que estar bien.
+
+</QuizOption>
+
+<QuizOption text="En la API: acepta el algoritmo que dice el token, en vez de fijarlo ella." correct>
+
+Quien comprueba decide el algoritmo, como `algorithms: ['HS256']` en el ejemplo, y `none` no está en la lista.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La tienda da a sus clientes un JWT que dura una semana. A Carmen le roban el portátil con la sesión abierta. ¿Qué puede hacer la tienda hoy mismo?"
+  review="Sesiones o JWT"
+>
+
+<QuizOption text="Nada, si no guarda una lista de tokens anulados y la consulta en cada petición." correct>
+
+El token es válido hasta su `exp`: su firma no cambia. Anularlo antes exige una tabla y una consulta, como una sesión.
+
+</QuizOption>
+
+<QuizOption text="Borrar el token de Carmen de la base de datos.">
+
+Un JWT no está en la base de datos: esa es su promesa. Con una sesión, borrar la fila sí bastaría.
+
+</QuizOption>
+
+<QuizOption text="Cambiar desde el servidor el exp del token robado a una fecha que ya haya pasado.">
+
+El token está en el portátil robado, no en el servidor, y cambiar sus datos rompería la firma.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="En DevTools ves Authorization: Bearer eyJhbGciOiJSUzI1NiJ9.eyJzdWIiOiI0MiJ9.k3Hq… ¿Qué puedes saber sin ninguna clave?"
+  review="Tres partes separadas por puntos"
+>
+
+<QuizOption text="Nada: un token RS256 solo se lee con la clave pública de quien lo firmó.">
+
+La clave pública sirve para comprobar la firma, no para leer. Cabecera y datos son base64url.
+
+</QuizOption>
+
+<QuizOption text="Lo que dicen la cabecera y los datos: que se firmó con RS256 y que sub es 42." correct>
+
+Son JSON en base64url: `base64 -d` los descodifica. Lo que no puedes es fabricar otra firma.
+
+</QuizOption>
+
+<QuizOption text="Todo, también la clave privada: base64 descodifica la firma y de ella sale la clave.">
+
+La firma descodificada son bytes sin sentido. De una firma no se saca la clave privada.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La tienda guarda las contraseñas con argon2 y las claves de API con SHA-256. ¿Por qué no argon2 también para las claves?"
+  review="Las claves de API: cómo se identifica un programa"
+>
+
+<QuizOption text="Porque SHA-256 se puede deshacer, y así la tienda puede volver a enseñar la clave.">
+
+Ningún hash se deshace, tampoco SHA-256. Por eso `crear-clave` la enseña una sola vez.
+
+</QuizOption>
+
+<QuizOption text="Porque argon2 solo funciona con los textos cortos que escribe una persona, como una contraseña.">
+
+argon2 calcula el hash de cualquier texto. La razón es otra: lo que se puede probar.
+
+</QuizOption>
+
+<QuizOption text="Porque de una clave al azar no hay lista de probables, y un hash lento frenaría cada petición." correct>
+
+argon2 es lento para frenar a quien prueba contraseñas probables. Con 256 bits al azar no hay nada que probar.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Reparto Rápido propone enviar su clave en la URL, /v2/pedidos?clave=tienda_…, porque es más fácil de programar. ¿Qué le contestas?"
+  review="Errores comunes"
+>
+
+<QuizOption text="Que va en Authorization: Bearer, porque las URL se apuntan en logs e historiales." correct>
+
+Servidores, proxies y navegadores guardan las URL completas. Una cabecera `Authorization` no se suele apuntar.
+
+</QuizOption>
+
+<QuizOption text="Que da igual: con HTTPS la URL va cifrada y no queda guardada en ningún sitio.">
+
+HTTPS la cifra por el camino, pero el servidor la recibe entera y la escribe en su log.
+
+</QuizOption>
+
+<QuizOption text="Que mejor en una cookie, porque los programas solo pueden enviar secretos en cookies.">
+
+Un programa envía las cabeceras que quiera, y `Authorization` es la del estándar. La cookie es cosa del navegador.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [RFC 7519: JSON Web Token](https://www.rfc-editor.org/rfc/rfc7519.html) (en inglés): el estándar.
+- [RFC 8725: JSON Web Token Best Current Practices](https://www.rfc-editor.org/rfc/rfc8725.html) (en inglés): los ataques conocidos y cómo evitarlos.
+- [RFC 6750: Bearer Token Usage](https://www.rfc-editor.org/rfc/rfc6750.html) (en inglés): `Authorization: Bearer` y `WWW-Authenticate`.
+- [Stop using JWT for sessions](http://cryto.net/~joepie91/blog/2016/06/13/stop-using-jwt-for-sessions/) (Sven Slootweg, en inglés): por qué un JWT no es una sesión mejor.
+- [REST Security Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/REST_Security_Cheat_Sheet.html) (OWASP, en inglés): JWT y claves de API.
+- [Behind GitHub's new authentication token formats](https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/) (GitHub, en inglés): por qué sus claves llevan prefijo.
+- [jose](https://github.com/panva/jose) (en inglés): la biblioteca del ejemplo.
