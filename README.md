@@ -25,7 +25,7 @@ Twelve phases, from 0 to 11, each made of lessons with diagrams and something ha
 
 Every available phase is in both languages. The interactive parts include a step-by-step TCP handshake, a DNS lookup, public and private keys with Web Crypto, a CORS lab, PostgreSQL running in your browser and a Docker layer visualiser.
 
-From Phase 3 on, the course builds one project with you: the API of a small online shop, from a bare Node.js server to a Docker Compose stack with PostgreSQL and Redis. It lives in [`projects/`](projects/), once per language ([`tienda-api`](projects/tienda-api/) in Spanish, [`shop-api`](projects/shop-api/) in English), with one folder per lesson showing the project as it stands at the end of that lesson.
+From Phase 3 on, the course builds one project with you: the API of a small online shop, from a bare Node.js server to a Docker Compose stack with PostgreSQL and Redis. It lives in [`projects/`](projects/), once per language ([`tienda-api`](projects/tienda-api/) in Spanish, [`shop-api`](projects/shop-api/) in English), with one folder per project step showing the project as it stands at the end of the lesson that builds it.
 
 It is written by a frontend developer learning backend while building it.
 
@@ -64,11 +64,11 @@ web/            the site
   src/content/  lessons (Spanish at the root, English in en/), glossary and UI texts
   src/          components, playgrounds and the build's logic
   e2e/          accessibility tests in the browser
-projects/       the guided projects, one folder per lesson: tienda-api/ (Spanish) and shop-api/ (English)
+projects/       the guided projects, one folder per step: tienda-api/ (Spanish) and shop-api/ (English)
 docs/           the style guide for writing lessons
 ```
 
-GitHub Actions checks every pull request: format, types, unused code, tests, build and accessibility for the site, and every step of the guided projects in Node 26 against PostgreSQL and Redis, including building their Docker images.
+GitHub Actions checks every pull request: format, types, unused code, tests, build and accessibility for the site, and every step of the guided projects in Node 26 against PostgreSQL and Redis, including building the Docker image of every step that has a `Dockerfile`.
 
 ## License
 
