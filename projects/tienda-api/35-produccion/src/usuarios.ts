@@ -19,15 +19,18 @@ export interface Usuario {
 // Crea la cuenta con el hash de la contraseña. El email repetido lo detecta PostgreSQL, con el
 // índice único de la migración 005 (23505): comprobarlo antes con un SELECT no bastaría, porque dos
 // altas a la vez podrían pasar las dos la comprobación. Drizzle envuelve el error: va en cause.
+// El rol es cliente salvo que se pida otro (crear-admin pide admin): va en el mismo INSERT, así la
+// cuenta nunca existe, ni un instante, con un rol que no es el suyo.
 export async function crearUsuario(
   email: string,
   contrasena: string,
+  rol: Rol = 'cliente',
 ): Promise<{ usuario: Usuario } | { error: 'email-en-uso' }> {
   const hashContrasena = await hashear(contrasena);
   try {
     const [usuario] = await bd
       .insert(usuarios)
-      .values({ email, hashContrasena })
+      .values({ email, hashContrasena, rol })
       .returning({ id: usuarios.id, email: usuarios.email, rol: usuarios.rol });
     return { usuario: usuario! };
   } catch (error) {
