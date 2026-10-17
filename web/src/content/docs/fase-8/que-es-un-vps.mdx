@@ -1,0 +1,433 @@
+---
+translationKey: vps
+title: "Qué es un VPS y cómo alquilar un servidor"
+description: "Qué es un VPS y para qué sirve: hosting compartido, VPS o dedicado, qué da un centro de datos, precios reales, y tu primera entrada por SSH."
+sidebar:
+  label: VPS
+  order: 1
+lesson:
+  oneLiner: "Un VPS es una máquina virtual que alquilas por meses en un centro de datos: tiene su propia IP pública, un Ubuntu vacío y acceso de administrador. Le das tu clave pública al crearlo, y entras por SSH desde tu terminal."
+  objectives:
+    - Distinguir hosting compartido, VPS y servidor dedicado, y saber cuál necesita la tienda.
+    - Explicar qué te da un centro de datos que no te da la conexión de tu casa.
+    - Elegir tamaño, región e imagen de un servidor, y darle tu clave pública SSH.
+    - Entrar en tu servidor por SSH, y saber por qué entrar como root es solo la primera vez.
+  prerequisites: [phase-8, ssh]
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Imagina que Ana tiene un ordenador viejo en casa y decide montar en él la tienda: instala Docker, arranca `docker compose up` y la tienda funciona. Le pasa la dirección a Marta, que la abre desde su móvil, fuera de casa. No carga.
+
+No es culpa de Docker ni de la tienda. Es la red de casa: como viste en la [Fase 0](/fase-0/ip-puertos-y-sockets/#cómo-sale-tu-ip-privada-a-internet-nat), el router tira las conexiones que nadie ha empezado desde dentro. Y aunque Ana abriera un puerto, la tienda se apagaría cada vez que se fuera la luz, o su operador cambiara su IP.
+
+Por eso casi todas las webs viven en servidores alquilados, en edificios hechos para eso. **Esta lección te enseña a alquilar uno**, y a entrar en él por primera vez.
+
+## La analogía
+
+<Analogy>
+
+Piensa en dónde vivir en una ciudad. Puedes alquilar una habitación en un piso compartido: barata, pero con las normas de la casa, y no puedes cambiar ni un mueble. Puedes alquilar un apartamento: la llave es tuya, y dentro decides tú. O puedes comprarte una casa entera.
+
+Son las tres formas de tener un servidor: el **hosting compartido** es la habitación, el **VPS** es el apartamento y el **servidor dedicado** es la casa. El edificio, con su portero, su electricidad y su agua, es el **centro de datos**.
+
+<div slot="limits">
+
+- Los vecinos de un apartamento no entran en el tuyo, pero comparten el ascensor. En un VPS compartes el procesador y el disco: si un vecino los usa mucho, tu servidor puede ir algo más lento.
+- Un apartamento no se agranda. Un VPS sí, desde el panel, en unos minutos.
+- El casero no debería entrar en tu casa. El proveedor tiene el ordenador físico en su edificio, y técnicamente podría leer tu disco: alquilar un servidor es confiar en él.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Tres formas de alquilar un servidor
+
+Las tres se alquilan por meses, pero te dan cosas muy distintas:
+
+| | Hosting compartido | VPS | Servidor dedicado |
+|---|---|---|---|
+| Qué te dan | Una carpeta y un panel para subir tu web | Una máquina virtual entera, con su sistema | Un ordenador físico entero |
+| Entras como administrador | No | Sí, por SSH | Sí, por SSH |
+| Puedes instalar Docker, PostgreSQL o tu API | No: solo lo que el panel ofrece, casi siempre PHP y WordPress | Sí | Sí |
+| Compartes el ordenador físico | Con cientos de webs | Con otros VPS | No |
+| Precio orientativo | Desde unos pocos euros al mes | Desde unos pocos euros al mes | Decenas de euros al mes o más |
+
+**La tienda necesita un VPS.** Docker, PostgreSQL, Redis y una API que se queda escuchando solo los instala quien administra el sistema. Un dedicado es para cuando un VPS se queda pequeño, y la tienda está lejos de eso.
+
+### Un VPS es una máquina virtual en un centro de datos
+
+Un <Term id="vps">VPS</Term> (*Virtual Private Server*, «servidor privado virtual») es lo mismo que tu VM `curso`: una <Term id="virtual-machine">máquina virtual</Term> con su Ubuntu, sus usuarios y sus ficheros. La diferencia es dónde está.
+
+- **`curso` vive en tu portátil.** Multipass reparte tu procesador y tu memoria entre tu Mac (o tu Windows) y la VM.
+- **Un VPS vive en un ordenador enorme de un proveedor,** con decenas de VPS de otros clientes. Un programa, el hipervisor, le da a cada uno su parte de procesador, memoria y disco, y no deja que uno vea a otro.
+
+Un VPS **empieza vacío**, sin Docker, sin nginx y sin tu tienda, como te avisó la [Fase 7](/fase-7/): todo lo instalas tú.
+
+### Lo que da un centro de datos que no da tu casa
+
+Ese ordenador enorme está en un <Term id="data-center">centro de datos</Term>: un edificio hecho para que los servidores no se apaguen nunca y se llegue a ellos desde cualquier parte.
+
+| | Tu casa | Un centro de datos |
+|---|---|---|
+| La IP | Una <Term id="public-ip">IP pública</Term> para todo tu wifi, compartida por <Term id="nat">NAT</Term>, y a veces cambia | Una IP pública fija para cada servidor |
+| Conexiones que llegan de fuera | El router las tira | Llegan al servidor |
+| Si se va la luz | Se apaga todo | Baterías y generadores |
+| La conexión | Rápida para bajar, más lenta para subir | Rápida en los dos sentidos, y por varias rutas |
+| Quién lo vigila | Nadie | Personal, cámaras y control de acceso |
+
+La fila que más importa es la primera. **Con una IP pública propia, una conexión desde internet llega directa a tu servidor**, sin un router de casa en medio que la tire. Es lo que la Fase 0 te prometió:
+
+```mermaid
+flowchart TB
+    A["Tu terminal<br/>ana@portatil, IP privada 192.168.1.133"] -->|sale por el NAT de tu router| B["Tu router<br/>IP pública de tu casa"]
+    B -->|internet| C["El centro de datos<br/>su red, conectada por varias rutas"]
+    C -->|puerto 22| D["Tu VPS<br/>IP pública 203.0.113.10"]
+```
+
+Al revés no funciona: el VPS no puede empezar una conexión a tu portátil, porque tu router la tiraría.
+
+### Proveedores y precios
+
+Algunos proveedores de VPS conocidos en Europa son Hetzner, DigitalOcean, OVHcloud y Scaleway. Los precios cambian a menudo; estos eran los planes más baratos de dos de ellos el 17 de octubre de 2026:
+
+| Proveedor y plan | Procesadores | Memoria | Disco | Precio al mes |
+|---|---|---|---|---|
+| Hetzner Cloud CX23 | 2 | 4 GB | 40 GB | 5,49 €, sin IVA y sin la IPv4, que se paga aparte |
+| DigitalOcean Basic | 1 | 512 MB | 10 GB | 4 dólares |
+
+El de Hetzner está en vigor desde el 15 de junio de 2026, según su [página de cambios de precio](https://docs.hetzner.com/general/infrastructure-and-availability/price-adjustment/). Sus procesadores son **compartidos** con otros clientes, como en la analogía: para una tienda pequeña, sobra. Ningún enlace de esta lección lleva comisión.
+
+### Elegir tamaño, región e imagen
+
+Al crear un VPS, el panel del proveedor te hace tres preguntas.
+
+**El tamaño:** procesadores, memoria y disco. Para la tienda, la memoria es lo que manda: PostgreSQL, Redis, la API, nginx y Docker necesitan unos **2 GB**. Con 512 MB, el sistema empieza a matar procesos. Si te quedas corto, puedes pasar a un plan mayor más tarde.
+
+**La región:** la ciudad del centro de datos. Elige la más cercana a quienes van a usar tu web: cada petición va hasta allí y vuelve, y con un servidor lejano cada <Term id="rtt">RTT</Term> es más largo.
+
+**La imagen:** el sistema operativo que viene instalado. Elige **Ubuntu 26.04 LTS**, el de este curso. LTS (*Long Term Support*) quiere decir que recibe actualizaciones de seguridad durante cinco años, según el [ciclo de versiones de Ubuntu](https://ubuntu.com/about/release-cycle).
+
+### Tu clave pública, antes de que exista el servidor
+
+En la [Fase 1](/fase-1/que-es-ssh/) metiste tu clave pública en el `authorized_keys` de `curso`, y así entraste sin contraseña. En un VPS es igual, con un cambio: **le das la clave al proveedor antes de crear el servidor**, y la primera vez que arranca, un programa, cloud-init, la escribe en el `authorized_keys` de `root`.
+
+Lo que pegas en el panel es tu clave pública, la línea de `id_ed25519.pub`. La enseñas con `cat ~/.ssh/id_ed25519.pub`, y empieza por `ssh-ed25519`. La privada no sale nunca de tu ordenador.
+
+Si no le das ninguna clave, algunos proveedores, como [Hetzner](https://docs.hetzner.com/cloud/servers/getting-started/connecting-to-the-server/), te envían por correo una contraseña de `root`: justo lo que no quieres, una contraseña que cualquiera puede intentar adivinar.
+
+### La primera vez entras como root, y es la última
+
+Cuando el servidor arranca, el panel te enseña su IP pública. En Hetzner y DigitalOcean entras como `root`, el administrador de Linux:
+
+```sh
+ssh root@203.0.113.10
+```
+
+El prompt acaba en `#` en lugar de `$`: es la forma de Linux de recordarte que eres <Term id="root">root</Term> y que nada te frena. Otros proveedores, como AWS, te crean un usuario `ubuntu` con `sudo`, como el de tu VM.
+
+Esa primera entrada como `root` debería ser la última, por tres razones:
+
+- **Un error o una clave robada alcanzan a todo el servidor.** Como `root`, un `rm` en la carpeta equivocada borra el sistema, y quien tenga tu clave lo tiene todo.
+- **Los bots prueban `root` antes que nada.** Es el único usuario que existe en todos los Linux, y programas de todo el mundo intentan entrar con él en cada IP pública, desde el primer minuto.
+- **No queda rastro de quién hizo qué.** Si varias personas entran como `root`, el registro no las distingue.
+
+En la lección 2 usarás esta primera sesión para crear tu propio usuario con `sudo` y cerrar la puerta a `root`. Después, entrarás siempre con tu usuario.
+
+## Pruébalo
+
+El objetivo: tener un servidor y entrar en él por SSH con tu clave de la Fase 1, sin contraseña. Haz el camino gratis; el de pago, solo si has decidido alquilar un VPS.
+
+### Camino gratis: entra en curso por SSH
+
+Tu servidor es la VM `curso`, la que preparaste en la [introducción](/fase-8/). Primero, su dirección. En la terminal de tu ordenador (en Windows, en PowerShell), escribe `multipass info curso` y busca la línea `IPv4`: es la IP de tu VM en la red que Multipass crea dentro de tu ordenador.
+
+Las salidas son de una VM con la IP `192.168.5.15`. **Usa la tuya.**
+
+Si ya hiciste los ejercicios de SSH de la [Fase 1](/fase-1/que-es-ssh/), tu clave ya está en la VM: salta al paso siguiente. Si creaste `curso` de nuevo en la introducción, o estás en Windows, dásela ahora:
+
+<Aside type="note" title="En Windows">
+
+En las fases anteriores, tu clave SSH estaba dentro de WSL. Para entrar en la VM de Multipass, usa el `ssh` de PowerShell, que viene con Windows 10 y 11, con una clave propia: créala en PowerShell con la misma orden de la Fase 1, `ssh-keygen -t ed25519 -C "ana@portatil"`. Se guarda en `C:\Users\ana\.ssh`. Después, dásela a la VM con la orden de la pestaña Windows de abajo.
+
+</Aside>
+
+<TryIt
+  title="Dale tu clave pública a la VM"
+  cmd="cat ~/.ssh/id_ed25519.pub | multipass exec curso -- tee -a /home/ubuntu/.ssh/authorized_keys"
+  windows="Get-Content ~\.ssh\id_ed25519.pub | multipass exec curso -- tee -a /home/ubuntu/.ssh/authorized_keys"
+  output="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP9eqZSqAK1+gLQELSOqRs4afYZLCCuOoyKCD+NJvbBo ana@portatil"
+>
+
+Es lo que un proveedor hace por ti al crear un VPS. `multipass exec curso --` ejecuta `tee` dentro de la VM, y `tee -a` añade tu clave al `authorized_keys` y la escribe en la pantalla. **Fíjate en que empieza por `ssh-ed25519`:** si empieza por `-----BEGIN`, es tu clave privada, y no debe salir de tu ordenador.
+
+Si responde `No such file or directory` por `id_ed25519.pub`, no tienes clave: créala con `ssh-keygen -t ed25519 -C "ana@portatil"`, como en la Fase 1. Tu clave será otra.
+
+</TryIt>
+
+Ahora entra, con la IP de tu VM:
+
+<TryIt
+  title="Entra en tu servidor"
+  cmd="ssh ubuntu@192.168.5.15"
+  windows="ssh ubuntu@192.168.5.15"
+  output={`Welcome to Ubuntu 26.04 LTS (GNU/Linux 7.0.0-28-generic aarch64)
+…
+  System load:  0.1                Processes:             126
+  Usage of /:   47.5% of 13.49GB   Users logged in:       0
+  Memory usage: 28%                IPv4 address for eth0: 192.168.5.15
+  Swap usage:   0%
+…
+179 updates can be applied immediately.
+142 of these updates are standard security updates.
+To see these additional updates run: apt list --upgradable
+…
+ubuntu@curso:~$`}
+>
+
+Ni contraseña ni frase: **tu clave abrió la puerta.** Fíjate en tres cosas del saludo:
+
+- **`IPv4 address for eth0`** es la misma IP de `multipass info`, vista desde dentro.
+- **`179 updates`**: una imagen de Ubuntu envejece desde que se publica, y un servidor nuevo ya trae actualizaciones de seguridad pendientes. La lección 2 hace que se instalen solas.
+- **El prompt `ubuntu@curso:~$`**: estás en el servidor, sin escritorio ni ratón, como te avisó la [lección de la terminal](/fase-1/comandos-basicos-terminal/). Lo que escribas se ejecuta allí.
+
+Si es la primera vez que entras con esa IP, antes del saludo `ssh` te pregunta por la huella del servidor, como en la Fase 1. Compárala con la que te da Multipass, con `multipass exec curso -- ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub`, y responde `yes` si es la misma.
+
+Tu VM de la Fase 1 dirá `Ubuntu 24.04`, y tus números serán otros. Si responde `Permission denied (publickey)`, tu clave no está en la VM: repite el paso anterior. Si responde `Connection timed out`, la IP no es la de tu VM, o la VM está parada: mira `multipass info curso`.
+
+</TryIt>
+
+Ya dentro, pregúntale a la VM sus direcciones:
+
+<TryIt
+  title="Las direcciones de tu servidor"
+  cmd="hostname -I"
+  output="192.168.5.15 172.17.0.1"
+>
+
+`hostname -I` escribe las IP del servidor, separadas por espacios:
+
+- **`192.168.5.15`** es la de la red con tu ordenador, por la que acabas de entrar.
+- **`172.17.0.1`** es la de la red de Docker, la que creó el motor que instalaste en la introducción, como viste en la [Fase 7](/fase-7/redes-docker/).
+
+Las dos son <Term id="private-ip">IP privadas</Term>: desde internet no se llega a ninguna. En un VPS, entre ellas estaría la IP pública que te dio el proveedor. Sal con `exit`.
+
+</TryIt>
+
+Ahora `ssh curso` también funciona, si en la Fase 1 creaste el apodo en `~/.ssh/config` con la IP de tu VM. Si la IP ha cambiado, cámbiala allí.
+
+### Camino de pago: crea tu servidor
+
+Estos son los pasos en casi cualquier proveedor. Los nombres de los botones cambian de uno a otro; la [guía de Hetzner](https://docs.hetzner.com/cloud/servers/getting-started/creating-a-server/) y la [de DigitalOcean](https://docs.digitalocean.com/products/droplets/how-to/create/) los enseñan con capturas.
+
+<Steps>
+
+1. **Crea una cuenta** en el proveedor y añade una forma de pago.
+
+2. **Sube tu clave pública.** En la sección de claves SSH del panel, pega la salida de `cat ~/.ssh/id_ed25519.pub`. En Windows, en el camino de pago puedes seguir en WSL, con tu clave de la Fase 1: un VPS está en internet, y WSL llega a él como cualquier programa.
+
+3. **Crea el servidor:** la región más cercana a tus usuarios, la imagen **Ubuntu 26.04**, un plan con al menos 2 GB de memoria, una IPv4 pública y tu clave SSH marcada. Ponle un nombre corto, como `tienda`.
+
+4. **Apunta la IP pública** que te da el panel cuando el servidor arranca.
+
+5. **Entra como `root`** con `ssh root@` y tu IP, como en el ejemplo de arriba con `203.0.113.10`. Responde `yes` a la pregunta de la huella: desde aquí, `known_hosts` vigila que no cambie.
+
+6. **Quédate solo lo justo.** Comprueba que estás dentro con `hostname -I`, que enseña, entre otras, tu IP pública, y sal con `exit`. No instales nada todavía: la lección 2 empieza en esta sesión de `root` y cierra el servidor antes que nada.
+
+</Steps>
+
+Mientras exista, el servidor se cobra, **aunque esté apagado**. Si dejas el curso a medias, bórralo desde el panel.
+
+## Ya lo has visto
+
+- **Tu VM `curso`** es un VPS en pequeño: una máquina virtual con Ubuntu en la que entras por SSH. Solo cambia el edificio.
+- **Un servidor de Minecraft alquilado** es una parte de un servidor en un centro de datos, con su IP pública, para que tus amigos lleguen a tu partida. Tu tienda necesita lo mismo.
+- **La web de un blog con WordPress** suele estar en un hosting compartido: un panel para subir ficheros, sin terminal ni administrador.
+- **Esta misma web** no está en un VPS: la sirve Cloudflare desde sus centros de datos, sin un servidor que administres. Es otro modelo, el de la lección 7.
+
+## Errores comunes
+
+- **Elegir el plan más barato sin mirar la memoria.** Con 512 MB, PostgreSQL, Redis y la API no caben, y el sistema mata procesos. Mira la memoria antes que el precio.
+- **Pegar la clave privada en el panel.** La línea correcta empieza por `ssh-ed25519`. Si has pegado algo que empieza por `-----BEGIN OPENSSH PRIVATE KEY-----`, borra esa clave del panel, crea un par nuevo y no vuelvas a usar el viejo.
+- **Recrear el servidor y que `ssh` se niegue.** Si borras un VPS (o la VM) y el nuevo tiene la misma IP, su clave de servidor es otra, y `ssh` responde `REMOTE HOST IDENTIFICATION HAS CHANGED!`. Si sabes que lo has recreado tú, borra la vieja con `ssh-keygen -R` y la IP, como en los [errores comunes de la Fase 1](/fase-1/que-es-ssh/#errores-comunes).
+
+## Resumen
+
+- Un hosting compartido te da una carpeta y un panel; un VPS, una máquina virtual entera con acceso de administrador; un dedicado, un ordenador físico. La tienda necesita un VPS.
+- Un centro de datos le da a tu servidor lo que tu casa no tiene: una IP pública fija a la que llegan las conexiones de fuera, electricidad de reserva y una conexión rápida en los dos sentidos.
+- Al crear un VPS eliges tamaño (para la tienda, unos 2 GB de memoria), región (cerca de tus usuarios) e imagen (Ubuntu 26.04 LTS), y le das tu clave pública.
+- La primera entrada es como `root`, y debería ser la última: en la lección 2 creas tu usuario y cierras la puerta a `root`.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Ana monta la tienda en un ordenador viejo de su casa. Desde su wifi funciona, pero Marta, desde el móvil con datos, no llega. ¿Qué pasa?"
+  review="Lo que da un centro de datos que no da tu casa"
+>
+
+<QuizOption text="Los operadores bloquean el puerto 3000 en las conexiones móviles, y Marta debería probar desde otra red.">
+
+El móvil de Marta abre cualquier web. El problema está en la red de Ana.
+
+</QuizOption>
+
+<QuizOption text="El router de Ana tiene la IP pública y tira las conexiones que nadie ha empezado desde dentro." correct>
+
+Es el NAT de la Fase 0: el ordenador de Ana tiene una IP privada, y el router no sabe a quién darle una conexión que llega de fuera. En un centro de datos, el servidor tiene su propia IP pública y las conexiones le llegan.
+
+</QuizOption>
+
+<QuizOption text="Un ordenador de casa no puede hacer de servidor: hace falta un hardware especial que solo tienen los centros de datos.">
+
+Cualquier ordenador puede ejecutar un servidor. Lo que falta en casa es una IP pública a la que lleguen las conexiones.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un amigo te ofrece su hosting compartido, donde tiene su WordPress, para subir la tienda (API, PostgreSQL y Redis con Docker). ¿Sirve?"
+  review="Tres formas de alquilar un servidor"
+>
+
+<QuizOption text="Sí, si el plan incluye una base de datos: lo demás se sube como cualquier web.">
+
+La API, Redis y Docker necesitan instalarse y quedarse en marcha, y eso solo lo hace un administrador del sistema.
+
+</QuizOption>
+
+<QuizOption text="Sí: hosting y VPS son lo mismo con distinto nombre, según el proveedor.">
+
+En un hosting compartido no eres administrador: compartes el sistema con cientos de webs y solo usas lo que ofrece el panel. En un VPS, el sistema entero es tuyo.
+
+</QuizOption>
+
+<QuizOption text="No: instalar Docker y la API exige administrar el sistema." correct>
+
+Un hosting compartido te da una carpeta y un panel pensados para PHP y WordPress. La tienda necesita una máquina entera, aunque sea virtual: un VPS.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Terminas la fase y apagas tu VPS de 5,49 € al mes desde el panel, sin borrarlo. ¿Qué pagas el mes siguiente?"
+  review="Camino de pago: crea tu servidor"
+>
+
+<QuizOption text="Lo mismo: el servidor sigue ocupando su disco y su IP, y se cobra mientras exista." correct>
+
+Lo que alquilas es el sitio en el ordenador del proveedor, no las horas de procesador. Para dejar de pagar, hay que borrarlo.
+
+</QuizOption>
+
+<QuizOption text="Nada: los proveedores solo cobran las horas que el servidor está encendido.">
+
+Apagado, el disco y la IP siguen reservados para ti. Solo borrarlo los libera.
+
+</QuizOption>
+
+<QuizOption text="La mitad: apagado, el servidor solo gasta su disco, y el disco es la mitad del precio.">
+
+Proveedores como Hetzner o DigitalOcean no tienen una tarifa para servidores apagados: cobran el plan entero mientras exista.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Tus clientes están en España. El proveedor te ofrece un centro de datos en Singapur, algo más barato. ¿Qué cambia?"
+  review="Elegir tamaño, región e imagen"
+>
+
+<QuizOption text="Nada que se note: por internet, los datos viajan casi a la velocidad de la luz y la distancia no importa.">
+
+Cada petición es un viaje de ida y vuelta, y con medio mundo de por medio cada uno tarda bastante más.
+
+</QuizOption>
+
+<QuizOption text="Que los clientes de España no pueden llegar a un servidor fuera de Europa.">
+
+Una IP pública se alcanza desde cualquier parte de internet. El problema no es llegar, es lo que tarda.
+
+</QuizOption>
+
+<QuizOption text="Cada petición viaja hasta Asia y vuelve, así que la tienda tarda más en responder a cada cliente." correct>
+
+Es el RTT de la Fase 0: un servidor lejano alarga cada ida y vuelta. Por eso se elige la región más cercana a los usuarios.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Entras en tu VPS nuevo con ssh root@203.0.113.10 y todo funciona. ¿Por qué no seguir entrando como root?"
+  review="La primera vez entras como root, y es la última"
+>
+
+<QuizOption text="Porque las sesiones de root no van cifradas, y cualquiera podría leerlas por el camino.">
+
+SSH cifra todas las sesiones igual, sea cual sea el usuario. El problema de `root` no es el cifrado, es lo que puede hacer.
+
+</QuizOption>
+
+<QuizOption text="Porque root lo puede todo: un error o una clave robada alcanzan a todo el servidor." correct>
+
+Además, los bots prueban `root` antes que nada. Con tu usuario y `sudo`, `root` deja de ser una puerta: es la lección 2.
+
+</QuizOption>
+
+<QuizOption text="Porque el proveedor borra la clave de root al día siguiente, y tienes que crear otro usuario antes.">
+
+El proveedor no toca tu servidor después de crearlo. Cerrar `root` es una decisión tuya, para protegerte.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Has creado la VM curso de nuevo. ssh ubuntu@ y su IP responde Permission denied (publickey). ¿Qué falta?"
+  review="Tu clave pública, antes de que exista el servidor"
+>
+
+<QuizOption text="Tu clave pública en el authorized_keys de la VM nueva." correct>
+
+Una VM nueva no conoce tu clave, igual que un VPS al que no se la diste: añádela con `multipass exec` y `tee -a`. Tu par de claves sigue valiendo.
+
+</QuizOption>
+
+<QuizOption text="Un par de claves nuevo: cada par sirve para un solo servidor, y el tuyo era de la VM vieja.">
+
+Un par de claves sirve para todos los servidores que tengan tu clave pública. Con la misma entras en la VM, en GitHub y en un VPS.
+
+</QuizOption>
+
+<QuizOption text="Una IP pública: SSH no funciona con direcciones privadas como las de Multipass.">
+
+SSH funciona con cualquier IP a la que llegues, pública o privada. Con `curso` lo hiciste en la Fase 1 por su IP privada.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Servidor virtual privado](https://es.wikipedia.org/wiki/Servidor_virtual_privado), en Wikipedia.
+- [Creating a server](https://docs.hetzner.com/cloud/servers/getting-started/creating-a-server/), de la documentación de Hetzner, en inglés: cada opción del panel, de la región a cloud-init.
+- [How to create a Droplet](https://docs.digitalocean.com/products/droplets/how-to/create/), de la documentación de DigitalOcean, en inglés: lo mismo en otro proveedor.
+- [Ubuntu release cycle](https://ubuntu.com/about/release-cycle), en inglés: qué significa LTS y cuánto dura cada versión.
+- [cloud-init](https://cloudinit.readthedocs.io/en/latest/), en inglés: el programa que escribe tu clave en el primer arranque.
