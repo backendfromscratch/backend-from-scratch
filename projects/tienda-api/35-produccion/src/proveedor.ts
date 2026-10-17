@@ -5,6 +5,29 @@ import * as oidc from 'openid-client';
 import { config } from './config.ts';
 import { log } from './log.ts';
 
+// El proveedor es opcional: sin las cuatro OIDC_*, la tienda no lo ofrece (config.ts garantiza que
+// están todas o ninguna). Quien lo use tiene que preguntar antes; nada de este fichero toca los
+// ajustes si no hay proveedor.
+function ajustes() {
+  const { OIDC_EMISOR, OIDC_CLIENTE_ID, OIDC_CLIENTE_SECRETO, OIDC_VUELTA } = config;
+  if (!OIDC_EMISOR || !OIDC_CLIENTE_ID || !OIDC_CLIENTE_SECRETO || !OIDC_VUELTA) return undefined;
+  return {
+    emisor: OIDC_EMISOR,
+    clienteId: OIDC_CLIENTE_ID,
+    clienteSecreto: OIDC_CLIENTE_SECRETO,
+    vuelta: OIDC_VUELTA,
+  };
+}
+
+export const proveedorConfigurado = () => ajustes() !== undefined;
+
+// La URL de vuelta registrada en el proveedor, para las rutas que la necesitan.
+export const urlDeVuelta = () => {
+  const dato = ajustes();
+  if (!dato) throw new Error('La tienda no tiene proveedor de identidad');
+  return dato.vuelta;
+};
+
 // #region descubrir
 // Discovery: la tienda lee /.well-known/openid-configuration del proveedor, que dice dónde está
 // cada cosa (a dónde mandar a la persona, dónde cambiar el código, dónde están sus claves). Se hace
@@ -20,15 +43,17 @@ function proveedor(): Promise<oidc.Configuration> {
 }
 
 async function descubrir() {
-  const emisor = new URL(config.OIDC_EMISOR);
+  const dato = ajustes();
+  if (!dato) throw new Error('La tienda no tiene proveedor de identidad');
+  const emisor = new URL(dato.emisor);
   // Un proveedor de verdad siempre habla HTTPS, y openid-client no acepta otra cosa. El de práctica
   // (npm run proveedor) habla HTTP en tu ordenador: solo para él, y solo en localhost, se permite.
   const dePractica =
     emisor.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(emisor.hostname);
   return oidc.discovery(
     emisor,
-    config.OIDC_CLIENTE_ID,
-    config.OIDC_CLIENTE_SECRETO,
+    dato.clienteId,
+    dato.clienteSecreto,
     undefined,
     dePractica ? { execute: [oidc.allowInsecureRequests] } : undefined,
   );
@@ -56,7 +81,7 @@ export async function empezarInicio(): Promise<{ url: URL; guardado: InicioGuard
     verificador: oidc.randomPKCECodeVerifier(),
   };
   const url = oidc.buildAuthorizationUrl(await proveedor(), {
-    redirect_uri: config.OIDC_VUELTA,
+    redirect_uri: urlDeVuelta(),
     // openid: queremos saber quién es (OpenID Connect, no solo OAuth); email y profile, sus datos.
     scope: 'openid email profile',
     code_challenge: await oidc.calculatePKCECodeChallenge(guardado.verificador),

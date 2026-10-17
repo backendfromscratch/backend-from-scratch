@@ -373,7 +373,10 @@ export const inicioConProveedor = createRoute({
   path: '/sesion/proveedor',
   tags: ['Sesión'],
   summary: 'Inicia sesión con el proveedor de identidad: manda el navegador allí',
-  responses: { 302: conDestino('Al proveedor, con el state, el nonce y el reto PKCE') },
+  responses: {
+    302: conDestino('Al proveedor, con el state, el nonce y el reto PKCE'),
+    404: conProblema('La tienda no tiene proveedor de identidad'),
+  },
 });
 
 export const vueltaDelProveedor = createRoute({
@@ -387,6 +390,7 @@ export const vueltaDelProveedor = createRoute({
   responses: {
     303: conDestino('A /v2/yo, con la sesión ya en la cookie'),
     400: conProblema('La respuesta del proveedor no vale, o no la empezó este navegador'),
+    404: conProblema('La tienda no tiene proveedor de identidad'),
     409: conProblema('Ya hay una cuenta con ese email, y el proveedor no dice que sea tuyo'),
   },
 });

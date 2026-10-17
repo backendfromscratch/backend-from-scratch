@@ -5,7 +5,6 @@ import { OpenAPIHono } from '@hono/zod-openapi';
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 import { streamSSE } from 'hono/streaming';
-import { config } from './config.ts';
 import { avisarDePago, guardarAviso } from './avisos.ts';
 import * as contrato from './contrato.ts';
 import {
@@ -36,7 +35,13 @@ import { siNoEsValido } from './middleware/validar.ts';
 import { enlaceSiguiente, paginaPorCursor, paginaPorDesplazamiento } from './paginacion.ts';
 import { type Permiso, puede } from './permisos.ts';
 import { datosNoValidos, problema, problemaHttp, tipo } from './problemas.ts';
-import { empezarInicio, type InicioGuardado, terminarInicio } from './proveedor.ts';
+import {
+  empezarInicio,
+  type InicioGuardado,
+  proveedorConfigurado,
+  terminarInicio,
+  urlDeVuelta,
+} from './proveedor.ts';
 import { comprobarUrl } from './url-segura.ts';
 import { comprobarCredenciales, crearUsuario, usuarioDelProveedor } from './usuarios.ts';
 
@@ -351,7 +356,17 @@ const ATRIBUTOS_PROVEEDOR = {
   path: '/v2/sesion/proveedor',
 } as const;
 
+// Sin las OIDC_*, la tienda no tiene proveedor: las dos rutas dicen que no existe.
+const sinProveedor = (c: Context) =>
+  problema(c, {
+    type: tipo('proveedor-no-configurado'),
+    title: 'La tienda no tiene proveedor de identidad',
+    status: 404,
+    detail: 'Esta tienda no está configurada para iniciar sesión con un proveedor de identidad',
+  });
+
 v2.openapi(contrato.inicioConProveedor, async (c) => {
+  if (!proveedorConfigurado()) return sinProveedor(c);
   const { url, guardado } = await empezarInicio();
   const valor = Buffer.from(JSON.stringify(guardado)).toString('base64url');
   setCookie(c, COOKIE_PROVEEDOR, valor, { ...ATRIBUTOS_PROVEEDOR, maxAge: 10 * 60 });
@@ -384,12 +399,13 @@ const inicioFallido = (
   });
 
 v2.openapi(contrato.vueltaDelProveedor, async (c) => {
+  if (!proveedorConfigurado()) return sinProveedor(c);
   const guardado = leerInicio(c);
   if (!guardado) return inicioFallido(c);
   // La URL de vuelta, tal y como la registró la tienda en el proveedor, con lo que trae: code y
   // state. openid-client la necesita entera, y la de config no cambia aunque la tienda esté detrás
   // de un proxy.
-  const vuelta = new URL(config.OIDC_VUELTA);
+  const vuelta = new URL(urlDeVuelta());
   vuelta.search = new URL(c.req.url).search;
   const identidad = await terminarInicio(vuelta, guardado);
   if (!identidad) return inicioFallido(c);

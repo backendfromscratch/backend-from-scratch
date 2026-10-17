@@ -33,44 +33,69 @@ const secreto = (nombre: string) =>
 // #endregion secreto
 
 // #region esquema-config
-const esquemaConfig = z.object({
-  PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
-  // La dirección en la que escucha: 127.0.0.1, solo tu ordenador (Fase 3). Dentro de un contenedor
-  // no basta: lo que llega por el puerto publicado entra por la red del contenedor, no por su
-  // 127.0.0.1. Allí hace falta 0.0.0.0 (todas sus direcciones), y lo pone el Dockerfile. Quién
-  // llega al contenedor lo decide el puerto publicado: -p 127.0.0.1:3000:3000, solo tu ordenador.
-  HOST: z.string().min(1).default('127.0.0.1'),
-  LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
-  // El secreto con el que la pasarela de pago firma los webhooks (lección 7).
-  WEBHOOK_SECRET: secreto('WEBHOOK_SECRET'),
-  // El proveedor de identidad (lección 4): su dirección (el emisor), el id y el secreto que te dio
-  // al registrar la tienda, y la URL de la tienda a la que vuelve el navegador.
-  OIDC_EMISOR: z.url({ error: 'Falta OIDC_EMISOR, o no es una URL' }),
-  OIDC_CLIENTE_ID: z.string({ error: 'Falta OIDC_CLIENTE_ID' }).min(1, 'Falta OIDC_CLIENTE_ID'),
-  OIDC_CLIENTE_SECRETO: secreto('OIDC_CLIENTE_SECRETO'),
-  OIDC_VUELTA: z.url({ error: 'Falta OIDC_VUELTA, o no es una URL' }),
-  // Las webs (origen: esquema, nombre y puerto) desde las que se aceptan peticiones que usan la
-  // cookie de la sesión (lección 7), separadas por comas: http://localhost:3000,https://tienda.example
-  ORIGENES_PERMITIDOS: lista('ORIGENES_PERMITIDOS').pipe(
-    z.array(z.url({ error: 'Cada origen, una URL: http://localhost:3000' })).min(1),
-  ),
-  // Redis, para los límites de intentos (limites.ts): redis://servidor:6379. Sin ella, los intentos
-  // se guardan en la memoria del servidor. En Docker Compose la pone compose.yaml.
-  REDIS_URL: z.url({ error: 'REDIS_URL no es una URL: redis://servidor:6379' }).optional(),
-  // Las IP de tu proxy (Nginx), separadas por comas: solo de ellas se lee X-Forwarded-For para saber
-  // la IP de quien pide (limites.ts). Sin proxy, vacío: esa cabecera se ignora.
-  PROXY_CONFIABLE: lista('PROXY_CONFIABLE')
-    .pipe(
-      z.array(
-        z.string().refine((ip) => isIP(ip) !== 0, 'Cada proxy, una IP: 172.18.0.1 (no un nombre)'),
-      ),
-    )
-    .transform((ips) => ips.map(normalizarIp))
-    .default([]),
-  // Solo para desarrollo: nombres a los que la tienda puede mandar avisos por http, aunque estén en
-  // tu ordenador (url-segura.ts). Separados por comas. En producción, vacío.
-  AVISOS_HOSTS_DESARROLLO: lista('AVISOS_HOSTS_DESARROLLO').default([]),
-});
+const esquemaConfig = z
+  .object({
+    PORT: z.coerce.number().int().min(1).max(65_535).default(3000),
+    // La dirección en la que escucha: 127.0.0.1, solo tu ordenador (Fase 3). Dentro de un contenedor
+    // no basta: lo que llega por el puerto publicado entra por la red del contenedor, no por su
+    // 127.0.0.1. Allí hace falta 0.0.0.0 (todas sus direcciones), y lo pone el Dockerfile. Quién
+    // llega al contenedor lo decide el puerto publicado: -p 127.0.0.1:3000:3000, solo tu ordenador.
+    HOST: z.string().min(1).default('127.0.0.1'),
+    LOG_LEVEL: z
+      .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
+      .default('info'),
+    // El secreto con el que la pasarela de pago firma los webhooks (lección 7).
+    WEBHOOK_SECRET: secreto('WEBHOOK_SECRET'),
+    // El proveedor de identidad (lección 4): su dirección (el emisor), el id y el secreto que te dio
+    // al registrar la tienda, y la URL de la tienda a la que vuelve el navegador. Son opcionales,
+    // pero en grupo: o están las cuatro o no está ninguna (más abajo). Sin ellas, la tienda no
+    // ofrece iniciar sesión con un proveedor, y el email y la contraseña siguen funcionando.
+    OIDC_EMISOR: z.url({ error: 'OIDC_EMISOR no es una URL' }).optional(),
+    OIDC_CLIENTE_ID: z.string().min(1, 'OIDC_CLIENTE_ID está vacío').optional(),
+    OIDC_CLIENTE_SECRETO: secreto('OIDC_CLIENTE_SECRETO').optional(),
+    OIDC_VUELTA: z.url({ error: 'OIDC_VUELTA no es una URL' }).optional(),
+    // Las webs (origen: esquema, nombre y puerto) desde las que se aceptan peticiones que usan la
+    // cookie de la sesión (lección 7), separadas por comas: http://localhost:3000,https://tienda.example
+    ORIGENES_PERMITIDOS: lista('ORIGENES_PERMITIDOS').pipe(
+      z.array(z.url({ error: 'Cada origen, una URL: http://localhost:3000' })).min(1),
+    ),
+    // Redis, para los límites de intentos (limites.ts): redis://servidor:6379. Sin ella, los intentos
+    // se guardan en la memoria del servidor. En Docker Compose la pone compose.yaml.
+    REDIS_URL: z.url({ error: 'REDIS_URL no es una URL: redis://servidor:6379' }).optional(),
+    // Las IP de tu proxy (Nginx), separadas por comas: solo de ellas se lee X-Forwarded-For para saber
+    // la IP de quien pide (limites.ts). Sin proxy, vacío: esa cabecera se ignora.
+    PROXY_CONFIABLE: lista('PROXY_CONFIABLE')
+      .pipe(
+        z.array(
+          z
+            .string()
+            .refine((ip) => isIP(ip) !== 0, 'Cada proxy, una IP: 172.18.0.1 (no un nombre)'),
+        ),
+      )
+      .transform((ips) => ips.map(normalizarIp))
+      .default([]),
+    // Solo para desarrollo: nombres a los que la tienda puede mandar avisos por http, aunque estén en
+    // tu ordenador (url-segura.ts). Separados por comas. En producción, vacío.
+    AVISOS_HOSTS_DESARROLLO: lista('AVISOS_HOSTS_DESARROLLO').default([]),
+  })
+  .superRefine((datos, contexto) => {
+    const ajustes = [
+      'OIDC_EMISOR',
+      'OIDC_CLIENTE_ID',
+      'OIDC_CLIENTE_SECRETO',
+      'OIDC_VUELTA',
+    ] as const;
+    const faltan = ajustes.filter((nombre) => datos[nombre] === undefined);
+    // Con una o dos, la tienda arrancaría con un proveedor a medias: mejor decir cuáles faltan.
+    if (faltan.length === 0 || faltan.length === ajustes.length) return;
+    for (const nombre of faltan) {
+      contexto.addIssue({
+        code: 'custom',
+        path: [nombre],
+        message: `Falta ${nombre}: el proveedor de identidad necesita las cuatro OIDC_*, o ninguna`,
+      });
+    }
+  });
 // #endregion esquema-config
 
 const resultado = esquemaConfig.safeParse(process.env);
