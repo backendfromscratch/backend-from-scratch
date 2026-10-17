@@ -7,12 +7,27 @@
 //   ningún producto: en una base de datos que ya los tiene, los repetiría.
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { parseArgs } from 'node:util';
 import { pool } from '../src/bd.ts';
 
 const leer = (fichero: string) => readFile(join(import.meta.dirname, '..', 'bd', fichero), 'utf8');
 
+// Estricto: un argumento que no es --sin-cuentas (una errata, por ejemplo) para el script antes de
+// cargar nada. Si no, una errata cargaría las cuentas de práctica, con contraseñas públicas, en
+// producción.
+let sinCuentas: boolean;
 try {
-  if (process.argv.includes('--sin-cuentas')) {
+  sinCuentas = parseArgs({ options: { 'sin-cuentas': { type: 'boolean' } }, strict: true }).values[
+    'sin-cuentas'
+  ] === true;
+} catch (error) {
+  console.error(`Argumento no válido: ${(error as Error).message}`);
+  console.error('Uso: npm run bd:datos, o npm run bd:datos:produccion (con --sin-cuentas)');
+  process.exit(1);
+}
+
+try {
+  if (sinCuentas) {
     console.log('Sin cuentas de práctica: no se cargan (--sin-cuentas)');
   } else {
     await pool.query(await leer('cuentas.sql'));

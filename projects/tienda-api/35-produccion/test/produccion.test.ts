@@ -46,6 +46,17 @@ test('cargar-datos sin el flag sigue cargando las cuentas de práctica', async (
   assert.equal(await contar('usuarios'), 4);
 });
 
+test('cargar-datos con un argumento desconocido sale con código 1 y no carga nada', async () => {
+  for (const argumento of ['--sin-cuenta', '--sin-cuentas=true', 'sin-cuentas']) {
+    const { codigo, stdout, stderr } = await correr('scripts/cargar-datos.ts', argumento);
+    assert.equal(codigo, 1, argumento);
+    assert.doesNotMatch(stdout, /cargad|listas/);
+    assert.match(stderr, /Argumento no válido/);
+  }
+  assert.equal(await contar('usuarios'), 0);
+  assert.equal(await contar('productos'), 0);
+});
+
 const LINEA = /^Contraseña \(guárdala ahora, no se vuelve a enseñar\): (\S+)$/m;
 
 test('crear-admin crea una cuenta admin, imprime una contraseña de 24 caracteres o más una sola vez, y esa contraseña inicia sesión', async () => {
