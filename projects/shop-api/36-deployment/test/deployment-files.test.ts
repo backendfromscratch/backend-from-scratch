@@ -70,7 +70,7 @@ test('deploy.sh: one deployment at a time, no building, and the backup before mi
   assert.match(script, /^exec 9>\/run\/lock\/shop-deploy\.lock$/m);
   assert.match(script, /^flock -n 9 \|\| exit 0$/m);
   // It never builds: every up carries --no-build.
-  const ups = script.match(/^.*\bup -d\b.*$/gm) ?? [];
+  const ups = (script.match(/^.*\bup -d\b.*$/gm) ?? []).filter((l) => !l.includes('log '));
   assert.equal(ups.length, 2);
   for (const line of ups) assert.match(line, /--no-build/);
   // The order: keep the running image, ask the registry, backup, migrations and the new API.
@@ -79,13 +79,21 @@ test('deploy.sh: one deployment at a time, no building, and the backup before mi
     'pull --quiet api',
     'deployment/backup.sh',
     'run --rm migrate',
-    'up -d --no-build api',
+    'up -d --no-build --no-deps api',
   ].map((piece) => script.indexOf(piece));
   assert.ok(!order.includes(-1), order.join());
   assert.deepEqual(
     order,
     [...order].sort((a, b) => a - b),
   );
+  // A failing up leads to going back (Compose removes the old container before starting the new).
+  assert.match(script, /if "\$\{compose\[@\]\}" up -d --no-build --no-deps api; then/);
+  // A single copy of the API; the image is kept as :previous only if the container is healthy.
+  assert.match(script, /the deployment expects a single copy of the API/);
+  assert.match(script, /= healthy \]; then\n {2}docker tag "\$running" "\$previous"/);
+  // The quotes of IMAGE="…" are removed; a failed image says how to retry it.
+  assert.match(script, /image="\$\{image#\[\\"\\'\]\}"/);
+  assert.match(script, /to retry it: rm \$PWD\/\.deploy-failed/);
   // Going back uses the image kept on the disk, without migrating again.
   assert.match(script, /IMAGE="\$previous" "\$\{compose\[@\]\}" up -d --no-build --no-deps api/);
   // With nothing new, silence: the running image's ID against the downloaded one's.

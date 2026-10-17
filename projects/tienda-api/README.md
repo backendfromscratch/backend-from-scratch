@@ -129,4 +129,6 @@ sudo systemctl daemon-reload && sudo systemctl enable --now tienda-despliegue.ti
 journalctl -u tienda-despliegue                          # lo que ha hecho
 ```
 
+La primera vez que se publica la imagen, ghcr.io la crea **privada**: en su página de paquete (Package settings → Change visibility) hazla pública, o el servidor no podrá descargarla sin credenciales. Una imagen que el script dio por mala no se reintenta sola (cada intento son segundos sin API): si el fallo era del entorno y no de la imagen (un `.env` mal escrito, por ejemplo), arréglalo y borra `.despliegue-fallido` para que la pruebe otra vez.
+
 Volver atrás cambia el código, no los datos: por eso el script hace una copia antes de migrar.

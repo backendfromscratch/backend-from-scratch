@@ -129,4 +129,6 @@ sudo systemctl daemon-reload && sudo systemctl enable --now shop-deploy.timer
 journalctl -u shop-deploy                                # what it has done
 ```
 
+The first time the image is published, ghcr.io creates it **private**: on its package page (Package settings → Change visibility) make it public, or the server won't be able to download it without credentials. An image the script judged bad isn't retried by itself (every attempt is seconds without an API): if the fault was in the environment and not in the image (a badly written `.env`, say), fix it and delete `.deploy-failed` so it tries again.
+
 Going back changes the code, not the data: that's why the script makes a backup before migrating.

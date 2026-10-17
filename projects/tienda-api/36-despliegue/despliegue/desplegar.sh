@@ -33,6 +33,9 @@ compose=(docker compose -f compose.produccion.yaml)
 # La imagen que sigue el servidor: IMAGEN del entorno, o la de .env (grep, no source: .env es para
 # Compose, y un valor con espacios o comillas rompería el script).
 imagen="${IMAGEN:-$(grep -E '^IMAGEN=' .env | tail -n 1 | cut -d= -f2- || true)}"
+# Compose acepta IMAGEN="…" con comillas (las quita al leer .env); aquí se quitan a mano.
+imagen="${imagen#[\"\']}"
+imagen="${imagen%[\"\']}"
 if [ -z "$imagen" ]; then
   registrar "falta IMAGEN en .env: este script sigue una imagen publicada (ghcr.io/<tu-usuario>/tienda-api:main)" >&2
   exit 1
@@ -51,6 +54,12 @@ anterior="$nombre:anterior"
 # compara el ID, no la etiqueta: la etiqueta main siempre se llama igual, y es lo que cambia de
 # imagen. El ID es el hash de la imagen: mismo ID, misma imagen.
 contenedor="$("${compose[@]}" ps --all --quiet api)"
+# Este script cuenta con una sola copia de la API. Con dos (docker compose up --scale api=2) no
+# sabría con cuál comparar ni cuál recrear: no toca nada y lo dice.
+if [ "$(printf '%s\n' "$contenedor" | grep -c .)" -gt 1 ]; then
+  registrar "el despliegue espera una sola copia de la API y hay más: no toco nada (docker compose up -d --scale api=1)" >&2
+  exit 1
+fi
 corriendo=""
 if [ -n "$contenedor" ]; then
   corriendo="$(docker inspect --format '{{.Image}}' "$contenedor")"
@@ -60,8 +69,11 @@ fi
 # registro. Si main apuntara a otra imagen y la etiqueta se moviera, la vieja quedaría sin nombre y
 # Docker podría borrarla: así volver atrás no depende del registro (puede estar caído) ni de que la
 # imagen anterior siga con su etiqueta. Es una etiqueta nueva sobre una imagen que ya está en este
-# disco: no descarga ni escribe nada más, y se repite en cada ejecución sin ruido.
-if [ -n "$corriendo" ]; then
+# disco: no descarga ni escribe nada más, y se repite en cada ejecución sin ruido. Solo si el
+# contenedor está sano: una imagen que no funciona no es una a la que merezca la pena volver, y se
+# conserva el :anterior que ya hubiera.
+if [ -n "$corriendo" ] &&
+  [ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$contenedor")" = healthy ]; then
   docker tag "$corriendo" "$anterior"
 fi
 
@@ -85,7 +97,7 @@ fi
 # Una imagen que ya falló no se vuelve a intentar cada dos minutos (cada intento son segundos sin
 # API): se espera a que main apunte a otra. El fichero guarda el ID de la última que falló.
 if [ -f .despliegue-fallido ] && [ "$(cat .despliegue-fallido)" = "$nueva" ]; then
-  registrar "la imagen $(corto "$nueva") ya falló: espero a una nueva" >&2
+  registrar "la imagen $(corto "$nueva") ya falló: espero a una nueva (para reintentarla: rm $PWD/.despliegue-fallido)" >&2
   exit 1
 fi
 registrar "imagen nueva: $(corto "${corriendo:-ninguna}") -> $(corto "$nueva") (la que corre queda como $anterior)"
@@ -112,8 +124,9 @@ if ! "${compose[@]}" run --rm migrar; then
 fi
 
 # --no-build: nunca construir. Si faltase la imagen, Compose daría un error, no un docker build.
+# --no-deps: las migraciones ya se han aplicado arriba; sin esto, Compose volvería a ejecutar migrar
+# dentro de los segundos sin API.
 registrar "arrancando la API con la imagen nueva"
-"${compose[@]}" up -d --no-build api
 
 # Espera hasta 60 segundos a que Docker dé la API por sana (el HEALTHCHECK del Dockerfile pregunta a
 # /salud cada 10 segundos). Devuelve 0 si lo está y 1 si no.
@@ -130,21 +143,31 @@ esperar_salud() {
   return 1
 }
 
-registrar "esperando a /salud (hasta 60 s)"
-if esperar_salud; then
+# Compose borra el contenedor viejo antes de arrancar el nuevo: si up falla (la imagen no arranca),
+# la API puede estar parada. Por eso un fallo de up lleva al mismo camino que una API que no se pone
+# sana: volver a la imagen anterior.
+sana=no
+if "${compose[@]}" up -d --no-build --no-deps api; then
+  registrar "esperando a /salud (hasta 60 s)"
+  if esperar_salud; then
+    sana=si
+  fi
+fi
+if [ "$sana" = si ]; then
   rm -f .despliegue-fallido
   registrar "hecho: la API corre con $(corto "$nueva")"
   exit 0
 fi
 
-# No llegó a estar sana: de vuelta a la imagen anterior. IMAGEN en el entorno manda sobre la de .env
-# solo en este comando, y --no-deps evita volver a ejecutar las migraciones con el código viejo.
-if [ -z "$corriendo" ]; then
-  fallar "la imagen nueva no llegó a estar sana y no hay imagen anterior a la que volver"
+# No arrancó o no llegó a estar sana: de vuelta a la imagen anterior (la guardada como :anterior).
+# IMAGEN en el entorno manda sobre la de .env solo en este comando, y --no-deps evita volver a
+# ejecutar las migraciones con el código viejo.
+if ! docker image inspect "$anterior" > /dev/null 2>&1; then
+  fallar "la imagen nueva no arrancó o no llegó a estar sana, y no hay imagen anterior a la que volver"
 fi
-registrar "la imagen nueva no llegó a estar sana en 60 s: vuelvo a $(corto "$corriendo")" >&2
-IMAGEN="$anterior" "${compose[@]}" up -d --no-build --no-deps api
-if esperar_salud; then
-  fallar "vuelta hecha: la API corre otra vez con $(corto "$corriendo"). Las migraciones de la imagen nueva siguen aplicadas"
+volver="$(docker image inspect --format '{{.Id}}' "$anterior")"
+registrar "la imagen nueva no arrancó o no llegó a estar sana: vuelvo a $(corto "$volver")" >&2
+if IMAGEN="$anterior" "${compose[@]}" up -d --no-build --no-deps api && esperar_salud; then
+  fallar "vuelta hecha: la API corre otra vez con $(corto "$volver"). Las migraciones de la imagen nueva siguen aplicadas"
 fi
 fallar "la imagen anterior tampoco está sana: mira docker compose logs api"

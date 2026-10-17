@@ -34,6 +34,9 @@ compose=(docker compose -f compose.production.yaml)
 # The image the server follows: IMAGE from the environment, or the one in .env (grep, not source:
 # .env is for Compose, and a value with spaces or quotes would break the script).
 image="${IMAGE:-$(grep -E '^IMAGE=' .env | tail -n 1 | cut -d= -f2- || true)}"
+# Compose accepts IMAGE="…" with quotes (it removes them when reading .env); here they are removed by hand.
+image="${image#[\"\']}"
+image="${image%[\"\']}"
 if [ -z "$image" ]; then
   log "IMAGE is missing in .env: this script follows a published image (ghcr.io/<your-user>/shop-api:main)" >&2
   exit 1
@@ -52,6 +55,12 @@ previous="$name:previous"
 # is compared, not the tag: the main tag is always called the same, and it is what changes image.
 # The ID is the image's hash: same ID, same image.
 container="$("${compose[@]}" ps --all --quiet api)"
+# This script expects a single copy of the API. With two (docker compose up --scale api=2) it
+# wouldn't know which one to compare or which one to recreate: it touches nothing and says so.
+if [ "$(printf '%s\n' "$container" | grep -c .)" -gt 1 ]; then
+  log "the deployment expects a single copy of the API and there are more: I touch nothing (docker compose up -d --scale api=1)" >&2
+  exit 1
+fi
 running=""
 if [ -n "$container" ]; then
   running="$(docker inspect --format '{{.Image}}' "$container")"
@@ -62,7 +71,10 @@ fi
 # name and Docker could delete it: this way going back depends neither on the registry (it may be
 # down) nor on the previous image still having its tag. It's a new tag on an image that is already
 # on this disk: it downloads and writes nothing else, and it repeats on every run without noise.
-if [ -n "$running" ]; then
+# Only if the container is healthy: an image that doesn't work isn't one worth going back to, and
+# the :previous that already existed is kept.
+if [ -n "$running" ] &&
+  [ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container")" = healthy ]; then
   docker tag "$running" "$previous"
 fi
 
@@ -87,7 +99,7 @@ fi
 # without an API): it waits for main to point to another one. The file holds the ID of the last one
 # that failed.
 if [ -f .deploy-failed ] && [ "$(cat .deploy-failed)" = "$new" ]; then
-  log "image $(short "$new") already failed: waiting for a new one" >&2
+  log "image $(short "$new") already failed: waiting for a new one (to retry it: rm $PWD/.deploy-failed)" >&2
   exit 1
 fi
 log "new image: $(short "${running:-none}") -> $(short "$new") (the one running is kept as $previous)"
@@ -114,8 +126,9 @@ if ! "${compose[@]}" run --rm migrate; then
 fi
 
 # --no-build: never build. If the image were missing, Compose would give an error, not a docker build.
+# --no-deps: the migrations were already applied above; without it, Compose would run migrate again
+# inside the seconds without an API.
 log "starting the API with the new image"
-"${compose[@]}" up -d --no-build api
 
 # Waits up to 60 seconds for Docker to consider the API healthy (the Dockerfile's HEALTHCHECK asks
 # /health every 10 seconds). Returns 0 if it is and 1 if it isn't.
@@ -132,21 +145,31 @@ wait_for_health() {
   return 1
 }
 
-log "waiting for /health (up to 60 s)"
-if wait_for_health; then
+# Compose removes the old container before starting the new one: if up fails (the image won't
+# start), the API may be down. That's why a failed up takes the same path as an API that doesn't get
+# healthy: going back to the previous image.
+healthy=no
+if "${compose[@]}" up -d --no-build --no-deps api; then
+  log "waiting for /health (up to 60 s)"
+  if wait_for_health; then
+    healthy=yes
+  fi
+fi
+if [ "$healthy" = yes ]; then
   rm -f .deploy-failed
   log "done: the API is running $(short "$new")"
   exit 0
 fi
 
-# It never got healthy: back to the previous image. IMAGE in the environment overrides the one in
-# .env for this command only, and --no-deps avoids running the migrations again with the old code.
-if [ -z "$running" ]; then
-  fail "the new image never got healthy and there is no previous image to go back to"
+# It didn't start or never got healthy: back to the previous image (the one kept as :previous).
+# IMAGE in the environment overrides the one in .env for this command only, and --no-deps avoids
+# running the migrations again with the old code.
+if ! docker image inspect "$previous" > /dev/null 2>&1; then
+  fail "the new image didn't start or never got healthy, and there is no previous image to go back to"
 fi
-log "the new image did not get healthy in 60 s: going back to $(short "$running")" >&2
-IMAGE="$previous" "${compose[@]}" up -d --no-build --no-deps api
-if wait_for_health; then
-  fail "back done: the API is running $(short "$running") again. The new image's migrations are still applied"
+back="$(docker image inspect --format '{{.Id}}' "$previous")"
+log "the new image didn't start or didn't get healthy: going back to $(short "$back")" >&2
+if IMAGE="$previous" "${compose[@]}" up -d --no-build --no-deps api && wait_for_health; then
+  fail "back done: the API is running $(short "$back") again. The new image's migrations are still applied"
 fi
 fail "the previous image is not healthy either: look at docker compose logs api"

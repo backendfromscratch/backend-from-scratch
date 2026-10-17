@@ -70,7 +70,7 @@ test('desplegar.sh: un solo despliegue, sin construir, y la copia antes de migra
   assert.match(script, /^exec 9>\/run\/lock\/tienda-despliegue\.lock$/m);
   assert.match(script, /^flock -n 9 \|\| exit 0$/m);
   // Nunca construye: cada up lleva --no-build.
-  const ups = script.match(/^.*\bup -d\b.*$/gm) ?? [];
+  const ups = (script.match(/^.*\bup -d\b.*$/gm) ?? []).filter((l) => !l.includes('registrar'));
   assert.equal(ups.length, 2);
   for (const linea of ups) assert.match(linea, /--no-build/);
   // El orden: guardar la imagen que corre, preguntar al registro, copia, migraciones y API nueva.
@@ -79,13 +79,21 @@ test('desplegar.sh: un solo despliegue, sin construir, y la copia antes de migra
     'pull --quiet api',
     'despliegue/copia-seguridad.sh',
     'run --rm migrar',
-    'up -d --no-build api',
+    'up -d --no-build --no-deps api',
   ].map((trozo) => script.indexOf(trozo));
   assert.ok(!orden.includes(-1), orden.join());
   assert.deepEqual(
     orden,
     [...orden].sort((a, b) => a - b),
   );
+  // Un up que falla lleva a la vuelta atrás (Compose borra el contenedor viejo antes de arrancar).
+  assert.match(script, /if "\$\{compose\[@\]\}" up -d --no-build --no-deps api; then/);
+  // Solo una copia de la API; la imagen se guarda como :anterior solo si el contenedor está sano.
+  assert.match(script, /el despliegue espera una sola copia de la API/);
+  assert.match(script, /= healthy \]; then\n {2}docker tag "\$corriendo" "\$anterior"/);
+  // Las comillas de IMAGEN="…" se quitan; una imagen fallida dice cómo reintentarla.
+  assert.match(script, /imagen="\$\{imagen#\[\\"\\'\]\}"/);
+  assert.match(script, /para reintentarla: rm \$PWD\/\.despliegue-fallido/);
   // La vuelta atrás usa la imagen guardada en el disco, sin volver a migrar.
   assert.match(script, /IMAGEN="\$anterior" "\$\{compose\[@\]\}" up -d --no-build --no-deps api/);
   // Sin novedades, en silencio: el ID de la imagen que corre contra el de la descargada.
