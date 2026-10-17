@@ -1,0 +1,106 @@
+# The shop on a server (Phase 8, lesson 4): the same one as compose.yaml, with what changes when
+# you publish it. compose.yaml stays the one for your computer.
+#   docker compose -f compose.production.yaml up -d --build    starts everything, in the background
+#   docker compose -f compose.production.yaml down             stops it (the data stays)
+#
+# What changes compared to compose.yaml:
+#   - restart: unless-stopped: Docker starts db, redis and the API again if they fall over or if
+#     the server restarts (not if you stopped them with docker compose stop).
+#   - No practice accounts: their passwords are public (they're in the README). The first account,
+#     yours, is created with create-admin.
+#   - nginx goes in front, on the server itself, and it is the only thing the internet sees. The
+#     API is still published only on 127.0.0.1, as on your computer.
+#
+# The secrets come from .env, which Compose reads on its own (copy it from
+# .env.production.example). It goes on the server, never in Git.
+
+name: shop
+
+services:
+  # PostgreSQL 18, pinned by its digest. No published port: only the shop's containers see it. The
+  # internet doesn't reach it.
+  db:
+    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_DB: shop
+      # Without a value, Compose doesn't start and says so: a database on the internet without a
+      # password is an open door.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is missing in .env (see .env.production.example)}
+    # The data, in a named volume: it survives down and restarts (not down -v).
+    volumes:
+      - data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'shop', '-d', 'shop']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # Redis 8, pinned by its digest: the attempts of the limits, shared by the copies of the API.
+  # No published port and nothing saved to disk.
+  redis:
+    image: redis:8@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+    restart: unless-stopped
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # A task, not a server: it applies the migrations, loads the sample products (if there are none)
+  # and ends. --no-accounts: the practice accounts are not loaded.
+  migrate:
+    # build and image together: "up --build" builds the image and gives it this name; if you set
+    # IMAGE in .env (lesson 6), Compose uses that published image instead of yours.
+    build: .
+    image: ${IMAGE:-shop-api}
+    command: ['sh', '-c', 'node scripts/migrate.ts && node scripts/seed.ts --no-accounts']
+    environment:
+      DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD}@db:5432/shop
+    depends_on:
+      db:
+        condition: service_healthy
+    # The image's HEALTHCHECK asks the API, and there's no API here.
+    healthcheck:
+      disable: true
+
+  # The API, with the same image as migrate.
+  api:
+    build: .
+    image: ${IMAGE:-shop-api}
+    restart: unless-stopped
+    # Your configuration, from .env. What changes inside Compose goes in environment, which wins
+    # over env_file: the database and Redis, by their name.
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD}@db:5432/shop
+      REDIS_URL: redis://redis:6379
+    # Only on the server itself (127.0.0.1): nginx talks to it from there, and the internet doesn't
+    # reach it. A range, as in compose.yaml: with up --scale api=2, each copy takes a port (3000 or
+    # 3001), and nginx has both in its upstream.
+    ports:
+      - '127.0.0.1:3000-3001:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+volumes:
+  data:
+
+# The shop's network, with the subnet pinned. What reaches the API through a published port seems to
+# it to come from this network's gateway (the first address: 172.18.0.1), and not from the visitor
+# or from nginx. That's the address the API believes to be trustworthy (TRUSTED_PROXY in
+# .env.production.example), and pinning the subnet keeps it from changing. If another Docker network
+# on the server already uses 172.18.0.0/16, docker compose up fails with "Pool overlaps with other
+# one on this address space": change the subnet here and TRUSTED_PROXY's address in .env.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
