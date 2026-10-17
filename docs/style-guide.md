@@ -95,7 +95,7 @@ import QuizOption from '~/components/QuizOption.astro';
 - `<Term id="port">puerto</Term>`: the `id` is the file name in `src/content/glossary/<language>/`. If it does not exist, the build fails.
 - `<TryIt cmd="…" output={`…`}>explanation</TryIt>`:
   - `output` is copied from a real run, never made up;
-  - `windows` is not used: on Windows, the course is followed with WSL, with the same commands as on Linux (decided on 2026-10-07; Phase 1 spec, §2.2). The prop stays in the component in case it is needed some day;
+  - `windows` is only for what WSL cannot do: on Windows, the course is followed with WSL, with the same commands as on Linux (decided on 2026-10-07; Phase 1 spec, §2.2). The exception is Phase 8's free path, where the server is a Multipass VM that Windows readers reach from PowerShell: lesson 1 gives its PowerShell commands in `windows` (decided on 2026-10-17);
   - for several lines, use a template literal: ``cmd={`línea 1\nlínea 2`}``.
   - `lang` changes the highlighting of `cmd` (default `sh`); use `lang="http"` when what the reader types is an HTTP message and not a command.
 - `<Analogy>…<div slot="limits">…</div></Analogy>`: without `limits`, the build fails.
