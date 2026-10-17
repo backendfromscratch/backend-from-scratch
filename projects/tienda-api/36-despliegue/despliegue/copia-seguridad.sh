@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# La copia de seguridad de la base de datos (Fase 8, lección 4): un pg_dump comprimido en copias/,
+# La copia de seguridad de la base de datos (Fase 8, lección 3): un pg_dump comprimido en copias/,
 # con la fecha en el nombre, y fuera las de 7 días o más. Se ejecuta a mano o cada noche con el
 # temporizador tienda-copia.timer. Desde cualquier carpeta: trabaja en la del proyecto.
 #   COPIAS_DIAS=14 despliegue/copia-seguridad.sh    guarda 14 días en lugar de 7
 set -euo pipefail
 
+# #region copia
 # Solo tu usuario puede leer lo que se crea aquí (permisos 600 en los ficheros, 700 en la carpeta):
 # una copia es la base de datos entera, con los emails, los hash de las contraseñas y las sesiones.
 umask 077
@@ -28,9 +29,12 @@ trap 'rm -f "$final.tmp"' EXIT
 docker compose -f compose.produccion.yaml exec -T db pg_dump -U tienda tienda | gzip > "$final.tmp"
 mv "$final.tmp" "$final"
 echo "Copia hecha: $final ($(du -h "$final" | cut -f1))"
+# #endregion copia
 
+# #region poda
 # Solo ahora, con una copia nueva buena, se borran las que tienen $dias días o más. find cuenta días
 # enteros y redondea hacia abajo: «-mtime +6» es «de 7 días o más» (+7 dejaría pasar 8 días).
 find copias -name 'tienda-*.sql.gz' -mtime +"$((dias - 1))" -print -delete
 # Y los .tmp que se quedaron sin borrar (un kill -9 no deja actuar al trap), de hace más de una hora.
 find copias -name 'tienda-*.sql.gz.tmp' -mmin +60 -print -delete
+# #endregion poda

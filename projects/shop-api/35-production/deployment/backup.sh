@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
-# The database backup (Phase 8, lesson 4): a compressed pg_dump in backups/, with the date in the
+# The database backup (Phase 8, lesson 3): a compressed pg_dump in backups/, with the date in the
 # name, and backups 7 days old or more are deleted. It runs by hand or every night with the
 # shop-backup.timer timer. From any folder: it works in the project's.
 #   BACKUP_DAYS=14 deployment/backup.sh    keeps 14 days instead of 7
 set -euo pipefail
 
+# #region backup
 # Only your user can read what's created here (permissions 600 on the files, 700 on the folder): a
 # backup is the whole database, with the emails, the password hashes and the sessions.
 umask 077
@@ -28,9 +29,12 @@ trap 'rm -f "$final.tmp"' EXIT
 docker compose -f compose.production.yaml exec -T db pg_dump -U shop shop | gzip > "$final.tmp"
 mv "$final.tmp" "$final"
 echo "Backup made: $final ($(du -h "$final" | cut -f1))"
+# #endregion backup
 
+# #region prune
 # Only now, with a good new backup, are the ones that are $days days old or more deleted. find counts
 # whole days and rounds down: "-mtime +6" is "7 days or more" (+7 would let 8 days through).
 find backups -name 'shop-*.sql.gz' -mtime +"$((days - 1))" -print -delete
 # And the .tmp files that were left behind (a kill -9 doesn't let the trap act), from over an hour ago.
 find backups -name 'shop-*.sql.gz.tmp' -mmin +60 -print -delete
+# #endregion prune

@@ -31,6 +31,13 @@ describe('extractRegion', () => {
     expect(extractRegion(sql)).toBe('CREATE TABLE t (\n  id integer\n);\nSELECT 1;');
   });
 
+  it('reads regions in files whose comments start with #, like YAML and shell', () => {
+    const yaml =
+      'services:\n  # #region db\n  db:\n    image: postgres\n  # #endregion db\n  api:\n';
+    expect(extractRegion(yaml, 'db')).toBe('db:\n  image: postgres');
+    expect(extractRegion(yaml)).toBe('services:\n  db:\n    image: postgres\n  api:');
+  });
+
   it('without a region: the whole file, without the markers', () => {
     expect(extractRegion(source)).toBe(
       "import { x } from 'y';\n\napp.get('/', () => {\n  return 1;\n});\n\nfunction f() {\n  if (a) {\n    b();\n  }\n}",
@@ -69,6 +76,8 @@ describe('languageOf', () => {
     expect(languageOf('a/34-compose/compose.yaml')).toBe('yaml');
     expect(languageOf('a/34-compose/.dockerignore')).toBe('ini');
     expect(languageOf('a/.npmrc')).toBe('ini');
+    expect(languageOf('a/despliegue/tienda-copia.service')).toBe('ini');
+    expect(languageOf('a/despliegue/tienda-copia.timer')).toBe('ini');
     expect(() => languageOf('a/foto.png')).toThrow();
   });
 });

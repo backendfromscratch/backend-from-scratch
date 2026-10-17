@@ -7,7 +7,7 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 
-const marker = /^\s*(?:\/\/|--) #(end)?region\b.*$/;
+const marker = /^\s*(?:\/\/|--|#) #(end)?region\b.*$/;
 
 /** The common indentation of the non-empty lines, removed. */
 function dedent(lines: string[]): string[] {
@@ -31,9 +31,9 @@ export function extractRegion(source: string, region?: string): string {
   if (region === undefined) {
     return trimBlank(lines.filter((line) => !marker.test(line))).join('\n');
   }
-  const opens = (line: string) => /^(?:\/\/|--) #region (.*)$/.exec(line.trim())?.[1] === region;
+  const opens = (line: string) => /^(?:\/\/|--|#) #region (.*)$/.exec(line.trim())?.[1] === region;
   const closes = (line: string) =>
-    /^(?:\/\/|--) #endregion (.*)$/.exec(line.trim())?.[1] === region;
+    /^(?:\/\/|--|#) #endregion (.*)$/.exec(line.trim())?.[1] === region;
   const start = lines.findIndex(opens);
   if (start === -1) throw new Error(`There is no region «${region}»`);
   if (lines.findIndex((line, i) => i > start && opens(line)) !== -1) {
@@ -61,6 +61,9 @@ export function languageOf(file: string): string {
     sql: 'sql',
     yaml: 'yaml',
     yml: 'yaml',
+    // systemd units: sections and key=value lines, like an ini file.
+    service: 'ini',
+    timer: 'ini',
   };
   const language = languages[extension] ?? (file.split('/').at(-1)?.startsWith('.') ? 'ini' : '');
   if (!language) throw new Error(`No language for «${file}»`);
