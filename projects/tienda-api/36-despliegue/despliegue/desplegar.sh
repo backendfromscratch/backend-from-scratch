@@ -20,6 +20,7 @@ registrar() { echo "despliegue: $*"; }
 # Un ID de imagen es largo (sha256:…): para leerlo, sus 12 primeras letras.
 corto() { local id="${1#sha256:}"; echo "${id:0:12}"; }
 
+# #region uno-a-la-vez
 # Un solo despliegue a la vez. El descriptor 9 abre (y crea) un fichero de bloqueo, y flock -n
 # intenta cogerlo sin esperar: si otro despliegue lo tiene (el temporizador y tú a la vez, o uno
 # lento que aún no ha terminado), este termina sin hacer nada y sin error (0). El bloqueo lo suelta
@@ -27,6 +28,7 @@ corto() { local id="${1#sha256:}"; echo "${id:0:12}"; }
 # usuario: en /run/lock, Linux no deja a otro usuario abrir el fichero de bloqueo de alguien.
 exec 9>/run/lock/tienda-despliegue.lock
 flock -n 9 || exit 0
+# #endregion uno-a-la-vez
 
 compose=(docker compose -f compose.produccion.yaml)
 
@@ -65,6 +67,7 @@ if [ -n "$contenedor" ]; then
   corriendo="$(docker inspect --format '{{.Image}}' "$contenedor")"
 fi
 
+# #region anterior
 # La imagen que corre se guarda con un nombre propio (<nombre>:anterior) ANTES de preguntar al
 # registro. Si main apuntara a otra imagen y la etiqueta se moviera, la vieja quedaría sin nombre y
 # Docker podría borrarla: así volver atrás no depende del registro (puede estar caído) ni de que la
@@ -76,7 +79,9 @@ if [ -n "$corriendo" ] &&
   [ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$contenedor")" = healthy ]; then
   docker tag "$corriendo" "$anterior"
 fi
+# #endregion anterior
 
+# #region preguntar
 # Pregunta al registro: si main apunta a una imagen nueva, la descarga y mueve la etiqueta local
 # hacia ella. Con build e image juntas en el servicio, pull descarga la imagen, no la construye.
 # Compose escribe «Pulling/Pulled» aunque se le pida --quiet: la salida se guarda y solo se enseña
@@ -93,7 +98,9 @@ nueva="$(docker image inspect --format '{{.Id}}' "$imagen")"
 if [ "$nueva" = "$corriendo" ]; then
   exit 0
 fi
+# #endregion preguntar
 
+# #region fallida
 # Una imagen que ya falló no se vuelve a intentar cada dos minutos (cada intento son segundos sin
 # API): se espera a que main apunte a otra. El fichero guarda el ID de la última que falló.
 if [ -f .despliegue-fallido ] && [ "$(cat .despliegue-fallido)" = "$nueva" ]; then
@@ -101,6 +108,7 @@ if [ -f .despliegue-fallido ] && [ "$(cat .despliegue-fallido)" = "$nueva" ]; th
   exit 1
 fi
 registrar "imagen nueva: $(corto "${corriendo:-ninguna}") -> $(corto "$nueva") (la que corre queda como $anterior)"
+# #endregion fallida
 
 # Si la imagen nueva no sirve, se anota para no repetirla y se termina con error (1).
 fallar() {
@@ -109,6 +117,7 @@ fallar() {
   exit 1
 }
 
+# #region migrar
 # La copia de seguridad, antes de tocar el esquema. Volver atrás cambia el código, no los datos:
 # una migración mala solo se deshace con esta copia, a mano. Si la copia falla, el script se para
 # aquí (set -e): sin copia no se migra, y como no se ha tocado nada, el próximo intento vuelve a
@@ -122,6 +131,7 @@ registrar "migraciones"
 if ! "${compose[@]}" run --rm migrar; then
   fallar "las migraciones han fallado: la API sigue con la imagen anterior"
 fi
+# #endregion migrar
 
 # --no-build: nunca construir. Si faltase la imagen, Compose daría un error, no un docker build.
 # --no-deps: las migraciones ya se han aplicado arriba; sin esto, Compose volvería a ejecutar migrar
@@ -143,6 +153,7 @@ esperar_salud() {
   return 1
 }
 
+# #region arrancar
 # Compose borra el contenedor viejo antes de arrancar el nuevo: si up falla (la imagen no arranca),
 # la API puede estar parada. Por eso un fallo de up lleva al mismo camino que una API que no se pone
 # sana: volver a la imagen anterior.
@@ -158,7 +169,9 @@ if [ "$sana" = si ]; then
   registrar "hecho: la API corre con $(corto "$nueva")"
   exit 0
 fi
+# #endregion arrancar
 
+# #region volver
 # No arrancó o no llegó a estar sana: de vuelta a la imagen anterior (la guardada como :anterior).
 # IMAGEN en el entorno manda sobre la de .env solo en este comando, y --no-deps evita volver a
 # ejecutar las migraciones con el código viejo.
@@ -171,3 +184,4 @@ if IMAGEN="$anterior" "${compose[@]}" up -d --no-build --no-deps api && esperar_
   fallar "vuelta hecha: la API corre otra vez con $(corto "$volver"). Las migraciones de la imagen nueva siguen aplicadas"
 fi
 fallar "la imagen anterior tampoco está sana: mira docker compose logs api"
+# #endregion volver

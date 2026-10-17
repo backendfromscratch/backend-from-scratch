@@ -21,6 +21,7 @@ log() { echo "deploy: $*"; }
 # An image ID is long (sha256:…): to read it, its first 12 letters.
 short() { local id="${1#sha256:}"; echo "${id:0:12}"; }
 
+# #region one-at-a-time
 # One deployment at a time. File descriptor 9 opens (and creates) a lock file, and flock -n tries
 # to take it without waiting: if another deployment holds it (the timer and you at once, or a slow
 # one that hasn't finished yet), this one ends doing nothing and without an error (0). The system
@@ -28,6 +29,7 @@ short() { local id="${1#sha256:}"; echo "${id:0:12}"; }
 # user: in /run/lock, Linux doesn't let another user open somebody else's lock file.
 exec 9>/run/lock/shop-deploy.lock
 flock -n 9 || exit 0
+# #endregion one-at-a-time
 
 compose=(docker compose -f compose.production.yaml)
 
@@ -66,6 +68,7 @@ if [ -n "$container" ]; then
   running="$(docker inspect --format '{{.Image}}' "$container")"
 fi
 
+# #region previous
 # The image that is running is kept under a name of its own (<name>:previous) BEFORE asking the
 # registry. If main pointed to another image and the tag moved, the old one would be left without a
 # name and Docker could delete it: this way going back depends neither on the registry (it may be
@@ -77,7 +80,9 @@ if [ -n "$running" ] &&
   [ "$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$container")" = healthy ]; then
   docker tag "$running" "$previous"
 fi
+# #endregion previous
 
+# #region ask
 # Asks the registry: if main points to a new image, it downloads it and moves the local tag to it.
 # With build and image together in the service, pull downloads the image, it doesn't build it.
 # Compose writes "Pulling/Pulled" even when asked for --quiet: the output is kept and only shown if
@@ -94,7 +99,9 @@ new="$(docker image inspect --format '{{.Id}}' "$image")"
 if [ "$new" = "$running" ]; then
   exit 0
 fi
+# #endregion ask
 
+# #region failed
 # An image that already failed is not tried again every two minutes (every attempt is seconds
 # without an API): it waits for main to point to another one. The file holds the ID of the last one
 # that failed.
@@ -103,6 +110,7 @@ if [ -f .deploy-failed ] && [ "$(cat .deploy-failed)" = "$new" ]; then
   exit 1
 fi
 log "new image: $(short "${running:-none}") -> $(short "$new") (the one running is kept as $previous)"
+# #endregion failed
 
 # If the new image is no good, it is noted so it isn't repeated, and the script ends with an error (1).
 fail() {
@@ -111,6 +119,7 @@ fail() {
   exit 1
 }
 
+# #region migrate
 # The backup, before touching the schema. Going back changes the code, not the data: a bad migration
 # is only undone with this backup, by hand. If the backup fails, the script stops here (set -e):
 # without a backup it doesn't migrate, and as nothing has been touched, the next attempt starts
@@ -124,6 +133,7 @@ log "migrations"
 if ! "${compose[@]}" run --rm migrate; then
   fail "the migrations failed: the API stays on the previous image"
 fi
+# #endregion migrate
 
 # --no-build: never build. If the image were missing, Compose would give an error, not a docker build.
 # --no-deps: the migrations were already applied above; without it, Compose would run migrate again
@@ -145,6 +155,7 @@ wait_for_health() {
   return 1
 }
 
+# #region start
 # Compose removes the old container before starting the new one: if up fails (the image won't
 # start), the API may be down. That's why a failed up takes the same path as an API that doesn't get
 # healthy: going back to the previous image.
@@ -160,7 +171,9 @@ if [ "$healthy" = yes ]; then
   log "done: the API is running $(short "$new")"
   exit 0
 fi
+# #endregion start
 
+# #region roll-back
 # It didn't start or never got healthy: back to the previous image (the one kept as :previous).
 # IMAGE in the environment overrides the one in .env for this command only, and --no-deps avoids
 # running the migrations again with the old code.
@@ -173,3 +186,4 @@ if IMAGE="$previous" "${compose[@]}" up -d --no-build --no-deps api && wait_for_
   fail "back done: the API is running $(short "$back") again. The new image's migrations are still applied"
 fi
 fail "the previous image is not healthy either: look at docker compose logs api"
+# #endregion roll-back
