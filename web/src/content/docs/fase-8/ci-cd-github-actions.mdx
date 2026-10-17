@@ -80,8 +80,8 @@ flowchart TB
 <ProjectCode file="tienda-api/36-despliegue/.github/workflows/publicar.yml" region="cuando" />
 
 - **`pull_request`**: con cada pull request, una propuesta de cambio que se revisa antes de juntarla con `main`. Solo comprueba.
-- **`push` a `main`**: al aceptar una pull request. Comprueba y publica.
-- **`concurrency`**: en una pull request, un push nuevo cancela la comprobación anterior; en `main` no se cancela nada.
+- **`push` a `main`**: el tuyo, o el que hace GitHub al aceptar una pull request. Comprueba y publica.
+- **`concurrency`**: en una pull request, un push nuevo cancela la comprobación anterior; en `main` no se corta ninguno a medias.
 
 ### comprobar: los tests, con su PostgreSQL
 
@@ -119,13 +119,13 @@ En la [Fase 7](/fase-7/docker-hub-registro/#publicar-en-docker-hub-o-en-ghcrio) 
 
 <ProjectCode file="tienda-api/36-despliegue/.github/workflows/publicar.yml" region="token" />
 
-**`secrets.GITHUB_TOKEN`** lo crea GitHub para cada ejecución, con los permisos que pide el trabajo, y deja de valer al terminar: no hay contraseña que guardar ni que se filtre. En una pull request desde la copia de otra persona (un *fork*), solo puede leer.
+**`secrets.GITHUB_TOKEN`** lo crea GitHub al empezar cada trabajo, con los permisos de ese trabajo, y deja de valer cuando el trabajo termina: no hay contraseña que guardar ni que se filtre. En una pull request desde la copia de otra persona (un *fork*), solo puede leer.
 
 ### Una imagen para dos procesadores
 
 <ProjectCode file="tienda-api/36-despliegue/.github/workflows/publicar.yml" region="plataformas" />
 
-La imagen se construye dos veces: **`linux/amd64`**, para Intel y AMD, los de casi todos los VPS, y **`linux/arm64`**, para ARM, como la VM de Multipass en un Mac con chip de Apple. QEMU imita ARM en el ejecutor, que es amd64, y Buildx junta las dos en un **índice**, como el de `node:26-slim` en la [Fase 7](/fase-7/docker-hub-registro/#una-huella-para-cada-procesador):
+La imagen se construye dos veces: **`linux/amd64`**, para Intel y AMD, los de la mayoría de los VPS, y **`linux/arm64`**, para ARM, como la VM de Multipass en un Mac con chip de Apple. QEMU imita ARM en el ejecutor, que es amd64, y Buildx junta las dos en un **índice**, como el de `node:26-slim` en la [Fase 7](/fase-7/docker-hub-registro/#una-huella-para-cada-procesador):
 
 ```
 $ docker buildx imagetools inspect ghcr.io/backendfromscratch/tienda-api:main
@@ -171,7 +171,7 @@ Hazla pública una vez, en «Pruébalo». **No se puede volver a hacer privada**
 GitHub no le manda nada a tu servidor. **Es el servidor quien pregunta**, cada dos minutos, si `main` apunta a otra imagen:
 
 - **GitHub no llega a tu VM.** Tiene una <Term id="private-ip">IP privada</Term> tras tu router, y desde internet nadie empieza una conversación con ella: el [NAT de la Fase 0](/fase-0/ip-puertos-y-sockets/#cómo-sale-tu-ip-privada-a-internet-nat). Preguntando, la VM y un VPS funcionan igual.
-- **GitHub no guarda ninguna llave de tu servidor.** Quien entre en tu cuenta de GitHub podrá publicar una imagen, pero no abrir una terminal en tu servidor.
+- **GitHub no guarda ninguna llave de tu servidor.** Quien entre en tu cuenta de GitHub podrá publicar una imagen, pero no abrir una terminal en tu servidor. Ojo: esa imagen tu servidor la despliega solo, con tus secretos. Protege tu cuenta con verificación en dos pasos.
 - **No hay puerta nueva.** El servidor solo sale hacia fuera, y `ufw` sigue como en la [lección 2](/fase-8/proteger-servidor-linux/).
 
 Pregunta un <Term id="systemd">temporizador de systemd</Term>, como el de la copia de cada noche de la [lección 3](/fase-8/docker-compose-produccion/#una-copia-cada-noche), con su servicio:
@@ -218,7 +218,7 @@ Si en 60 segundos la API nueva no está sana, el script vuelve a `:anterior`:
 
 <ProjectCode file="tienda-api/36-despliegue/despliegue/desplegar.sh" region="fallida" />
 
-Así se vio en nuestro servidor, con una versión que pedía una variable, `CORREO_AVISOS`, que los tests tenían en `test/.env` y el `.env` del servidor no (hemos recortado líneas, `…`):
+Así se vio en nuestra VM, con una versión que preparamos para la prueba (en un registro de prueba, `localhost:5000`, sin pasar por GitHub): pedía una variable nueva, `CORREO_AVISOS`, que el `.env` del servidor no tenía (hemos recortado líneas, `…`):
 
 ```
 $ journalctl -u tienda-despliegue --since 23:54 --no-pager
@@ -233,6 +233,7 @@ Oct 17 23:56:58 curso systemd[1]: tienda-despliegue.service: Main process exited
 …
 Oct 17 23:57:45 curso systemd[1]: Starting tienda-despliegue.service - Despliega la imagen nueva de la tienda, si la hay...
 Oct 17 23:57:46 curso desplegar.sh[95028]: despliegue: la imagen 1c14bec4d388 ya falló: espero a una nueva (para reintentarla: rm /opt/tienda/.despliegue-fallido)
+…
 ```
 
 Mientras esperaba, `docker compose -f compose.produccion.yaml logs api` repetía el porqué: `Configuración: CORREO_AVISOS: Falta CORREO_AVISOS, o no es un email`. **Mira los logs mientras espera:** tras la vuelta, ese contenedor ya no existe. La imagen no se reintenta sola, porque cada intento es un minuto sin API:
@@ -250,20 +251,21 @@ Para cambiar de imagen, Compose para el contenedor viejo y arranca el nuevo. Ent
 23:52:20 200
 23:52:24 502
 23:52:27 200
+…
 ```
 
-**Dos ventanas:** el segundo sin contenedor y, después, unos segundos en los que nginx sigue apartando las copias que fallaron: tras un fallo, las aparta 10 segundos ([lección 4](/fase-8/nginx-proxy-inverso/#dos-copias-y-nginx-que-se-entera-solo)), y cada proceso de nginx lleva su propia cuenta. En nuestras pruebas, **entre 1 y 8 segundos** sin contestar por despliegue; uno que falla, más de un minuto. Para una tienda pequeña se acepta; desplegar sin cortes (dos copias que se relevan, o *blue-green*) es tema de la Fase 9.
+**Dos ventanas:** el segundo sin contenedor y, después, unos segundos en los que nginx sigue apartando las copias que fallaron: tras un fallo, las aparta 10 segundos ([lección 4](/fase-8/nginx-proxy-inverso/#dos-copias-y-nginx-que-se-entera-solo)), y cada proceso de nginx lleva su propia cuenta.
+
+En nuestras pruebas, **entre 1 y 8 segundos** sin contestar por despliegue; uno que falla, más de un minuto. Para una tienda pequeña se acepta; desplegar sin cortes (dos copias que se relevan, o *blue-green*) es tema de la Fase 9.
 
 ### Volver atrás devuelve el código, no el esquema
 
-Una <Term id="rollback">vuelta atrás</Term> cambia la imagen, pero las migraciones de la versión nueva **siguen aplicadas**: como en la [Fase 5](/fase-5/migraciones-base-de-datos/#solo-hacia-delante-y-una-tabla-que-lo-apunta), solo van hacia delante. Una migración mala solo se deshace a mano, con la copia de antes de migrar.
+Una <Term id="rollback">vuelta atrás</Term> cambia la imagen, pero las migraciones de la versión nueva **siguen aplicadas**: como en la [Fase 5](/fase-5/migraciones-base-de-datos/#solo-hacia-delante-y-una-tabla-que-lo-apunta), solo van hacia delante. Una migración mala solo se deshace a mano, con la copia de antes de migrar. No es el `ROLLBACK` de una [transacción de la Fase 5](/fase-5/transacciones-acid/#begin-y-commit-varias-órdenes-como-una-sola): aquí no se deshace nada en la base de datos.
 
 La regla que hace seguras las vueltas atrás se llama **expandir y contraer** (*expand and contract*). Imagina que quieres renombrar la columna `nombre` de `productos` a `titulo`:
 
 1. **Expandir:** una migración que solo añade `titulo`, copiando lo que hay en `nombre`, y un código que escribe en las dos y lee la nueva. El código viejo sigue funcionando, porque `nombre` sigue ahí.
 2. **Contraer:** días después, cuando ya no vas a volver a la versión vieja, otra migración borra `nombre`.
-
-Si renombras en un solo paso y vuelves atrás, el código viejo busca una columna que ya no existe.
 
 ### El otro modelo: GitHub entra por SSH
 
@@ -287,7 +289,7 @@ Quien entre con ella solo lanza el despliegue: **`restrict`** le quita la termin
 
 ### Esta web: GitHub Actions comprueba, Cloudflare despliega
 
-La web del curso reparte el trabajo en dos. Su workflow, `.github/workflows/ci.yml`, se lanza así:
+El workflow de esta web, `.github/workflows/ci.yml`, se lanza así:
 
 ```yaml
 on:
@@ -301,9 +303,9 @@ on:
     - cron: '17 5 * * 1'
 ```
 
-Los mismos `push` a `main` y `pull_request`, más un botón para lanzarlo a mano (`workflow_dispatch`) y una vez por semana (`schedule`, los lunes a las 5:17 UTC). Comprueba el formato, los tipos, los tests, la web construida, su accesibilidad y los proyectos guiados. **No despliega.**
+Los mismos `push` a `main` y `pull_request`, más un botón (`workflow_dispatch`) y los lunes a las 5:17 UTC (`schedule`). Comprueba la web y los proyectos guiados. **No despliega.**
 
-Despliega Cloudflare, con [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/): con cada push a `main`, GitHub le avisa, y Cloudflare descarga el commit, construye la web y la publica. Es el diagrama de la [Fase 1](/fase-1/git-por-dentro/#avance-un-push-que-despliega). Tampoco aquí guarda GitHub una llave de nadie: es Cloudflare quien tiene permiso para leer el repositorio.
+Despliega Cloudflare, con [Workers Builds](https://developers.cloudflare.com/workers/ci-cd/builds/): con cada push a `main`, GitHub le avisa, y Cloudflare descarga el commit, construye la web y la publica. Es el diagrama de la [Fase 1](/fase-1/git-por-dentro/#avance-un-push-que-despliega). Cloudflare no espera a Actions: lo que llega a `main` ya pasó los checks en su pull request, porque `main` exige que pasen. Tampoco aquí guarda GitHub una llave de nadie: es Cloudflare quien tiene permiso para leer el repositorio.
 
 ## Pruébalo
 
@@ -328,7 +330,7 @@ git remote add origin git@github.com:ana/tienda-api.git
 git push -u origin main
 ```
 
-Cambia `ana` por tu usuario; en Windows, `curl.exe` en lugar de `curl`. **El paso queda en la raíz**, con `.github/workflows/publicar.yml` junto a `package.json`, donde GitHub lo busca. En la pestaña *Actions* de tu repositorio verás la ejecución de *Publicar*. La nuestra, con la orden `gh` de GitHub:
+Cambia `ana` por tu usuario. En Windows, escríbelas en WSL, como en las fases anteriores: crear el repositorio no necesita la VM. **El paso queda en la raíz**, con `.github/workflows/publicar.yml` junto a `package.json`, donde GitHub lo busca. En la pestaña *Actions* de tu repositorio verás la ejecución de *Publicar*. La nuestra, con la orden `gh` de GitHub:
 
 ```
 $ gh run view 39055367200 -R backendfromscratch/shop-practice
@@ -342,21 +344,21 @@ JOBS
 …
 ```
 
-Fíjate en las dos marcas `✓`: `comprobar` pasó los tests y `publicar` subió la imagen. Si sale una en rojo, abre la ejecución: el log dice qué paso falló.
+Las dos marcas `✓`: `comprobar` pasó los tests y `publicar` subió la imagen. Si una sale en rojo, su log dice qué paso falló.
 
 Ahora **haz pública la imagen**: en tu perfil de GitHub, *Packages* → `tienda-api` → *Package settings* → *Change visibility* → *Public*.
 
 ### El servidor sigue tu imagen
 
-Copia al servidor la carpeta `despliegue/` del paso, que trae el script y el temporizador. Desde **tu ordenador**:
+Copia al servidor la carpeta `despliegue/` del paso, que trae el script y el temporizador. Desde **tu ordenador**, con tu usuario y la IP de tu servidor:
 
 ```sh
 rsync -av 36-despliegue/despliegue ubuntu@192.168.5.15:/opt/tienda/
 ```
 
-En Windows, `scp -r` en lugar de `rsync -av`. Solo esa carpeta: el resto de `/opt/tienda` lo has cambiado en las lecciones 3 a 5, y no quieres pisarlo.
+En Windows, desde PowerShell como en la lección 3, con el paso descargado allí (`curl.exe -O` y `tar -xzf`): `scp -r` en lugar de `rsync -av`. Solo esa carpeta: el resto de `/opt/tienda` lo has cambiado en las lecciones 3 a 5, y no quieres pisarlo.
 
-**Dentro del servidor**, en `/opt/tienda`, dale permiso de ejecución a los scripts (la descarga no lo trae, y al copiar se lo has podido quitar a la copia de seguridad) y dile qué imagen seguir, con tu usuario:
+**Dentro del servidor**, en `/opt/tienda`, dale permiso de ejecución a los scripts (la descarga no lo trae, y al copiar se lo has podido quitar a la copia de seguridad) y dile qué imagen seguir, con tu usuario, en minúsculas:
 
 ```sh
 cd /opt/tienda
@@ -530,7 +532,7 @@ Arranca, pregunta y termina en un segundo, sin escribir una línea suya: `main` 
 
 </TryIt>
 
-GitHub te deja aceptar una pull request con los *checks* en rojo. Para impedirlo, protege `main`: en *Settings* → *Rules* de tu repositorio, una regla que exija que `comprobar` pase antes de fusionar.
+GitHub te deja aceptar una pull request con los *checks* en rojo. Para impedirlo, protege `main`, como el repositorio de esta web: en *Settings* → *Rules* de tu repositorio, una regla que exija que `comprobar` pase antes de fusionar.
 
 ### Vuelve atrás a propósito
 
@@ -574,7 +576,6 @@ despliegue: hecho: la API corre con 2e831191c74a`}
 
 - **Las apps de tu móvil.** Se actualizan solas por la noche: el móvil pregunta a la tienda de apps si hay versión nueva, como tu servidor a ghcr.io.
 - **La marca verde o la cruz roja junto a un commit en GitHub.** Son los *checks* de la integración continua de ese proyecto.
-- **Esta web.** Cada push a `main` pasa por GitHub Actions y Cloudflare la publica en un par de minutos, como viste arriba.
 
 ## Errores comunes
 
@@ -610,7 +611,7 @@ despliegue: hecho: la API corre con 2e831191c74a`}
 
 <QuizOption text="El servidor descarga la imagen de la pull request y vuelve atrás al ver que falla.">
 
-Una pull request nunca publica. El servidor solo ve lo que hay en `main`, y la vuelta atrás es para imágenes que no se ponen sanas, no para tests en rojo.
+Una pull request nunca publica, y la vuelta atrás es para imágenes que no se ponen sanas, no para tests en rojo.
 
 </QuizOption>
 
@@ -641,7 +642,7 @@ ghcr.io crea el paquete privado la primera vez. Hecho público, el servidor lo d
 
 <QuizOption text="Añadir packages: write al trabajo comprobar.">
 
-Ese permiso es para escribir en el registro desde Actions, y publicar ya funcionó. El problema está en quien lee: tu servidor, sin cuenta.
+Publicar ya funcionó. El problema está en quien lee: tu servidor, sin cuenta.
 
 </QuizOption>
 
@@ -679,7 +680,7 @@ Por eso se expande y se contrae: primero se añade la columna nueva y el código
 
 <QuizOption text="Que da igual: el token deja de valer al terminar la ejecución.">
 
-Una ejecución basta para publicar una imagen maliciosa con tu nombre, y tu servidor la desplegaría.
+Una ejecución basta para publicar una imagen maliciosa que tu servidor desplegaría.
 
 </QuizOption>
 
@@ -741,7 +742,7 @@ Sin la variable, la imagen nueva falla igual, y la tienda pasa otro minuto sin A
 
 <QuizOption text="Reiniciar el temporizador con systemctl restart.">
 
-El temporizador funciona: lee `.despliegue-fallido` y espera a propósito. Reiniciarlo no cambia ni el fichero ni el `.env`.
+Reiniciarlo no cambia ni `.despliegue-fallido` ni el `.env`: seguirá esperando.
 
 </QuizOption>
 
@@ -754,5 +755,4 @@ El temporizador funciona: lee `.despliegue-fallido` y espera a propósito. Reini
 - [Understand GitHub Actions](https://docs.github.com/en/actions/get-started/understand-github-actions), de la documentación de GitHub, en inglés: workflows, trabajos, pasos y ejecutores.
 - [GITHUB_TOKEN](https://docs.github.com/en/actions/concepts/security/github_token), en inglés: qué es, cuánto dura y cómo limitar sus permisos.
 - [Publishing Docker images](https://docs.github.com/en/actions/tutorials/publish-packages/publish-docker-images), en inglés: publicar en ghcr.io desde Actions.
-- [Multi-platform builds](https://docs.docker.com/build/building/multi-platform/), de la documentación de Docker, en inglés: QEMU, Buildx e índices.
 - [Parallel Change](https://martinfowler.com/bliki/ParallelChange.html), de Martin Fowler, en inglés: expandir y contraer.
