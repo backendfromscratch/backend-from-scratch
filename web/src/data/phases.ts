@@ -98,7 +98,8 @@ export const phases: Phase[] = [
   },
   {
     number: 8,
-    status: 'coming-soon',
+    status: 'available',
+    lessonCount: 8,
     title: { es: 'Despliegue e infraestructura', en: 'Deployment and infrastructure' },
     summary: {
       es: 'Tu propio servidor: VPS, reverse proxy, dominio y HTTPS, CI/CD, modelos de cloud e infraestructura como código.',
