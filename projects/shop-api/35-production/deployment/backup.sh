@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The database backup (Phase 8, lesson 4): a compressed pg_dump in backups/, with the date in the
-# name, and out go the ones that are 7 days old or more. It runs by hand or every night with the
+# name, and backups 7 days old or more are deleted. It runs by hand or every night with the
 # shop-backup.timer timer. From any folder: it works in the project's.
 #   BACKUP_DAYS=14 deployment/backup.sh    keeps 14 days instead of 7
 set -euo pipefail
