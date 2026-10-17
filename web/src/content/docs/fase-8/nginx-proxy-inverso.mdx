@@ -28,7 +28,7 @@ import QuizOption from '~/components/QuizOption.astro';
 
 La tienda ya funciona en tu servidor, pero nadie puede entrar. Marta abre `http://192.168.5.15:3000` y no llega nada: en la [lección 3](/fase-8/docker-compose-produccion/), la API se publicó solo en `127.0.0.1`, a propósito.
 
-Podrías publicarla para todo el mundo, pero Node tendría que encargarse del HTTPS, la dirección llevaría un `:3000` y la API se saltaría el cortafuegos, como viste en la [lección 2](/fase-8/proteger-servidor-linux/#docker-se-salta-ufw). Y el día que se cuelgue, Marta verá una pestaña que carga sin fin.
+Podrías publicarla para todo el mundo, pero Node tendría que encargarse del HTTPS y la API se saltaría el cortafuegos, como viste en la [lección 2](/fase-8/proteger-servidor-linux/#docker-se-salta-ufw). Y el día que se cuelgue, Marta verá una pestaña que carga sin fin.
 
 **Casi todas las webs lo resuelven igual:** delante del programa ponen otro servidor que da la cara por él. En esta lección, ese servidor es nginx.
 
@@ -36,7 +36,7 @@ Podrías publicarla para todo el mundo, pero Node tendría que encargarse del HT
 
 <Analogy>
 
-Piensa en la centralita de una empresa. Llamas a un solo número, el de la empresa, y la telefonista te pasa con la extensión que buscas. Desde fuera no se puede marcar una extensión directamente.
+Piensa en la centralita de una empresa. Llamas a un solo número, el de la empresa, y la telefonista te pasa con la extensión que buscas.
 
 Al pasarte, le dice a su compañero desde qué número llamas. Si nadie coge la extensión, es ella quien te contesta: «no le puedo pasar». Y si dos compañeros atienden lo mismo, reparte las llamadas.
 
@@ -83,6 +83,8 @@ La carpeta `35-produccion` trae el sitio de nginx de la tienda, `nginx/tienda.co
 
 Un **`upstream`** es un grupo de servidores con un nombre, `tienda`. Tiene dos porque la API se publica en el rango `127.0.0.1:3000-3001`: **una sola copia puede caer en cualquiera de los dos puertos**, y en nuestras pruebas pasó del 3000 al 3001 al volver a arrancarla.
 
+Con una sola copia, el puerto vacío deja de vez en cuando una línea `connect() failed` en el `error.log` aunque la tienda conteste bien: nginx lo prueba, falla, pasa al otro y lo aparta 10 segundos.
+
 El puerto 80 solo redirige:
 
 <ProjectCode file="tienda-api/35-produccion/nginx/tienda.conf" region="puerto-80" />
@@ -102,7 +104,11 @@ Y lo que pasa con cada petición:
 <ProjectCode file="tienda-api/35-produccion/nginx/tienda.conf" region="pasar" />
 
 - **`proxy_pass http://tienda`**: pásasela al grupo `tienda`, por `http`: dentro del servidor no hace falta cifrar.
-- **`proxy_http_version 1.1`**, `Upgrade` y `Connection`: lo que necesita un WebSocket.
+- **`proxy_http_version 1.1`**, `Upgrade` y `Connection`: lo que necesita un WebSocket, con este `map` del principio del fichero:
+
+<ProjectCode file="tienda-api/35-produccion/nginx/tienda.conf" region="websocket" />
+
+`Upgrade` y `Connection` solo valen para un tramo: un *proxy* no las reenvía, así que nginx las pone a mano. El `map` da a `$conexion_cabecera` el valor `upgrade` cuando el navegador pide cambiar a WebSocket, y la deja vacía (nginx no la envía) cuando no.
 
 ### La IP del visitante: X-Forwarded-For
 
@@ -131,9 +137,8 @@ La cabecera la puede escribir cualquiera. Por eso la API la lee solo si la petic
 
 <ProjectCode file="tienda-api/35-produccion/src/limites.ts" region="ip" />
 
-- **`getConnInfo(c).remote.address`**: la dirección del otro lado de la conexión.
-- **Si no es la de un proxy de confianza**, se devuelve esa dirección: la cabecera se ignora.
-- **`.split(',').at(-1)`**: parte la lista por las comas y toma la última, la que puso nginx.
+- **`getConnInfo(c).remote.address`**: la dirección del otro lado de la conexión. Si no es de un proxy de confianza, la cabecera se ignora.
+- **`.split(',').at(-1)`**: parte la lista por las comas y toma la última, la de nginx.
 
 Es el cambio de código de este paso. **Tiene un hueco:** lo que se conecta a `127.0.0.1:3000` desde el propio servidor también llega desde `172.18.0.1`, y puede escribir la cabecera que quiera:
 
@@ -159,13 +164,13 @@ En la [Fase 2](/fase-2/codigos-de-estado-http/#los-códigos-que-importan) viste 
 
 Los 60 segundos son `proxy_read_timeout`. **El `error.log` dice siempre qué pasó:** es lo primero que mirar.
 
-Cuando falla un servidor del `upstream`, nginx **prueba el siguiente**, y te da el código del último intento. Lo hace con un `GET`, no con un `POST` ya enviado: no es <Term id="idempotent">idempotente</Term> ([Fase 2](/fase-2/metodos-http/#idempotente-repetirla-no-cambia-el-resultado)) y podría hacerse dos veces.
+Cuando falla un servidor del `upstream`, nginx **prueba el siguiente**, y te da el código del último intento. Es `proxy_next_upstream`: por defecto salta si no pudo conectar o se agotó el tiempo; un `500` de la API lo pasa tal cual. Un `POST` ya enviado no se reintenta (desde nginx 1.9.13, ningún método que no sea <Term id="idempotent">idempotente</Term>, como viste en la [Fase 2](/fase-2/metodos-http/#idempotente-repetirla-no-cambia-el-resultado)): podría hacerse dos veces. En «Pruébalo», un inicio de sesión esperó 60 segundos y dio `504`, sin probar el otro puerto.
 
 ### Dos copias, y nginx que se entera solo
 
 Con dos copias de la API, como el `--scale api=2` de la [Fase 7](/fase-7/docker-compose/#dos-copias-de-la-api-una-sola-cuenta-en-redis), nginx reparte las peticiones: es un <Term id="load-balancer">balanceador de carga</Term>.
 
-nginx no le pregunta al <Term id="healthcheck">healthcheck</Term> de Docker. **Mira las peticiones de verdad:** con `max_fails=1`, un fallo aparta esa copia durante `fail_timeout=10s`. Es una comprobación pasiva; las activas son de NGINX Plus, la versión de pago. El healthcheck lo usan Compose y, en la lección 6, el despliegue.
+nginx no le pregunta al <Term id="healthcheck">healthcheck</Term> de Docker de la [Fase 7](/fase-7/docker-multi-stage/#healthcheck-la-tienda-está-bien). **Mira las peticiones de verdad:** con `max_fails=1`, un fallo aparta esa copia durante `fail_timeout=10s`. Es una comprobación pasiva; las activas son de NGINX Plus, la versión de pago. El healthcheck lo usan Compose y, en la lección 6, el despliegue.
 
 Un efecto que vimos al probar: si todas las copias fallaron en esos 10 segundos, nginx contesta `502` al instante, aunque la API ya haya vuelto:
 
@@ -185,7 +190,7 @@ Lo medimos quitando este `location`, siguiendo un pedido y cancelándolo a los 3
 - **A los 60 segundos sin eventos, nginx cortó la conexión.**
 - **Con el `location`, los eventos llegaron siempre al momento**, y nginx espera hasta una hora entre uno y otro.
 
-El corte:
+El corte, siguiendo un pedido con la sesión de Marta: `-N` hace que curl escriba cada evento en cuanto llega, sin guardarlo, y `marta.txt` es el fichero de cookies donde curl guardó su sesión al iniciarla (`-c`), que `-b` envía.
 
 ```sh
 $ time curl -k -N -b marta.txt https://192.168.5.15/v2/pedidos/34/eventos
@@ -208,7 +213,7 @@ Con la petición de cambio de protocolo de la Fase 4, nginx contesta `HTTP/1.1 1
 
 ### Caddy, la alternativa
 
-**Caddy** es otro proxy inverso, más moderno, que consigue y renueva los certificados HTTPS solo. Usamos nginx porque ya lo instalaste en la Fase 2 y es el que más encontrarás en servidores y ofertas de trabajo. Las ideas valen para los dos.
+**Caddy** es otro proxy inverso, más moderno, que consigue y renueva los certificados HTTPS solo. Usamos nginx porque ya lo instalaste en la Fase 2 y es el que más encontrarás en servidores y ofertas de trabajo.
 
 ## Pruébalo
 
@@ -218,7 +223,7 @@ Las salidas son de la VM de la lección 3, `192.168.5.15`: **usa la IP de tu ser
 
 ### Instala el sitio
 
-En el servidor, mira lo que tiene nginx ahora:
+En un VPS recién alquilado, instala antes nginx con `sudo apt install -y nginx`. En el servidor, mira lo que tiene nginx ahora:
 
 <TryIt
   title="1. Los sitios activos"
@@ -231,7 +236,7 @@ lrwxrwxrwx 1 root root 33 Oct 17 22:19 tienda -> /etc/nginx/sites-available/tien
 - **`default`**: la bienvenida de nginx, en el 80, desde la [Fase 1](/fase-1/servicios-systemd-apt/).
 - **`tienda`**: la tienda de la [Fase 2](/fase-2/#antes-de-empezar-el-servidor-de-la-tienda), en el 8080, si no la quitaste.
 
-**El sitio nuevo sustituye a los dos.** En un VPS recién alquilado, instala antes nginx con `sudo apt install -y nginx`.
+**El sitio nuevo sustituye a los dos.**
 
 </TryIt>
 
@@ -309,7 +314,7 @@ x-xss-protection: 0
 {"estado":"ok"}`}
 >
 
-Sin más, curl se niega: `(60)` es que no se fía del certificado (el texto cambia según tu sistema). **`-k` se salta esa comprobación:** la conexión va cifrada, pero sin saber con quién hablas. Úsalo solo para probar tu servidor; la lección 5 te enseña a quitarlo.
+Sin más, curl se niega. `(60)`: el certificado es para `tienda.example`, no para la IP, y no lo firma nadie que curl conozca (el texto cambia según tu sistema). **`-k` se salta esa comprobación:** la conexión va cifrada, pero sin saber con quién hablas. Úsalo solo para probar tu servidor; la lección 5 te enseña a quitarlo.
 
 Con `-k`, `HTTP/2 200` y `{"estado":"ok"}`: **la API te contesta a través de nginx**, con `server: nginx` junto a sus cabeceras. Si sale `502`, la API está parada.
 
@@ -331,7 +336,7 @@ Deben coincidir. Si no, cambia `PROXY_CONFIABLE` y recrea la API: `docker compos
 
 </TryIt>
 
-Desde **tu ordenador**, crea la cuenta de Marta, y otra con una `X-Forwarded-For` inventada, como quien quiere saltarse el límite:
+Desde **tu ordenador**, crea la cuenta de Marta, y otra con una `X-Forwarded-For` inventada:
 
 <TryIt
   title="7. Dos cuentas nuevas"
@@ -353,7 +358,7 @@ ratelimit-policy: "cuentas-ip";q=5;w=3600
 
 Fíjate en **`r`**, las cuentas que te quedan esta hora: `4` y luego `3`. **La cabecera inventada no ha servido:** las dos se descuentan de tu IP. En Windows, el JSON va en un fichero, porque PowerShell trata distinto las comillas.
 
-Si sale `r=4` las dos veces, la API no se fía de nginx: repasa el paso 6.
+Si sale `r=4` dos veces, repasa el paso 6.
 
 </TryIt>
 
@@ -401,7 +406,7 @@ content-length: 166
 </html>`}
 >
 
-La página es de nginx, no de la API. Contesta al instante: no hay nada que esperar.
+La página es de nginx, y llega al instante.
 
 </TryIt>
 
@@ -420,7 +425,7 @@ Una línea por puerto del `upstream`: **`Connection refused`** en los dos. `clie
 
 ### Un 504: la API colgada
 
-`docker compose pause` congela el contenedor: acepta conexiones, pero no contesta, como una API colgada. En el servidor:
+`docker compose pause` congela el contenedor: acepta conexiones, pero no contesta. En el servidor:
 
 <TryIt
   title="12. Congela la API"
@@ -489,7 +494,7 @@ tienda-api-1   Up 8 minutes (healthy)    127.0.0.1:3001->3000/tcp
 tienda-api-2   Up 15 seconds (healthy)   127.0.0.1:3000->3000/tcp`}
 >
 
-Una copia en cada puerto del `upstream`. Espera a que la segunda diga `healthy`.
+Una copia en cada puerto del `upstream`.
 
 </TryIt>
 
@@ -520,13 +525,16 @@ Ahora tira una copia y vuelve a pedir:
   title="17. Una copia caída"
   cmd={`docker stop tienda-api-2
 # en tu ordenador, las cuatro peticiones otra vez; después, en el servidor:
-sudo tail -1 /var/log/nginx/error.log`}
+sudo tail -2 /var/log/nginx/error.log
+docker start tienda-api-2`}
   output={`tienda-api-2
 200 200 200 200 
-2026/10/17 22:29:18 [error] 28078#28078: *186 connect() failed (111: Connection refused) while connecting to upstream, client: 192.168.5.100, server: tienda.example, request: "GET /v2/productos HTTP/2.0", upstream: "http://127.0.0.1:3000/v2/productos", host: "192.168.5.15"`}
+…
+2026/10/17 22:29:18 [error] 28078#28078: *186 connect() failed (111: Connection refused) while connecting to upstream, client: 192.168.5.100, server: tienda.example, request: "GET /v2/productos HTTP/2.0", upstream: "http://127.0.0.1:3000/v2/productos", host: "192.168.5.15"
+tienda-api-2`}
 >
 
-**Las cuatro, `200`.** Una tropezó con la copia caída, la del 3000: nginx la pasó a la otra y apartó esa durante 10 segundos. Es la comprobación pasiva.
+**Las cuatro, `200`.** Una tropezó con la copia caída, la del 3000: nginx la pasó a la otra y apartó esa durante 10 segundos. Es la comprobación pasiva. `docker start` la vuelve a arrancar.
 
 </TryIt>
 
@@ -542,17 +550,17 @@ sudo tail -1 /var/log/nginx/error.log`}
 ## Errores comunes
 
 - **Dejar el sitio `default`.** Por http, la IP del servidor enseña «Welcome to nginx» en lugar de redirigir a la tienda.
-- **Leer la primera entrada de `X-Forwarded-For`, o fiarse de ella venga de donde venga.** La escribe el visitante. Solo la última, y solo si la conexión llega de tu proxy.
-- **Un `PROXY_CONFIABLE` que no es la puerta de enlace de tu red.** La API ignora la cabecera y todos tus visitantes comparten un límite. Compruébalo con `docker network inspect`.
-- **Un `location` con su propio `proxy_set_header`.** Deja de heredar los de fuera: pierde `X-Forwarded-For`, y la API vuelve a ver `172.18.0.1`. Si añades uno, repite todos.
-- **Subir `proxy_read_timeout` para todo** porque una ruta es lenta. Esconde los cuelgues: súbelo solo donde haga falta, como en los eventos.
+- **Leer la primera entrada de `X-Forwarded-For`, o fiarse de ella venga de donde venga.** Solo la última, y solo si la conexión llega de tu proxy.
+- **Un `PROXY_CONFIABLE` que no es la puerta de enlace de tu red.** Todos tus visitantes comparten un límite.
+- **Un `location` con su propio `proxy_set_header`.** Deja de heredar los de fuera y pierde `X-Forwarded-For`. Si añades uno, repite todos.
+- **Subir `proxy_read_timeout` para todo.** Esconde los cuelgues: súbelo solo donde haga falta.
 
 ## Resumen
 
-- Un proxy inverso recibe las peticiones de internet y se las pasa a tu programa, que se queda detrás: una sola puerta, el HTTPS en un sitio y errores claros.
-- `proxy_pass http://tienda` pasa cada petición al `upstream`, con las dos copias posibles de la API.
-- nginx añade la IP del visitante al final de `X-Forwarded-For`, y la API lee solo esa, y solo si la petición llega de `PROXY_CONFIABLE`.
-- `502`: nadie contesta en el puerto. `504`: la API no respondió en 60 segundos. El `error.log` dice cuál, y un `504` no deshace la petición.
+- Un proxy inverso recibe las peticiones y se las pasa a tu programa, que se queda detrás: una puerta, el HTTPS en un sitio y errores claros.
+- `proxy_pass http://tienda` pasa cada petición al `upstream`, con los dos puertos posibles de la API.
+- La API lee la última entrada de `X-Forwarded-For`, la de nginx, y solo si la petición llega de `PROXY_CONFIABLE`.
+- `502`: nadie contesta. `504`: la API no respondió en 60 segundos. El `error.log` dice cuál.
 - Los eventos SSE necesitan `proxy_buffering off` y un `proxy_read_timeout` largo, solo en su ruta.
 
 ## ¿Lo has entendido?
@@ -566,13 +574,13 @@ sudo tail -1 /var/log/nginx/error.log`}
 
 <QuizOption text="Que nginx está caído y hay que reiniciarlo.">
 
-Si nginx estuviera caído, no habría ningún `504`: quien lo escribe es nginx. Él funciona; el problema está detrás.
+Si nginx estuviera caído, no habría ningún `504`: lo escribe nginx.
 
 </QuizOption>
 
 <QuizOption text="Que la API acepta las conexiones pero no contesta a tiempo." correct>
 
-`504` es «el de detrás no ha respondido en el tiempo de espera». La API está en marcha pero colgada, o algo de lo que depende, como la base de datos, la tiene esperando. El `error.log` dirá `upstream timed out`.
+`504` es «el de detrás no ha respondido en el tiempo de espera». La API está en marcha pero colgada, y el `error.log` dirá `upstream timed out`.
 
 </QuizOption>
 
@@ -591,13 +599,13 @@ Eso da `502`, y al instante: `Connection refused`. Con un `504`, la conexión se
 
 <QuizOption text="198.51.100.20, la última, la que añadió nginx." correct>
 
-La conexión viene de la dirección de confianza, así que se lee la cabecera, y de ella solo la última entrada: la que escribió tu nginx. `10.0.0.5` la puso quien pidió.
+La conexión viene de la dirección de confianza: se lee la cabecera, y solo su última entrada, la de tu nginx.
 
 </QuizOption>
 
 <QuizOption text="10.0.0.5, la primera: es la del visitante original.">
 
-La primera la puede escribir cualquiera, y es justo lo que haría quien quiere saltarse el límite. Solo la última viene de tu proxy.
+La primera la puede escribir cualquiera; solo la última viene de tu proxy.
 
 </QuizOption>
 
@@ -616,7 +624,7 @@ Desde `172.18.0.1` llega nginx, que es de confianza. Ignorar la cabecera haría 
 
 <QuizOption text="Porque Cache-Control sustituye a X-Forwarded-For: solo cabe una cabecera por location.">
 
-Un `location` puede poner todas las cabeceras que quiera. El problema es otro: deja de heredar las de fuera.
+Un `location` puede poner las cabeceras que quiera; el problema es que deja de heredar las de fuera.
 
 </QuizOption>
 
@@ -647,7 +655,7 @@ nginx hereda los `proxy_set_header` de fuera solo si el `location` no define nin
 
 <QuizOption text="Reiniciar el servidor: nginx no lee los sitios nuevos hasta arrancar.">
 
-`systemctl reload nginx` ya le hace leer la configuración, sin cortar las conexiones. Reiniciar no cambia quién atiende el 80.
+`systemctl reload nginx` ya le hace leer la configuración. Reiniciar no cambia quién atiende el 80.
 
 </QuizOption>
 
@@ -672,7 +680,7 @@ El navegador espera lo que haga falta a una respuesta de SSE: para eso existe. E
 
 <QuizOption text="nginx, que espera como mucho 60 segundos entre un trozo y el siguiente." correct>
 
-Es `proxy_read_timeout`, 60 segundos por defecto. Si la API no envía nada en ese rato, nginx da la conexión por muerta. El `location` de los eventos lo sube a una hora.
+Es `proxy_read_timeout`, 60 segundos por defecto: si la API no envía nada en ese rato, nginx corta. El `location` de los eventos lo sube a una hora.
 
 </QuizOption>
 
@@ -703,7 +711,7 @@ Docker no le cuenta nada a nginx. El healthcheck lo usan Compose y tus scripts.
 
 <QuizOption text="Una petición de verdad falló en esa copia, y la aparta durante fail_timeout." correct>
 
-Es la comprobación pasiva: con `max_fails=1`, un fallo basta para dejarla de lado 10 segundos. La petición que falló se pasa a la otra copia si se puede repetir, como un `GET`.
+Es la comprobación pasiva: con `max_fails=1`, un fallo basta para dejarla de lado 10 segundos. La petición que falló se pasa a la otra copia: con `Connection refused` no llegó a enviarse, así que da igual el método.
 
 </QuizOption>
 
