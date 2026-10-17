@@ -103,8 +103,8 @@ La `35-produccion` trae lo que cambia al poner la tienda en un servidor, junto a
 
 - `compose.produccion.yaml`: la misma tienda, con `restart: unless-stopped`, la imagen `${IMAGEN:-tienda-api}` (la que construye `--build`, o la publicada si defines `IMAGEN`), la subred de la red fijada (`172.18.0.0/16`) y sin cuentas de práctica: `migrar` carga solo los productos de ejemplo (`--sin-cuentas`). La API sigue publicada solo en `127.0.0.1`.
 - `.env.produccion.ejemplo`: la configuración de un servidor. Cópialo como `.env` **en el servidor**, genera ahí los secretos (`openssl rand -base64 32` y `openssl rand -hex 24`) y cambia `tienda.example` por tu nombre. Las cuatro `OIDC_*` quedan comentadas: sin proveedor de identidad, la tienda funciona con email y contraseña.
-- `nginx/tienda.conf`: nginx delante, con el 80 redirigiendo al 443, las cabeceras `X-Forwarded-For` y `X-Forwarded-Proto`, las dos copias de la API en un `upstream`, y su propio `location` para los eventos de un pedido. Lleva las instrucciones para instalarlo y las dos rutas del certificado (Let's Encrypt o tu propia autoridad).
-- `despliegue/copia-seguridad.sh`, con `tienda-copia.service` y `tienda-copia.timer`: un `pg_dump` cada noche a las 03:30, en `copias/`, guardado 7 días.
+- `nginx/tienda.conf`: nginx delante, con el 80 redirigiendo al 443, las cabeceras `X-Forwarded-For` y `X-Forwarded-Proto`, las dos copias de la API en un `upstream`, y su propio `location` para los eventos de un pedido. Lleva las instrucciones para instalarlo. Tal como está usa el certificado de tu propia autoridad (`/etc/ssl/tienda/`, camino gratuito); con Let's Encrypt, `certbot --nginx` cambia esas dos líneas.
+- `despliegue/copia-seguridad.sh`, con `tienda-copia.service` y `tienda-copia.timer`: un `pg_dump` cada noche a las 03:30, en `copias/` (solo legible por tu usuario), guardado 7 días. Tu usuario tiene que estar en el grupo `docker` (equivale a root: ten cuidado) y cambiar `User` y las rutas del `.service` si no es `ubuntu` y `/opt/tienda`.
 
 ```sh
 cp .env.produccion.ejemplo .env && chmod 600 .env    # y genera los secretos en .env

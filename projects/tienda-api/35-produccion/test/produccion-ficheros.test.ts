@@ -139,6 +139,11 @@ test('la copia de seguridad: .tmp hasta que acaba bien, y solo entonces borra la
   assert.match(script, /^#!\/usr\/bin\/env bash\n/);
   assert.match(script, /^set -euo pipefail$/m);
   assert.match(script, /pg_dump/);
+  // Las copias son la base de datos entera: se crean con permisos 600, antes de escribir nada.
+  assert.ok(script.indexOf('umask 077') > script.indexOf('set -euo pipefail'));
+  assert.ok(script.indexOf('umask 077') < script.indexOf('exec -T db pg_dump'));
+  assert.match(script, /-mtime \+"\$\(\(dias - 1\)\)"/);
+  assert.match(script, /-name 'tienda-\*\.sql\.gz\.tmp' -mmin \+60/);
   const volcar = script.indexOf('pg_dump');
   const mover = script.indexOf('mv ');
   const borrar = script.indexOf('-mtime');
@@ -158,4 +163,12 @@ test('la imagen trae crear-admin, y .dockerignore deja fuera lo que es del servi
   for (const nombre of ['nginx', 'despliegue', 'copias', 'compose.produccion.yaml']) {
     assert.ok(ignorados.includes(nombre), nombre);
   }
+});
+
+test('nginx/tienda.conf es válido tal como está: el certificado de la autoridad propia, activo', async () => {
+  const nginx = (await sinComentarios('nginx/tienda.conf')).join('\n');
+  assert.match(nginx, /ssl_certificate\s+\/etc\/ssl\/tienda\/tienda\.crt;/);
+  assert.match(nginx, /ssl_certificate_key\s+\/etc\/ssl\/tienda\/tienda\.key;/);
+  assert.ok(!nginx.includes('letsencrypt'));
+  assert.match(nginx, /location = \/eco \{[^}]*proxy_read_timeout 1h;/);
 });
