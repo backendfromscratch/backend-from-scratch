@@ -17,9 +17,10 @@ const leer = (fichero: string) => readFile(join(import.meta.dirname, '..', 'bd',
 // producción.
 let sinCuentas: boolean;
 try {
-  sinCuentas = parseArgs({ options: { 'sin-cuentas': { type: 'boolean' } }, strict: true }).values[
-    'sin-cuentas'
-  ] === true;
+  sinCuentas =
+    parseArgs({ options: { 'sin-cuentas': { type: 'boolean' } }, strict: true }).values[
+      'sin-cuentas'
+    ] === true;
 } catch (error) {
   console.error(`Argumento no válido: ${(error as Error).message}`);
   console.error('Uso: npm run bd:datos, o npm run bd:datos:produccion (con --sin-cuentas)');
