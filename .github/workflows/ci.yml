@@ -8,6 +8,10 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # Once a week, everything, even if nothing changed: what changes outside the repository (a new
+  # Node 26 release, a package removed from npm) shows up here, not in the next unrelated PR.
+  schedule:
+    - cron: '17 5 * * 1'
 
 # A new push to the same branch or PR cancels the previous run, which is no longer useful.
 concurrency:
@@ -86,12 +90,14 @@ jobs:
   # The guided projects of the course (projects/), each step a complete Node.js project: the same
   # Node version the lessons ask for, and npm, the package manager the reader uses. A step's code
   # is shown in the lessons, so a step that fails to install, type-check or pass its tests is a
-  # broken lesson.
+  # broken lesson. A pull request checks only the steps it changes (each step is a project of its
+  # own: no step reads another's files), so a PR that does not touch projects/ passes in seconds;
+  # pushes to main, manual runs and the weekly run check every step.
   projects:
     name: guided projects (node 26)
     runs-on: ubuntu-24.04
-    # Phase 6's steps run argon2 and several servers per test file, and Phase 7 adds Docker image
-    # builds and a Docker Compose run: the job took 18 minutes on its first run.
+    # Every step: from 13 to 21 minutes since Phase 7 (each step also runs the tests of the earlier
+    # ones, one file at a time because they share the test database).
     timeout-minutes: 30
     # From Phase 5 the steps keep their data in PostgreSQL 18, the version the lessons install, and
     # from Phase 7 the rate limiter's Redis store is tested against Redis 8. Pinned by digest, like
@@ -121,6 +127,32 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # A pull request is checked out as its merge commit with main: its first parent is main,
+          # so the diff against it is exactly what the PR changes.
+          fetch-depth: 2
+
+      # The steps to check, one per line, in $RUNNER_TEMP/steps. In a pull request, the step
+      # folders it changes that still exist, or every step if it changes this workflow.
+      - name: steps to check
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          all() { printf '%s\n' projects/*/[0-9][0-9]-*/; }
+          if [ "$EVENT" != pull_request ]; then
+            all
+          else
+            # Without rename detection, a file moved from one step to another names both steps.
+            changed="$(git diff --no-renames --name-only HEAD^1 HEAD)"
+            if printf '%s\n' "$changed" | grep -qx '.github/workflows/ci.yml'; then
+              all
+            else
+              # grep finds nothing in a PR that does not touch projects/: not an error.
+              printf '%s\n' "$changed" | { grep -oE '^projects/[^/]+/[0-9][0-9]-[^/]+/' || true; } |
+                sort -u | while IFS= read -r step; do if [ -d "$step" ]; then echo "$step"; fi; done
+            fi
+          fi > "$RUNNER_TEMP/steps"
+          echo "Steps to check: $(grep -c . "$RUNNER_TEMP/steps" || true)"
+          cat "$RUNNER_TEMP/steps"
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -143,18 +175,20 @@ jobs:
       # Every step, even after one fails, so the log shows all the failures at once. `npm ci`
       # installs exactly the lockfile, and each step's .npmrc turns off install scripts. The Redis
       # store's tests use database 1 of the Redis service (without the variable they are skipped).
+      # The loops read the list on descriptor 3: on standard input, npm or docker could eat the rest
+      # of it and skip steps without a word.
       - name: install, types and tests of every step
         env:
           REDIS_URL_TESTS: redis://127.0.0.1:6379/1
         run: |
           failed=""
-          for step in projects/*/[0-9][0-9]-*/; do
+          while IFS= read -r step <&3; do
             echo "::group::$step"
             if ! (cd "$step" && npm ci && { [ "$(npm pkg get scripts.check)" = "{}" ] || npm run check; } && npm test); then
               failed="$failed $step"
             fi
             echo "::endgroup::"
-          done
+          done 3< "$RUNNER_TEMP/steps"
           if [ -n "$failed" ]; then
             echo "::error::These steps failed:$failed"
             exit 1
@@ -169,13 +203,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: |
           failed=""
-          for dockerfile in projects/*/[0-9][0-9]-*/Dockerfile; do
-            step="$(dirname "$dockerfile")"
+          while IFS= read -r step <&3; do
+            [ -f "$step/Dockerfile" ] || continue
             echo "::group::docker build $step"
             docker build "$step" || failed="$failed $step"
             echo "::endgroup::"
-          done
-          for step in projects/*/34-*/; do
+          done 3< "$RUNNER_TEMP/steps"
+          while IFS= read -r step <&3; do
             [ -f "$step/compose.yaml" ] || continue
             echo "::group::docker compose $step"
             for example in "$step/.env.ejemplo" "$step/.env.example"; do
@@ -200,7 +234,7 @@ jobs:
             fi
             (cd "$step" && docker compose down -v)
             echo "::endgroup::"
-          done
+          done 3< "$RUNNER_TEMP/steps"
           if [ -n "$failed" ]; then
             echo "::error::These steps failed:$failed"
             exit 1
