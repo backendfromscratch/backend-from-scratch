@@ -1,0 +1,102 @@
+# TO READ ONLY: the shop's server on Hetzner Cloud, its firewall and its DNS record.
+# This file does not end in .tf on purpose: Terraform ignores it, so neither `validate` nor
+# `apply` loads it and nothing is created (or charged). To use it for real, give it a .tf name
+# in a folder of your own, with your account, your token and your domain.
+#
+# Private values (the token, your SSH key) arrive as variables: they are not written here.
+# Careful: Terraform's state stores the values of every resource, secrets included.
+
+terraform {
+  required_providers {
+    hcloud = {
+      source  = "hetznercloud/hcloud"
+      version = "1.70.0"
+    }
+    # DNS is handled by Cloudflare, not Hetzner: Cloudflare serves the DNS of any domain,
+    # wherever you bought it, and its free plan is enough for the shop.
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "5.27.0"
+    }
+  }
+}
+
+variable "hcloud_token" {
+  description = "Hetzner Cloud API token (project > Security > API tokens)"
+  type        = string
+  sensitive   = true # Terraform does not print it on the screen
+}
+
+variable "cloudflare_token" {
+  description = "Cloudflare API token with permission to edit the zone's DNS"
+  type        = string
+  sensitive   = true
+}
+
+variable "ssh_public_key" {
+  description = "Your SSH public key (the contents of id_ed25519.pub)"
+  type        = string
+}
+
+variable "zone_id" {
+  description = "The identifier of your domain's zone in Cloudflare"
+  type        = string
+}
+
+variable "domain" {
+  description = "The name that will point at the server, for example shop.example.com"
+  type        = string
+}
+
+provider "hcloud" {
+  token = var.hcloud_token
+}
+
+provider "cloudflare" {
+  api_token = var.cloudflare_token
+}
+
+# Your public key at Hetzner, to log in over SSH without a password.
+resource "hcloud_ssh_key" "shop" {
+  name       = "shop"
+  public_key = var.ssh_public_key
+}
+
+# The provider's firewall: SSH, HTTP and HTTPS from anywhere, and nothing else.
+resource "hcloud_firewall" "web" {
+  name = "shop-web"
+
+  dynamic "rule" {
+    for_each = ["22", "80", "443"]
+    content {
+      direction  = "in"
+      protocol   = "tcp"
+      port       = rule.value
+      source_ips = ["0.0.0.0/0", "::/0"]
+    }
+  }
+}
+
+# The server: Ubuntu 26.04, the smallest plan, with the key and the firewall above.
+resource "hcloud_server" "web" {
+  name         = "shop"
+  server_type  = "cx23"
+  image        = "ubuntu-26.04"
+  location     = "nbg1"
+  ssh_keys     = [hcloud_ssh_key.shop.id]
+  firewall_ids = [hcloud_firewall.web.id]
+}
+
+# The DNS record of type A (Phase 0): the name points at the server's IPv4 address.
+resource "cloudflare_dns_record" "web" {
+  zone_id = var.zone_id
+  name    = var.domain
+  type    = "A"
+  content = hcloud_server.web.ipv4_address
+  ttl     = 300
+  proxied = false # DNS only: traffic goes straight to your server
+}
+
+output "server_ip" {
+  value = hcloud_server.web.ipv4_address
+}
