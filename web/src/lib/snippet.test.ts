@@ -84,6 +84,7 @@ describe('languageOf', () => {
     expect(languageOf('a/.npmrc')).toBe('ini');
     expect(languageOf('a/despliegue/tienda-copia.service')).toBe('ini');
     expect(languageOf('a/despliegue/tienda-copia.timer')).toBe('ini');
+    expect(languageOf('a/nginx/tienda.conf')).toBe('nginx');
     expect(() => languageOf('a/foto.png')).toThrow();
   });
 });

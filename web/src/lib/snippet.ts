@@ -65,6 +65,8 @@ export function languageOf(file: string): string {
     // systemd units: sections and key=value lines, like an ini file.
     service: 'ini',
     timer: 'ini',
+    // The guided project's only .conf files are nginx's (nginx/tienda.conf).
+    conf: 'nginx',
   };
   const language = languages[extension] ?? (file.split('/').at(-1)?.startsWith('.') ? 'ini' : '');
   if (!language) throw new Error(`No language for «${file}»`);
