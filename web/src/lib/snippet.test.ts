@@ -38,6 +38,12 @@ describe('extractRegion', () => {
     expect(extractRegion(yaml)).toBe('services:\n  db:\n    image: postgres\n  api:');
   });
 
+  it('a # marker is only a whole comment line, and #regional is not one', () => {
+    const yaml = 'a: 1\nkey: "# #region x"\n# #regional\nb: 2\n';
+    expect(extractRegion(yaml)).toBe('a: 1\nkey: "# #region x"\n# #regional\nb: 2');
+    expect(() => extractRegion(yaml, 'x')).toThrow('There is no region «x»');
+  });
+
   it('without a region: the whole file, without the markers', () => {
     expect(extractRegion(source)).toBe(
       "import { x } from 'y';\n\napp.get('/', () => {\n  return 1;\n});\n\nfunction f() {\n  if (a) {\n    b();\n  }\n}",

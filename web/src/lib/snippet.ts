@@ -1,8 +1,9 @@
 /**
  * The code the lessons show comes from the guided projects (projects/), which CI runs and tests:
  * a lesson never copies code by hand. A file is shown whole or one region of it, marked with
- * `// #region name` and `// #endregion name` (`-- #region name` in SQL files). A region that does not
- * exist fails the build.
+ * `// #region name` and `// #endregion name` (`-- #region name` in SQL files, and `# #region name` in
+ * files whose comments start with `#`: YAML, shell, env files and systemd units). Only a whole line
+ * is a marker. A region that does not exist fails the build.
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
