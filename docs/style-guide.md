@@ -176,6 +176,8 @@ acronym:
   translation: interfaz de programación de aplicaciones   # only in Spanish
 ```
 
+The `acronym` block only accepts all-capital letters. A mixed-case acronym, like «IaaS» or «PaaS», has no block: what it stands for goes at the start of `short` («Infraestructura como servicio (en inglés, Infrastructure as a Service): …»; in English, "Infrastructure as a Service: …").
+
 The glossary links each term to the lesson that explains it («Se explica en…», "Explained in…"): by default, the first one in the course that uses it with `<Term>`, counting the phase introductions. If that lesson only mentions it and another one explains it, point to the right one with `lesson`. If the key does not exist in any language, the build fails.
 
 If `short` contains a colon followed by a space («Nombre: valor»), put it in single quotes. Otherwise YAML interprets it as a new key and the build fails.
