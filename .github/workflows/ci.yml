@@ -64,7 +64,8 @@ jobs:
       # per language): formatted, and valid for the pinned provider. `init -backend=false` only
       # downloads the provider (no state, no cloud account); validate then checks the file without
       # touching Docker. It runs on a copy so the container does not leave a root-owned .terraform in
-      # the checkout. Pinned by digest, like the Actions.
+      # the checkout. No lock file is shipped with the practice, so the provider's checksums come
+      # from the exact version pin in main.tf. Pinned by digest, like the Actions.
       - name: terraform practice files (fmt and validate)
         if: ${{ !cancelled() }}
         env:
@@ -124,8 +125,10 @@ jobs:
     name: guided projects (node 26)
     runs-on: ubuntu-24.04
     # Every step: from 13 to 21 minutes since Phase 7 (each step also runs the tests of the earlier
-    # ones, one file at a time because they share the test database).
-    timeout-minutes: 30
+    # ones, one file at a time because they share the test database). With Phase 8 a full run took
+    # 29m16s (2026-10-17), about 25 minutes of it the install-and-tests step, and each new step adds
+    # its own tests to that: 45 minutes leaves room to grow.
+    timeout-minutes: 45
     # From Phase 5 the steps keep their data in PostgreSQL 18, the version the lessons install, and
     # from Phase 7 the rate limiter's Redis store is tested against Redis 8. Pinned by digest, like
     # the Actions. Their ports are published on the runner only.
@@ -286,7 +289,7 @@ jobs:
         if: ${{ !cancelled() }}
         env:
           NGINX_IMAGE: nginx:1.28@sha256:146adea4768b83c607d0bdfa4188464e3da6e0a3ad4475db1d1d8f64f27c29cc # 1.28.3
-          SHELLCHECK_IMAGE: koalaman/shellcheck:stable@sha256:bb596a0d169b85ddd81d8b6d3a2ff6d5baf5fca10b97f575ebc647c3dff62b3d # v0.11.0
+          SHELLCHECK_IMAGE: koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d # v0.11.0
           ACTIONLINT_IMAGE: rhysd/actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9 # 1.7.7
           UBUNTU_IMAGE: ubuntu:26.04@sha256:c098726dd9b9733f3e885f8de0ef375206a311b0a317eadc40d347b1115fb944 # 26.04
         run: |
@@ -295,6 +298,8 @@ jobs:
             name="$1"; shift
             "$@" || { echo "::error::$step: $name failed"; bad=1; }
           }
+          # The throwaway .env never stays in a step, even if the script stops halfway.
+          trap '[ -z "${step-}" ] || rm -f "$step/.env"' EXIT
           while IFS= read -r step <&3; do
             step="${step%/}"
             for compose in "$step"/compose.produc*.yaml; do [ -f "$compose" ] && break; done
@@ -307,48 +312,69 @@ jobs:
             for example in "$step"/.env.produccion.ejemplo "$step"/.env.production.example; do
               [ -f "$example" ] && break
             done
-            while IFS= read -r line; do
-              case "$line" in
-                [!#]*SECRET*=* | [!#]*PASSWORD*=*) echo "${line%%=*}=$(openssl rand -hex 32)" ;;
-                *) echo "$line" ;;
-              esac
-            done < "$example" > "$step/.env"
-            try "docker compose config" docker compose --project-directory "$step" -f "$compose" config --quiet
+            if [ -f "$example" ]; then
+              while IFS= read -r line; do
+                case "$line" in
+                  [!#]*SECRET*=* | [!#]*PASSWORD*=*) echo "${line%%=*}=$(openssl rand -hex 32)" ;;
+                  *) echo "$line" ;;
+                esac
+              done < "$example" > "$step/.env"
+              try "docker compose config" docker compose --project-directory "$step" -f "$compose" config --quiet
+            else
+              echo "skipped docker compose config: no .env.produc* example"
+            fi
 
             # nginx: the first (active) certificate and key paths of the file, a throwaway pair there.
-            for conf in "$step"/nginx/*.conf; do break; done
-            crt="$(sed -n 's/^ *ssl_certificate  *\(\/[^;]*\);.*/\1/p' "$conf" | head -n 1)"
-            key="$(sed -n 's/^ *ssl_certificate_key  *\(\/[^;]*\);.*/\1/p' "$conf" | head -n 1)"
-            mkdir -p "$work/certs"
-            openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=example.test \
-              -keyout "$work/certs/key.pem" -out "$work/certs/crt.pem" 2> /dev/null
-            printf 'events {}\nhttp {\n    include /etc/nginx/site-under-test.conf;\n}\n' > "$work/nginx.conf"
-            try "nginx -t" docker run --rm \
-              -v "$PWD/$conf":/etc/nginx/site-under-test.conf:ro \
-              -v "$work/nginx.conf":/etc/nginx/test.conf:ro \
-              -v "$work/certs/crt.pem":"$crt":ro -v "$work/certs/key.pem":"$key":ro \
-              "$NGINX_IMAGE" nginx -t -c /etc/nginx/test.conf
+            for conf in "$step"/nginx/*.conf; do [ -f "$conf" ] && break; done
+            if [ -f "$conf" ]; then
+              crt="$(sed -n 's/^ *ssl_certificate  *\(\/[^;]*\);.*/\1/p' "$conf" | head -n 1)"
+              key="$(sed -n 's/^ *ssl_certificate_key  *\(\/[^;]*\);.*/\1/p' "$conf" | head -n 1)"
+              mkdir -p "$work/certs"
+              openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=example.test \
+                -keyout "$work/certs/key.pem" -out "$work/certs/crt.pem" 2> /dev/null
+              printf 'events {}\nhttp {\n    include /etc/nginx/site-under-test.conf;\n}\n' > "$work/nginx.conf"
+              try "nginx -t" docker run --rm \
+                -v "$PWD/$conf":/etc/nginx/site-under-test.conf:ro \
+                -v "$work/nginx.conf":/etc/nginx/test.conf:ro \
+                -v "$work/certs/crt.pem":"$crt":ro -v "$work/certs/key.pem":"$key":ro \
+                "$NGINX_IMAGE" nginx -t -c /etc/nginx/test.conf
+            else
+              echo "skipped nginx -t: no nginx/*.conf"
+            fi
 
             # The scripts next to the units' folder (deployment/ or despliegue/).
             scripts=()
             for script in "$step"/deployment/*.sh "$step"/despliegue/*.sh; do
               [ -f "$script" ] && scripts+=("${script#"$step"/}")
             done
-            try "shellcheck" docker run --rm -v "$PWD/$step":/step:ro -w /step "$SHELLCHECK_IMAGE" \
-              "${scripts[@]}"
+            if [ "${#scripts[@]}" -gt 0 ]; then
+              try "shellcheck" docker run --rm -v "$PWD/$step":/step:ro -w /step "$SHELLCHECK_IMAGE" \
+                "${scripts[@]}"
+            else
+              echo "skipped shellcheck: no deployment scripts"
+            fi
 
             # systemd: the units sit in a folder of the step; their paths start with /opt/<name>.
-            for unit in "$step"/*/*.service; do break; done
-            unit_dir="$(basename "$(dirname "$unit")")"
-            opt="$(grep -ho '/opt/[a-z-]*' "$unit" | head -n 1)"
-            # UNIT_DIR is expanded by the container's shell, on purpose: the quotes are single.
-            # shellcheck disable=SC2016
-            try "systemd-analyze verify" docker run --rm -v "$PWD/$step":"$opt":ro \
-              -e DEBIAN_FRONTEND=noninteractive -e UNIT_DIR="$opt/$unit_dir" "$UBUNTU_IMAGE" sh -ec '
-                apt-get update -qq > /dev/null
-                apt-get install -y -qq --no-install-recommends systemd > /dev/null
-                printf "[Service]\nExecStart=/bin/true\n" > /etc/systemd/system/docker.service
-                systemd-analyze verify --man=no "$UNIT_DIR"/*.service "$UNIT_DIR"/*.timer'
+            units=()
+            for unit in "$step"/*/*.service "$step"/*/*.timer; do
+              [ -f "$unit" ] && units+=("${unit#"$step"/}")
+            done
+            if [ "${#units[@]}" -gt 0 ]; then
+              opt="$(grep -ho '/opt/[a-z-]*' "$step/${units[0]}" | head -n 1)"
+              # apt installs whatever systemd Ubuntu 26.04 ships on the day (not pinned): only the
+              # syntax of the units is checked, so a newer systemd cannot hide a real mistake and
+              # pinning a package version would break the job every time Ubuntu updates it.
+              # The units go as arguments; "$@" is expanded by the container's shell, on purpose.
+              # shellcheck disable=SC2016
+              try "systemd-analyze verify" docker run --rm -v "$PWD/$step":"$opt":ro \
+                -e DEBIAN_FRONTEND=noninteractive -w "$opt" "$UBUNTU_IMAGE" sh -ec '
+                  apt-get update -qq > /dev/null
+                  apt-get install -y -qq --no-install-recommends systemd > /dev/null
+                  printf "[Service]\nExecStart=/bin/true\n" > /etc/systemd/system/docker.service
+                  systemd-analyze verify --man=no "$@"' sh "${units[@]}"
+            else
+              echo "skipped systemd-analyze verify: no units"
+            fi
 
             for workflow in "$step"/.github/workflows/*.yml; do
               [ -f "$workflow" ] || continue
