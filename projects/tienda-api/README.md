@@ -114,3 +114,19 @@ despliegue/copia-seguridad.sh                        # una copia ahora
 ```
 
 `crear-admin` crea tu cuenta de admin con una contraseña larga al azar, la enseña una sola vez y guarda solo su hash. Con `PROXY_CONFIABLE`, la API lee la IP del visitante en `X-Forwarded-For` solo cuando la petición llega de esa dirección (la puerta de enlace de la red de Compose: `docker network inspect tienda_default`).
+
+`36-despliegue` publica la imagen y la despliega sin que GitHub tenga que entrar en tu servidor:
+
+- `.github/workflows/publicar.yml`: en cada pull request instala, comprueba los tipos y pasa los tests con una PostgreSQL 18; en cada push a `main`, además construye la imagen para `linux/amd64` y `linux/arm64` y la publica en `ghcr.io/<tu-usuario>/tienda-api` con las etiquetas `sha-<7 letras del commit>` y `main`. GitHub solo ejecuta los workflows de la raíz de un repositorio: aquí, dentro de la carpeta del paso, no hace nada. Copia el contenido del paso a la raíz de tu propio repositorio y se activa.
+- `despliegue/desplegar.sh`, con `tienda-despliegue.service` y `tienda-despliegue.timer`: cada dos minutos el servidor pregunta si `IMAGEN` (en `.env`, por ejemplo `ghcr.io/tu-usuario/tienda-api:main`) apunta a una imagen nueva. Si no, no hace nada ni escribe nada. Si sí: copia de seguridad, migraciones, API nueva, y espera a `/salud`; si no llega a estar sana, vuelve a la imagen anterior (guardada como `:anterior`) y termina con error. Un despliegue a la vez (`flock`). Se instala como la copia de seguridad, con el mismo usuario.
+
+```sh
+# en el servidor: sigue la imagen publicada (pon la tuya)
+echo 'IMAGEN=ghcr.io/tu-usuario/tienda-api:main' >> .env
+docker compose -f compose.produccion.yaml pull api       # descarga la publicada (build no se usa)
+sudo cp despliegue/tienda-despliegue.service despliegue/tienda-despliegue.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now tienda-despliegue.timer
+journalctl -u tienda-despliegue                          # lo que ha hecho
+```
+
+Volver atrás cambia el código, no los datos: por eso el script hace una copia antes de migrar.

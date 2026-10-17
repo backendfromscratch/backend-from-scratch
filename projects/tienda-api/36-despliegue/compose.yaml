@@ -1,0 +1,81 @@
+# La tienda entera con un comando (Fase 7, lección 7): la API, PostgreSQL y Redis, cada uno en su
+# contenedor, en una red propia en la que se encuentran por el nombre del servicio (db, redis).
+#   docker compose up --build    arranca todo (Ctrl + C lo para)
+#   docker compose down          lo para y borra los contenedores; con -v, también los datos
+#
+# Los secretos no se escriben aquí: este fichero va a Git. Llegan de tu .env, que Compose lee solo
+# (cópialo de .env.ejemplo): ${POSTGRES_PASSWORD} se sustituye por su valor.
+
+# El nombre del proyecto: los contenedores se llaman tienda-api-1, tienda-db-1…
+name: tienda
+
+services:
+  # PostgreSQL 18, fijada por su digest. Sin puerto publicado: solo la ven los contenedores de la
+  # tienda, y no choca con el PostgreSQL de tu ordenador (el 5432).
+  db:
+    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    # La imagen crea el usuario y la base de datos la primera vez que arranca con el volumen vacío.
+    environment:
+      POSTGRES_USER: tienda
+      POSTGRES_DB: tienda
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (mira .env.ejemplo)}
+    # Los datos, en un volumen con nombre: sobreviven a docker compose down (no a down -v).
+    volumes:
+      - datos:/var/lib/postgresql
+    # Sano cuando acepta conexiones: hasta entonces, quien depende de él espera.
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'tienda', '-d', 'tienda']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # Redis 8, fijada por su digest: los intentos de los límites, compartidos por todas las copias de
+  # la API. Sin puerto publicado, como db. Sin guardar nada en disco: si se reinicia, los intentos se
+  # olvidan, y no pasa nada.
+  redis:
+    image: redis:8@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # Una tarea, no un servidor: aplica las migraciones, carga los datos de práctica (las cuentas
+  # siempre; los productos, solo si no hay ninguno) y termina. Con la imagen de la API.
+  migrar:
+    build: .
+    command: ['sh', '-c', 'node scripts/migrar.ts && node scripts/cargar-datos.ts']
+    environment:
+      DATABASE_URL: postgres://tienda:${POSTGRES_PASSWORD}@db:5432/tienda
+    depends_on:
+      db:
+        condition: service_healthy
+    # El HEALTHCHECK de la imagen pregunta a la API, y aquí no hay API.
+    healthcheck:
+      disable: true
+
+  # La API, construida con el Dockerfile de esta carpeta.
+  api:
+    build: .
+    # Tu configuración (los secretos, el proveedor de identidad…), de .env. Lo que cambia dentro de
+    # Compose va en environment, que manda sobre env_file: la base de datos y Redis, por su nombre.
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://tienda:${POSTGRES_PASSWORD}@db:5432/tienda
+      REDIS_URL: redis://redis:6379
+    # Solo en tu ordenador (127.0.0.1). Un rango, y no un puerto: con docker compose up --scale
+    # api=2, cada copia toma uno libre, el 3000 o el 3001 (docker compose ps dice cuál).
+    ports:
+      - '127.0.0.1:3000-3001:3000'
+    # No arranca hasta que la base de datos y Redis están sanos y las migraciones han terminado bien.
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrar:
+        condition: service_completed_successfully
+
+volumes:
+  datos:

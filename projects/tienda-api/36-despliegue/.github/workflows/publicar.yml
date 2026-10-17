@@ -1,0 +1,144 @@
+# Comprueba la tienda y publica su imagen (Fase 8, lección 6).
+#   - En cada pull request: instala, comprueba los tipos y pasa los tests. No publica nada.
+#   - En cada push a main (un pull request aceptado): lo mismo y, si todo pasa, construye la imagen
+#     y la publica en ghcr.io/<tu-usuario>/tienda-api, con dos etiquetas: sha-<7 letras del commit>
+#     (esta versión, para siempre) y main (la última).
+# El servidor no recibe nada de GitHub: es él quien pregunta cada dos minutos si main apunta a una
+# imagen nueva (despliegue/desplegar.sh).
+#
+# GitHub solo ejecuta los workflows de la raíz de un repositorio. Este está dentro de la carpeta del
+# paso, así que aquí no hace nada: copia el contenido del paso a la raíz de TU repositorio (con su
+# .github/, su Dockerfile y su package.json al lado) y se activa solo.
+name: Publicar
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Un push nuevo a la misma rama cancela la comprobación anterior, que ya no sirve. En main no se
+# cancela nada: una publicación a medias dejaría main sin saber qué imagen es la última.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+# El mínimo: por defecto, el workflow solo lee el repositorio. Quien necesita más (publicar) lo pide
+# en su propio trabajo.
+permissions:
+  contents: read
+
+jobs:
+  comprobar:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    # La base de datos de los tests: PostgreSQL 18, la versión de la tienda, fijada por su digest
+    # (el mismo que usa compose.produccion.yaml). Su puerto solo se publica en el propio ejecutor.
+    services:
+      postgres:
+        image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336 # 18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 127.0.0.1:5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      # Las acciones se fijan por el SHA de su commit, no por su etiqueta: una etiqueta se puede
+      # mover a código malicioso (el ataque a tj-actions/changed-files, 2025) y un SHA no. El
+      # número de versión va en el comentario; Dependabot las mantiene al día.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Ningún paso sube nada: el token no se queda en .git/config para que otros pasos lo lean.
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+
+      # El usuario y la base de datos que usan los tests (test/.env): los mismos que te pide crear
+      # la lección de PostgreSQL, con una contraseña que solo sirve para tests.
+      - name: usuario y base de datos de los tests
+        env:
+          PGHOST: 127.0.0.1
+          PGUSER: postgres
+          PGPASSWORD: postgres
+        run: |
+          psql -v ON_ERROR_STOP=1 \
+            -c "CREATE ROLE tienda LOGIN PASSWORD 'tienda'" \
+            -c "CREATE DATABASE tienda_test OWNER tienda"
+
+      # npm ci instala exactamente lo que dice package-lock.json (y .npmrc no ejecuta scripts de
+      # instalación). Cada comprobación se ejecuta aunque la anterior falle, para ver todos los
+      # fallos de una vez.
+      - name: instalar
+        id: instalar
+        run: npm ci
+
+      - name: tipos
+        if: ${{ !cancelled() && steps.instalar.outcome == 'success' }}
+        run: npm run check
+
+      # Los tests del almacén de Redis se saltan solos si no hay un Redis: aquí no lo hay.
+      - name: tests
+        if: ${{ !cancelled() && steps.instalar.outcome == 'success' }}
+        run: npm test
+
+  publicar:
+    # Solo después de que comprobar pase, y solo en main: un pull request nunca publica.
+    needs: comprobar
+    if: ${{ github.event_name == 'push' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # Aquí, y solo aquí, el token puede escribir paquetes (la imagen en ghcr.io).
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # ghcr.io solo acepta minúsculas en el nombre de una imagen, y tu usuario puede tener
+      # mayúsculas. El nombre pasa por una variable de entorno, no escrito dentro del script: así
+      # lo que viene de fuera nunca se convierte en código de shell.
+      - name: nombre de la imagen
+        id: imagen
+        env:
+          PROPIETARIO: ${{ github.repository_owner }}
+        run: echo "nombre=ghcr.io/${PROPIETARIO,,}/tienda-api" >> "$GITHUB_OUTPUT"
+
+      # QEMU y Buildx permiten construir la imagen para dos arquitecturas a la vez: amd64 (la
+      # mayoría de los servidores) y arm64 (Apple Silicon, los Raspberry Pi y algunos servidores).
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Entra en ghcr.io con el token que GitHub da a esta ejecución: no hay que crear ninguna
+      # contraseña, y el token deja de valer cuando termina.
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Calcula las etiquetas: sha-<7 letras del commit> (esta versión) y main (la última). Sin
+      # latest: quien despliega sigue una rama, no «la última que se subió».
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ steps.imagen.outputs.nombre }}
+          flavor: latest=false
+          tags: |
+            type=sha,format=short
+            type=raw,value=main
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
