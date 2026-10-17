@@ -114,3 +114,19 @@ deployment/backup.sh                                 # a backup now
 ```
 
 `create-admin` creates your admin account with a long random password, shows it just once and keeps only its hash. With `TRUSTED_PROXY`, the API reads the visitor's IP from `X-Forwarded-For` only when the request comes from that address (the gateway of Compose's network: `docker network inspect shop_default`).
+
+`36-deployment` publishes the image and deploys it without GitHub having to get into your server:
+
+- `.github/workflows/publish.yml`: on every pull request it installs, type-checks and runs the tests with a PostgreSQL 18; on every push to `main` it also builds the image for `linux/amd64` and `linux/arm64` and publishes it to `ghcr.io/<your-user>/shop-api` with the tags `sha-<7 letters of the commit>` and `main`. GitHub only runs the workflows at the root of a repository: here, inside the step's folder, it does nothing. Copy the step's contents to the root of your own repository and it switches on.
+- `deployment/deploy.sh`, with `shop-deploy.service` and `shop-deploy.timer`: every two minutes the server asks whether `IMAGE` (in `.env`, for example `ghcr.io/your-user/shop-api:main`) points to a new image. If not, it does nothing and writes nothing. If so: backup, migrations, new API, and it waits for `/health`; if it never gets healthy, it goes back to the previous image (kept as `:previous`) and ends with an error. One deployment at a time (`flock`). It installs like the backup, with the same user.
+
+```sh
+# on the server: follow the published image (put yours)
+echo 'IMAGE=ghcr.io/your-user/shop-api:main' >> .env
+docker compose -f compose.production.yaml pull api       # downloads the published one (build isn't used)
+sudo cp deployment/shop-deploy.service deployment/shop-deploy.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now shop-deploy.timer
+journalctl -u shop-deploy                                # what it has done
+```
+
+Going back changes the code, not the data: that's why the script makes a backup before migrating.
