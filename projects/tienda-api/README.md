@@ -1,6 +1,6 @@
 # La API de la tienda de Ana y Luis
 
-El proyecto guiado de [Backend desde cero](https://backenddesdecero.com/): empieza en la Fase 3, «Tu primer servidor», sigue en la Fase 4, «Diseño de APIs», en la Fase 5, «Bases de datos», en la Fase 6, «Autenticación, autorización y seguridad», y en la Fase 7, «Docker y contenedores». Cada carpeta es el proyecto tal y como queda al final de una lección: si te atascas, compara tu código con el de la carpeta de esa lección.
+El proyecto guiado de [Backend desde cero](https://backenddesdecero.com/): empieza en la Fase 3, «Tu primer servidor», sigue en la Fase 4, «Diseño de APIs», en la Fase 5, «Bases de datos», en la Fase 6, «Autenticación, autorización y seguridad», en la Fase 7, «Docker y contenedores», y en la Fase 8, «Despliegue e infraestructura». Cada carpeta es el proyecto tal y como queda al final de una lección: si te atascas, compara tu código con el de la carpeta de esa lección.
 
 | Carpeta             | Lección                         |
 | ------------------- | ------------------------------- |
@@ -38,6 +38,7 @@ El proyecto guiado de [Backend desde cero](https://backenddesdecero.com/): empie
 | `32-dockerfile`     | Dockerfile                      |
 | `33-imagen-pequena` | Multi-stage                     |
 | `34-compose`        | Compose                         |
+| `35-produccion`     | Producción, nginx y HTTPS       |
 
 Necesitas Node.js 24 o posterior; el curso usa el 26 (con nvm, `nvm use` en la carpeta lo elige). En Linux y en WSL, Node 26 necesita además la librería `libatomic1` (`sudo apt install libatomic1`). En cada carpeta:
 
@@ -95,3 +96,21 @@ Los tests del almacén de Redis (`test/almacen-redis.test.ts`, desde la `34-comp
 ```sh
 docker run --rm -d --name redis-tests -p 127.0.0.1:6379:6379 redis:8
 ```
+
+## Fase 8: en un servidor
+
+La `35-produccion` trae lo que cambia al poner la tienda en un servidor, junto a `compose.yaml` (que sigue siendo el de tu ordenador):
+
+- `compose.produccion.yaml`: la misma tienda, con `restart: unless-stopped`, la imagen `${IMAGEN:-tienda-api}` (la que construye `--build`, o la publicada si defines `IMAGEN`), la subred de la red fijada (`172.18.0.0/16`) y sin cuentas de práctica: `migrar` carga solo los productos de ejemplo (`--sin-cuentas`). La API sigue publicada solo en `127.0.0.1`.
+- `.env.produccion.ejemplo`: la configuración de un servidor. Cópialo como `.env` **en el servidor**, genera ahí los secretos (`openssl rand -base64 32` y `openssl rand -hex 24`) y cambia `tienda.example` por tu nombre. Las cuatro `OIDC_*` quedan comentadas: sin proveedor de identidad, la tienda funciona con email y contraseña.
+- `nginx/tienda.conf`: nginx delante, con el 80 redirigiendo al 443, las cabeceras `X-Forwarded-For` y `X-Forwarded-Proto`, las dos copias de la API en un `upstream`, y su propio `location` para los eventos de un pedido. Lleva las instrucciones para instalarlo y las dos rutas del certificado (Let's Encrypt o tu propia autoridad).
+- `despliegue/copia-seguridad.sh`, con `tienda-copia.service` y `tienda-copia.timer`: un `pg_dump` cada noche a las 03:30, en `copias/`, guardado 7 días.
+
+```sh
+cp .env.produccion.ejemplo .env && chmod 600 .env    # y genera los secretos en .env
+docker compose -f compose.produccion.yaml up -d --build
+docker compose -f compose.produccion.yaml run --rm api node scripts/crear-admin.ts tu@email.com
+despliegue/copia-seguridad.sh                        # una copia ahora
+```
+
+`crear-admin` crea tu cuenta de admin con una contraseña larga al azar, la enseña una sola vez y guarda solo su hash. Con `PROXY_CONFIABLE`, la API lee la IP del visitante en `X-Forwarded-For` solo cuando la petición llega de esa dirección (la puerta de enlace de la red de Compose: `docker network inspect tienda_default`).

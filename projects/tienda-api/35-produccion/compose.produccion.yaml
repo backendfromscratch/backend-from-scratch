@@ -1,0 +1,104 @@
+# La tienda en un servidor (Fase 8, lección 4): la misma de compose.yaml, con lo que cambia al
+# publicarla. compose.yaml sigue siendo el de tu ordenador.
+#   docker compose -f compose.produccion.yaml up -d --build    arranca todo, en segundo plano
+#   docker compose -f compose.produccion.yaml down             lo para (los datos se quedan)
+#
+# Qué cambia respecto a compose.yaml:
+#   - restart: unless-stopped: Docker vuelve a arrancar db, redis y la API si se caen o si el
+#     servidor se reinicia (no si los paraste tú con docker compose stop).
+#   - Sin cuentas de práctica: sus contraseñas son públicas (están en el README). La primera
+#     cuenta, la tuya, se crea con crear-admin.
+#   - nginx va delante, en el propio servidor, y es lo único que ve internet. La API sigue publicada
+#     solo en 127.0.0.1, como en tu ordenador.
+#
+# Los secretos llegan de .env, que Compose lee solo (cópialo de .env.produccion.ejemplo). Va en el
+# servidor, nunca en Git.
+
+name: tienda
+
+services:
+  # PostgreSQL 18, fijada por su digest. Sin puerto publicado: solo la ven los contenedores de la
+  # tienda. Internet no llega a ella.
+  db:
+    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: tienda
+      POSTGRES_DB: tienda
+      # Sin valor, Compose no arranca y lo dice: una base de datos en internet sin contraseña es la
+      # puerta abierta.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (mira .env.produccion.ejemplo)}
+    # Los datos, en un volumen con nombre: sobreviven a down y a los reinicios (no a down -v).
+    volumes:
+      - datos:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'tienda', '-d', 'tienda']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # Redis 8, fijada por su digest: los intentos de los límites, compartidos por las copias de la API.
+  # Sin puerto publicado y sin guardar nada en disco.
+  redis:
+    image: redis:8@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+    restart: unless-stopped
+    command: ['redis-server', '--save', '', '--appendonly', 'no']
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # Una tarea, no un servidor: aplica las migraciones, carga los productos de ejemplo (si no hay
+  # ninguno) y termina. --sin-cuentas: las cuentas de práctica no se cargan.
+  migrar:
+    # build y image juntas: «up --build» construye la imagen y le pone este nombre; si defines
+    # IMAGEN en .env (lección 6), Compose usa esa imagen publicada en lugar de la tuya.
+    build: .
+    image: ${IMAGEN:-tienda-api}
+    command: ['sh', '-c', 'node scripts/migrar.ts && node scripts/cargar-datos.ts --sin-cuentas']
+    environment:
+      DATABASE_URL: postgres://tienda:${POSTGRES_PASSWORD}@db:5432/tienda
+    depends_on:
+      db:
+        condition: service_healthy
+    # El HEALTHCHECK de la imagen pregunta a la API, y aquí no hay API.
+    healthcheck:
+      disable: true
+
+  # La API, con la misma imagen que migrar.
+  api:
+    build: .
+    image: ${IMAGEN:-tienda-api}
+    restart: unless-stopped
+    # Tu configuración, de .env. Lo que cambia dentro de Compose va en environment, que manda sobre
+    # env_file: la base de datos y Redis, por su nombre.
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://tienda:${POSTGRES_PASSWORD}@db:5432/tienda
+      REDIS_URL: redis://redis:6379
+    # Solo en el propio servidor (127.0.0.1): nginx le habla desde ahí, y internet no llega. Un
+    # rango, como en compose.yaml: con up --scale api=2, cada copia toma un puerto (3000 o 3001), y
+    # nginx tiene los dos en su upstream.
+    ports:
+      - '127.0.0.1:3000-3001:3000'
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrar:
+        condition: service_completed_successfully
+
+volumes:
+  datos:
+
+# La red de la tienda, con la subred fijada. Lo que llega a la API por un puerto publicado le parece
+# venir de la puerta de enlace de esta red (la primera dirección: 172.18.0.1), y no del visitante ni
+# de nginx. Esa es la dirección que la API cree de confianza (PROXY_CONFIABLE en .env.produccion.ejemplo),
+# y fijar la subred hace que no cambie si el servidor ya tiene otras redes de Docker.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16

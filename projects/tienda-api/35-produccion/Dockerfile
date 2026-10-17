@@ -41,10 +41,10 @@ RUN npm ci --omit=dev && npm cache clean --force
 # El código, de la etapa comprobar, no del proyecto: BuildKit se salta las etapas de las que la
 # final no toma nada, y entonces los tipos no se comprobarían nunca.
 COPY --from=comprobar /app/src ./src
-# Las migraciones y los datos de práctica, con sus dos scripts: el servicio migrar de compose.yaml
-# usa esta misma imagen.
+# Las migraciones y los datos de práctica, con sus scripts: el servicio migrar de compose.yaml usa
+# esta misma imagen, y crear-admin (Fase 8) se ejecuta dentro de ella, en el servidor.
 COPY --from=comprobar /app/bd ./bd
-COPY --from=comprobar /app/scripts/migrar.ts /app/scripts/cargar-datos.ts ./scripts/
+COPY --from=comprobar /app/scripts/migrar.ts /app/scripts/cargar-datos.ts /app/scripts/crear-admin.ts ./scripts/
 ENV NODE_ENV=production HOST=0.0.0.0
 # No como root: node es un usuario sin privilegios que trae la imagen. Si alguien se cuela en la
 # API, no puede cambiar su código (es de root) ni instalar nada.
