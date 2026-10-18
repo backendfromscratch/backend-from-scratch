@@ -1,0 +1,735 @@
+---
+translationKey: server-hardening
+title: "Cómo proteger un servidor Linux de ataques"
+description: "Hardening de un servidor Linux paso a paso: tu usuario con sudo, SSH solo con clave y sin root, el cortafuegos ufw, Docker y actualizaciones solas."
+sidebar:
+  label: Seguridad del servidor
+  order: 2
+lesson:
+  oneLiner: "Proteger un servidor (hardening) es cerrarle todas las puertas que no usas: entras con tu propio usuario y sudo, SSH solo acepta claves y nunca a root, el cortafuegos ufw solo deja pasar el 22, el 80 y el 443, y las actualizaciones de seguridad se instalan solas. Y como Docker se salta ufw, lo que no deba ser público se publica en 127.0.0.1."
+  objectives:
+    - Trabajar con tu propio usuario y sudo, y dejar de entrar como root.
+    - Cerrar SSH a las contraseñas y a root con un fichero en sshd_config.d, comprobándolo con sshd -t antes de recargar.
+    - Configurar ufw para que solo pasen SSH, HTTP y HTTPS, y explicar por qué Docker se lo salta.
+    - Comprobar que las actualizaciones de seguridad se instalan solas, y saber cuándo hace falta reiniciar.
+  prerequisites: [vps]
+---
+
+import { Aside, Steps } from '@astrojs/starlight/components';
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Imagina que Ana crea su VPS a las diez de la noche y se va a dormir. Mientras duerme, programas de todo el mundo llaman al puerto 22 de su IP y prueban usuarios y contraseñas: `root`, `admin`, `123456`. No buscan a Ana: prueban todas las IP de internet.
+
+No es exagerado. En un estudio de Sophos [publicado en abril de 2019](https://www.sophos.com/en-us/press/press-releases/2019/04/cybercriminals-attack-cloud-server-honeypot-within-52-seconds), diez servidores trampa en centros de datos de AWS recibieron más de 5 millones de intentos de ataque en 30 días, unos 13 por minuto cada uno. Al primero lo atacaron **a los 52 segundos** de encenderlo.
+
+Un servidor recién creado tiene puertas abiertas que no necesitas: `root` puede entrar, cualquier programa que escuche en un puerto queda a la vista, y trae actualizaciones de seguridad pendientes, como viste en la [lección 1](/fase-8/que-es-un-vps/). **Esta lección las cierra, una a una**, y después lo comprueba desde fuera.
+
+## La analogía
+
+<Analogy>
+
+Piensa en un local a pie de calle que acabas de alquilar: una llave maestra que todo el mundo sabe que existe, un teclado con código junto a la puerta, y una docena de puertas y ventanas.
+
+Antes de abrir, cambias la cerradura para que solo abra **tu llave**, con tu nombre (tu usuario y tu clave SSH), y quitas la llave maestra (`root`) y el teclado (las contraseñas). Tapias todas las puertas menos dos: la de clientes y la del personal (el cortafuegos, con el 80, el 443 y el 22). Y contratas a un cerrajero que cambia, de madrugada, cualquier cerradura con un fallo conocido (las actualizaciones solas).
+
+<div slot="limits">
+
+- Una ventana tapiada está cerrada para todos. En Linux, Docker abre sus propias ventanas sin pasar por el cortafuegos, como verás en esta lección.
+- Un ladrón se cansa de probar cerraduras. Los bots no: prueban miles de veces al día, sin parar, en todos los servidores a la vez.
+- Ninguna cerradura protege de quien tiene tu llave. Si alguien copia tu clave privada, entra como tú: por eso la proteges con una frase de paso, como en la Fase 1.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+**Endurecer** un servidor, en inglés <Term id="hardening">*hardening*</Term>, es quitarle todo lo que un atacante podría usar y que tú no necesitas. Son cuatro cerraduras, en este orden: tu usuario, SSH, el cortafuegos y las actualizaciones.
+
+### Tu propio usuario, con sudo
+
+En la [lección 1](/fase-8/que-es-un-vps/#la-primera-vez-entras-como-root-y-es-la-última) viste por qué entrar como <Term id="root">root</Term> debería ser solo la primera vez. Lo normal es trabajar con tu usuario y anteponer <Term id="sudo">sudo</Term> solo a lo que necesita ser administrador, como aprendiste en la [Fase 1](/fase-1/usuarios-y-permisos-linux/#root-sudo-y-el-mínimo-privilegio).
+
+**En el camino gratis ya lo tienes:** tu VM trae el usuario `ubuntu`, que puede usar `sudo`. Compruébalo dentro de la VM:
+
+```sh
+sudo whoami
+```
+
+Responde `root`: la orden se ejecutó como administrador. En la VM no te pide contraseña, porque Multipass la configura así.
+
+**En el camino de pago, lo creas tú**, entrando otra vez como `root`, como en la lección 1. Llámalo también `ubuntu`: es el usuario de la VM y de las salidas del curso, y los ficheros de las lecciones 3 y 6 lo usan. Si prefieres otro nombre, cámbialo allí donde salga.
+
+```sh
+adduser ubuntu
+```
+
+`adduser` crea el usuario y su carpeta, y te pregunta dos cosas:
+
+```
+New password:
+Retype new password:
+passwd: password updated successfully
+Changing the user information for ubuntu
+Enter the new value, or press ENTER for the default
+	Full Name []:
+	Room Number []:
+	Work Phone []:
+	Home Phone []:
+	Other []:
+Is the information correct? [Y/n] Y
+```
+
+- **La contraseña** es para `sudo`, no para entrar: SSH seguirá aceptando solo tu clave. Elige una larga y guárdala en tu gestor de contraseñas.
+- **Los datos** (nombre, teléfono…) se pueden dejar vacíos con <kbd>Intro</kbd>.
+
+Capturamos esta salida en un contenedor con Ubuntu 26.04.
+
+Después, dale `sudo` y tu clave pública:
+
+```sh
+usermod -aG sudo ubuntu
+install -d -m 700 -o ubuntu -g ubuntu /home/ubuntu/.ssh
+install -m 600 -o ubuntu -g ubuntu /root/.ssh/authorized_keys /home/ubuntu/.ssh/
+```
+
+- **`usermod -aG sudo ubuntu`** añade (`-a`) a `ubuntu` al grupo (`-G`) `sudo`: en Ubuntu, quien está en ese grupo puede usar `sudo`.
+- **El primer `install`** crea la carpeta `.ssh` de `ubuntu` (`-d`), suya (`-o` y `-g`) y con permisos `700`.
+- **El segundo** copia el `authorized_keys` de `root`, donde el proveedor puso tu clave, con permisos `600`. Son los permisos que `sshd` exige, como viste en la [Fase 1](/fase-1/que-es-ssh/#authorized_keys-la-lista-de-llaves-que-abren-la-puerta).
+
+**No cierres la sesión de `root` todavía.** En otra terminal, entra con `ssh ubuntu@203.0.113.10` y tu IP. Si entras y `sudo whoami` responde `root` (tras pedirte la contraseña de `adduser`), ya puedes salir de la de `root`. Si no, la de `root` sigue abierta para arreglarlo.
+
+### SSH: solo con clave, y root nunca
+
+El programa que atiende las conexiones SSH es `sshd`, y lee su configuración de `/etc/ssh/sshd_config`. Antes de cambiar nada, pregúntale qué está usando ahora:
+
+```sh
+sudo sshd -T | grep -E "^(permitrootlogin|passwordauthentication|kbdinteractiveauthentication) "
+```
+
+```
+permitrootlogin prohibit-password
+passwordauthentication no
+kbdinteractiveauthentication no
+```
+
+`sshd -T` escribe la configuración completa que aplicaría, y `grep` se queda con tres líneas:
+
+- **`passwordauthentication no`**: ya no se entra con contraseña. Las imágenes de Ubuntu para la nube, como las de Multipass, traen un fichero que lo dice: `/etc/ssh/sshd_config.d/60-cloudimg-settings.conf`, con una sola línea, `PasswordAuthentication no`. Es lo que la [Fase 1](/fase-1/que-es-ssh/#authorized_keys-la-lista-de-llaves-que-abren-la-puerta) te contó de la VM: por eso nunca entraste en ella con contraseña.
+- **`kbdinteractiveauthentication no`**: la otra forma de pedir una contraseña, la de preguntas y respuestas, también está cerrada.
+- **`permitrootlogin prohibit-password`**: `root` **sí puede entrar, con clave**. Es el valor por defecto, y por eso entraste como `root` en tu VPS.
+
+Vas a dejarlo todo por escrito en un fichero tuyo, en `/etc/ssh/sshd_config.d/`. El `sshd_config` de Ubuntu empieza con una línea, `Include /etc/ssh/sshd_config.d/*.conf`, que lee los ficheros de esa carpeta antes que el resto. Así no tocas el fichero principal, que una actualización de OpenSSH podría querer cambiar.
+
+```sh
+sudo tee /etc/ssh/sshd_config.d/00-seguridad.conf <<EOF
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+EOF
+```
+
+`tee` escribe en el fichero las líneas que hay entre `<<EOF` y `EOF`. **`PermitRootLogin no` es lo nuevo:** `root` no entra ni con clave. Las otras dos ya estaban, pero ahora no dependen de un fichero que no es tuyo.
+
+### El primero que lo dice, gana
+
+¿Por qué `00`? Porque en `sshd`, **gana el primer valor que lee**. La [documentación de `sshd_config`](https://man.openbsd.org/sshd_config) lo dice así: «*the first obtained value will be used*». Y los ficheros de la carpeta se leen por orden alfabético: el `00` va antes que el `60` de Ubuntu y que casi cualquiera que añada tu proveedor.
+
+Lo comprobamos con un fichero de prueba, `99-prueba.conf`, que decía `PermitRootLogin yes`. Con los dos en la carpeta, `sshd -T` seguía diciendo lo del `00`:
+
+```
+permitrootlogin no
+```
+
+Si el tuyo se llamara `99-seguridad.conf`, un `50-cloud-init.conf` con `PasswordAuthentication yes` le ganaría. cloud-init, el programa que prepara el servidor en el primer arranque, lo deja en algunos VPS creados con contraseña. Por eso, después de cualquier cambio, **la prueba de verdad es `sshd -T`**, no lo que crees haber escrito.
+
+### Comprueba antes de recargar: sshd -t
+
+Un error en este fichero puede dejarte fuera de tu servidor. Antes de aplicar nada, `sshd -t` (*test*) lee la configuración y la comprueba. Si está bien, no escribe nada. Si no, te dice dónde está el error. Con una letra de más en `PasswordAuthentification`:
+
+```
+/etc/ssh/sshd_config.d/00-seguridad.conf: line 2: Bad configuration option: PasswordAuthentification
+/etc/ssh/sshd_config.d/00-seguridad.conf: terminating, 1 bad configuration options
+```
+
+Cuando `sshd -t` no dice nada, recarga el servicio con <Term id="systemd">systemd</Term>:
+
+```sh
+sudo systemctl reload ssh
+```
+
+`reload` le pide a `sshd` que vuelva a leer su configuración **sin cortar las sesiones abiertas**. En Ubuntu, `reload` pasa antes por `sshd -t`: con el fichero mal, responde `Job for ssh.service failed.` y `sshd` sigue con la configuración anterior. Un `restart` con el fichero mal, en cambio, sí puede dejar el servicio parado.
+
+<Aside type="caution" title="Deja una sesión abierta">
+
+Mientras cambias SSH o el cortafuegos, **no cierres la sesión en la que estás**. Comprueba que puedes entrar desde una terminal nueva, y solo entonces cierra la vieja. Si algo falla, la sesión abierta es tu forma de arreglarlo. En un VPS te queda otra salida, la consola web del proveedor, que entra como si tuvieras un teclado conectado al servidor: entra con `ubuntu` y la contraseña que le diste con `adduser`.
+
+</Aside>
+
+### El cortafuegos: ufw
+
+Un <Term id="firewall">cortafuegos</Term> (*firewall*) decide qué conexiones dejar entrar. En Ubuntu, el habitual es `ufw` (*uncomplicated firewall*, «cortafuegos sin complicaciones»), que ya viene instalado, pero apagado (`Status: inactive`).
+
+La regla de un servidor es **cerrar todo lo que entra y abrir solo lo que usas**. La tienda necesita tres <Term id="port">puertos</Term>: el 22 para tu SSH, y el 80 y el 443 para la web.
+
+```sh
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable
+```
+
+- **`default deny incoming`**: lo que entra, se tira, salvo lo que permitas.
+- **`default allow outgoing`**: lo que sale, pasa. El servidor necesita salir para descargar actualizaciones e imágenes de Docker.
+- **`allow OpenSSH`** abre el 22. `OpenSSH` es un perfil que trae `ufw` (`sudo ufw app list` los enseña), y equivale a `22/tcp`.
+- **`allow 80/tcp` y `allow 443/tcp`** abren HTTP y HTTPS. En la [lección 4](/fase-8/nginx-proxy-inverso/) los usará nginx.
+- **`enable`** lo enciende ahora y en cada arranque.
+
+**El orden importa:** `allow OpenSSH` va antes que `enable`. Si enciendes el cortafuegos con todo cerrado, la próxima conexión al 22 no llega, y la tuya podría ser la siguiente. Por eso `ufw` pregunta antes de encenderse si estás conectado por SSH: `Command may disrupt existing ssh connections. Proceed with operation (y|n)?`.
+
+Después, `sudo ufw status verbose` te enseña el resultado:
+
+```
+Status: active
+Logging: on (low)
+Default: deny (incoming), allow (outgoing), deny (routed)
+New profiles: skip
+
+To                         Action      From
+--                         ------      ----
+22/tcp (OpenSSH)           ALLOW IN    Anywhere
+80/tcp                     ALLOW IN    Anywhere
+443/tcp                    ALLOW IN    Anywhere
+22/tcp (OpenSSH (v6))      ALLOW IN    Anywhere (v6)
+80/tcp (v6)                ALLOW IN    Anywhere (v6)
+443/tcp (v6)               ALLOW IN    Anywhere (v6)
+```
+
+Fíjate en la línea `Default`: entrar, no; salir, sí. Las tres reglas aparecen dos veces, para IPv4 y para IPv6 (`v6`). La palabra `routed` vuelve en la sección siguiente.
+
+### Un puerto cerrado no contesta
+
+¿Qué ve alguien de fuera que llama a un puerto? Hay tres casos, y `curl` los distingue por su número de error:
+
+| El puerto | Lo que hace el servidor | Lo que ve `curl` |
+|---|---|---|
+| Abierto en `ufw`, con un programa escuchando | Responde el programa | La respuesta |
+| Sin cortafuegos, o abierto en `ufw`, y sin programa | Contesta «aquí no hay nadie» | `curl: (7) … Could not connect to server`, en el acto |
+| Cerrado en `ufw` | Tira la petición, sin contestar | `curl: (28) Connection timed out`, cuando se cansa de esperar |
+
+El segundo caso es el «*Connection refused*» de la [Fase 0](/fase-0/modelo-cliente-servidor/): una respuesta rápida. El tercero es **silencio**: quien prueba no sabe si hay un servidor, un programa o nada. Lo verás desde tu ordenador en «Pruébalo».
+
+### Docker se salta ufw
+
+En la [Fase 7](/fase-7/redes-docker/#sin-ip-delante-el-puerto-se-abre-a-toda-tu-red) leíste que, en Linux, Docker publica los puertos con sus propias reglas, y que esas reglas van antes que las de `ufw`. Aquí lo compruebas en el servidor, con `ufw` encendido y solo el 22, el 80 y el 443 abiertos. Arrancamos un nginx en un contenedor, publicado sin IP delante:
+
+```sh
+docker run -d --name web -p 9000:80 nginx
+```
+
+`sudo ufw status` no dice nada del 9000. Pero desde fuera del servidor:
+
+```
+$ curl -m 3 -I http://192.168.5.15:9000
+HTTP/1.1 200 OK
+Server: nginx/1.31.7
+…
+```
+
+**El 9000 contesta, con el cortafuegos encendido.** `ufw` y Docker escriben sus reglas en el mismo sitio, el filtro de paquetes del núcleo de Linux, en listas (*cadenas*) que se recorren de arriba abajo. `iptables` las enseña:
+
+```
+$ sudo iptables -t nat -L DOCKER -n
+Chain DOCKER (2 references)
+target     prot opt source               destination
+DNAT       tcp  --  0.0.0.0/0            0.0.0.0/0            tcp dpt:9000 to:172.17.0.2:80
+
+$ sudo iptables -L FORWARD -n
+Chain FORWARD (policy DROP)
+target     prot opt source               destination
+DOCKER-USER  all  --  0.0.0.0/0            0.0.0.0/0
+DOCKER-FORWARD  all  --  0.0.0.0/0            0.0.0.0/0
+ufw-before-logging-forward  all  --  0.0.0.0/0            0.0.0.0/0
+ufw-before-forward  all  --  0.0.0.0/0            0.0.0.0/0
+…
+```
+
+1. **La regla `DNAT`** cambia el destino de lo que llega al 9000 por `172.17.0.2:80`, la IP del contenedor, antes que nada.
+2. **El paquete ya no es para el servidor**, sino para una máquina de detrás: pasa por la cadena `FORWARD` (la que `ufw` llama `routed`), no por la de entrada, donde están tus reglas.
+3. **En `FORWARD`, las cadenas de Docker van primero**, y aceptan el paquete antes de llegar a las de `ufw`.
+
+Con `127.0.0.1` delante, la regla cambia:
+
+```
+DNAT       tcp  --  0.0.0.0/0            127.0.0.1            tcp dpt:9000 to:172.17.0.2:80
+```
+
+Ahora solo se desvía lo que va a `127.0.0.1`, que solo existe dentro del servidor. Lo que llega de fuera al 9000 ya no encaja, pasa por la cadena de entrada, y ahí `ufw` lo tira.
+
+**Esta es la regla del curso, y la razón de la tienda que montarás en la lección 3:** la API se publica en `127.0.0.1:3000`, PostgreSQL y Redis no publican ningún puerto, y lo único público es nginx, en el 80 y el 443. nginx va instalado en el servidor, como en la Fase 2, no en un contenedor: `ufw` sí lo vigila.
+
+### Actualizaciones de seguridad, solas
+
+Cada semana se descubren fallos en programas de tu servidor, y Ubuntu publica versiones corregidas. **Ubuntu 26.04 ya trae `unattended-upgrades` instalado y encendido**, el programa que las instala sin que entres. Su interruptor es un fichero. Compruébalo en tu servidor:
+
+<TryIt
+  title="¿Se instalan solas las actualizaciones?"
+  cmd="cat /etc/apt/apt.conf.d/20auto-upgrades"
+  output={`APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";`}
+>
+
+El `"1"` es «cada día»: la primera línea pone al día la lista de paquetes, y la segunda instala lo que haya de seguridad. Lo hacen dos temporizadores de systemd, que ves con `systemctl list-timers "apt-daily*"`.
+
+Si el fichero no existe, `sudo apt install unattended-upgrades` lo instala y lo enciende.
+
+</TryIt>
+
+**Qué instala** lo dice `/etc/apt/apt.conf.d/50unattended-upgrades`, en `Allowed-Origins`: los repositorios de Ubuntu, sobre todo los de seguridad (`-security`). No instala versiones nuevas de Docker ni de nada que venga de otro repositorio, y no cambia de Ubuntu 26.04 a la siguiente.
+
+**Lo que no hace es reiniciar.** Una actualización del núcleo de Linux, o de una biblioteca que usan muchos programas, solo se aplica de verdad al reiniciar. Cuando hace falta, Ubuntu crea el fichero `/var/run/reboot-required`, y el saludo de SSH te avisa con `*** System restart required ***`. Reinicia tú con `sudo reboot`, en un momento tranquilo. Si prefieres que lo haga él, la opción `Unattended-Upgrade::Automatic-Reboot` del mismo fichero lo activa, a la hora que digas.
+
+### Lo que intentan los bots
+
+`sshd` apunta cada intento de entrar en el registro del sistema, y `journalctl` lo lee:
+
+```sh
+sudo journalctl -u ssh
+```
+
+En tu VM solo verás tus propias pruebas: nadie de internet llega a ella. **En un VPS,** a las pocas horas, el registro se llena de intentos con usuarios que no existen en tu servidor y direcciones de todo el mundo: la <Term id="brute-force">fuerza bruta</Term> del estudio de Sophos.
+
+Con SSH solo con clave, **cada intento acaba en `Permission denied (publickey)`** sin que el bot llegue a probar una contraseña: no hay ninguna que adivinar. Solo gastan líneas del registro.
+
+Algunos programas leen ese registro y bloquean un rato en el cortafuegos las IP que fallan mucho; el más conocido es [fail2ban](https://github.com/fail2ban/fail2ban). Con SSH solo con clave no te hace falta, aunque reduce el ruido: no lo instalamos en el curso.
+
+### El cortafuegos del proveedor (camino de pago)
+
+Los proveedores ofrecen otro cortafuegos, fuera de tu servidor: Hetzner lo llama *Firewalls* y DigitalOcean, *Cloud Firewalls*. Filtra en la red del centro de datos, **antes de que el paquete llegue a tu VPS**. Eso tiene dos ventajas:
+
+- **Docker no se lo salta**, porque las reglas de Docker viven dentro de tu servidor y este filtro está fuera.
+- **No depende de tu servidor:** si un día rompes `ufw`, sigue ahí.
+
+Úsalo junto con `ufw`, no en su lugar. Los pasos están en «Pruébalo».
+
+## Pruébalo
+
+El objetivo: **cerrar tu servidor y demostrarlo desde fuera**. Al acabar, desde tu ordenador, una contraseña no entra, `root` no entra, un puerto cerrado no contesta, y un contenedor publicado sin `127.0.0.1` se ve, hasta que lo arreglas.
+
+Necesitas dos terminales: una **dentro del servidor** (`ssh ubuntu@` y su IP), que no cerrarás hasta el final, y otra **en tu ordenador** (en Windows, PowerShell). Las salidas son de una VM con la IP `192.168.5.15`: **usa la tuya**.
+
+En el camino de pago, primero crea tu usuario `ubuntu` como en «[Tu propio usuario, con sudo](#tu-propio-usuario-con-sudo)», y entra con él. Lo demás es igual, con la IP pública de tu VPS.
+
+Capturamos las salidas de tu ordenador con un cliente en una red aparte dentro de la propia VM (`192.168.5.100`): sus paquetes llegan por una interfaz de red y `ufw` los filtra igual que los tuyos. Según tu versión de `curl`, el mensaje del error `7` puede decir `Couldn't` en lugar de `Could not`: lo que importa es el número.
+
+### 1. Antes: lo que se ve desde fuera
+
+Empieza por ver la puerta abierta. **En el camino gratis**, `root` no tiene tu clave, así que, para probar lo mismo que en un VPS, dásela desde tu ordenador:
+
+<TryIt
+  title="Dale tu clave a root, como en un VPS"
+  cmd="cat ~/.ssh/id_ed25519.pub | multipass exec curso -- sudo tee -a /root/.ssh/authorized_keys"
+  windows="Get-Content ~\.ssh\id_ed25519.pub | multipass exec curso -- sudo tee -a /root/.ssh/authorized_keys"
+>
+
+Es la orden de la lección 1, con `sudo` y la carpeta de `root`. Escribe tu clave pública en la pantalla, como entonces. En el camino de pago no hace falta: el proveedor ya la puso ahí.
+
+</TryIt>
+
+Ahora, desde tu ordenador, entra como `root` y llama a un puerto donde no escucha nadie:
+
+<TryIt
+  title="root entra, y el 9000 contesta que no hay nadie"
+  cmd={`ssh root@192.168.5.15 whoami\ncurl -m 3 http://192.168.5.15:9000`}
+  windows={`ssh root@192.168.5.15 whoami\ncurl.exe -m 3 http://192.168.5.15:9000`}
+  output={`root
+curl: (7) Failed to connect to 192.168.5.15 port 9000 after 0 ms: Could not connect to server`}
+>
+
+- **`ssh root@… whoami`** entra como `root`, ejecuta `whoami` y sale. Responde `root`: **la puerta de `root` está abierta**, con clave.
+- **`curl -m 3`** espera como mucho 3 segundos. El error `7`, en el acto, es el servidor diciendo «aquí no hay nadie».
+
+En PowerShell, `curl` a secas es otra orden: escribe `curl.exe`. Si el `ssh` de `root` responde `Permission denied (publickey)`, tu clave no llegó a `root`: repite el paso anterior. Si responde `No such file or directory`, crea antes la carpeta con `multipass exec curso -- sudo mkdir -m 700 /root/.ssh`.
+
+</TryIt>
+
+### 2. Cierra SSH
+
+**Dentro del servidor**, escribe el fichero, compruébalo y recarga:
+
+<TryIt
+  title="SSH solo con clave, y sin root"
+  cmd={`sudo tee /etc/ssh/sshd_config.d/00-seguridad.conf <<EOF
+PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+EOF
+sudo sshd -t
+sudo systemctl reload ssh
+sudo sshd -T | grep -E "^(permitrootlogin|passwordauthentication|kbdinteractiveauthentication) "`}
+  output={`PermitRootLogin no
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+permitrootlogin no
+passwordauthentication no
+kbdinteractiveauthentication no`}
+>
+
+Las tres primeras líneas de la salida son `tee` repitiendo lo que escribió. `sshd -t` y `reload` no dicen nada: todo bien. Las tres últimas son `sshd -T`: **fíjate en `permitrootlogin no`**.
+
+Si `sshd -t` escribe `Bad configuration option`, corrige la palabra de la línea que te dice y repite, antes del `reload`.
+
+</TryIt>
+
+Ahora, **desde tu ordenador**, sin cerrar la sesión del servidor, intenta entrar con contraseña y como `root`:
+
+<TryIt
+  title="Una contraseña y root, rechazados"
+  cmd={`ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no ubuntu@192.168.5.15\nssh root@192.168.5.15`}
+  windows={`ssh -o PreferredAuthentications=password -o PubkeyAuthentication=no ubuntu@192.168.5.15\nssh root@192.168.5.15`}
+  output={`ubuntu@192.168.5.15: Permission denied (publickey).
+root@192.168.5.15: Permission denied (publickey).`}
+>
+
+- **La primera** le pide a `ssh` que intente solo con contraseña (`PreferredAuthentications=password`) y que no use tu clave (`PubkeyAuthentication=no`). Ni siquiera te pregunta la contraseña: el servidor dice que solo acepta `publickey`. **El paréntesis es la lista de formas de entrar que el servidor ofrece.** Si dijera `(publickey,password)`, las contraseñas seguirían abiertas: vuelve a `sshd -T`.
+- **La segunda** es `root` con tu clave, la misma que entró en el paso 1. Ahora no entra.
+
+Comprueba que tú sí entras, con `ssh ubuntu@192.168.5.15` en una terminal nueva.
+
+</TryIt>
+
+Mira qué apuntó `sshd`, dentro del servidor:
+
+<TryIt
+  title="Tus intentos, en el registro"
+  cmd={`sudo journalctl -u ssh --since "10 minutes ago"`}
+  output={`…
+Oct 17 21:15:17 curso sshd-session[3055]: Connection closed by authenticating user ubuntu 192.168.5.100 port 42158 [preauth]
+Oct 17 21:15:18 curso sshd-session[3077]: ROOT LOGIN REFUSED FROM 192.168.5.100 port 42166
+Oct 17 21:15:18 curso sshd-session[3077]: ROOT LOGIN REFUSED FROM 192.168.5.100 port 42166 [preauth]
+Oct 17 21:15:18 curso sshd-session[3077]: Connection closed by authenticating user root 192.168.5.100 port 42166 [preauth]`}
+>
+
+`--since "10 minutes ago"` muestra solo lo reciente. Cada línea lleva la fecha, el servidor (`curso`), el programa y lo que pasó:
+
+- **`Connection closed by authenticating user ubuntu`**: tu intento con contraseña, que se cerró antes de entrar (`[preauth]`, antes de autenticarse).
+- **`ROOT LOGIN REFUSED`**: la clave de `root` era buena, pero `PermitRootLogin no` le cerró la puerta.
+
+`192.168.5.100` es la IP del cliente de nuestra captura; en tu registro, la de tu ordenador en la red de Multipass. Tus fechas y números serán otros.
+
+</TryIt>
+
+### 3. Enciende el cortafuegos
+
+**Dentro del servidor**, con la sesión abierta:
+
+<TryIt
+  title="ufw: solo el 22, el 80 y el 443"
+  cmd={`sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow OpenSSH
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw enable`}
+  output={`Default incoming policy changed to 'deny'
+(be sure to update your rules accordingly)
+Default outgoing policy changed to 'allow'
+(be sure to update your rules accordingly)
+Rules updated
+Rules updated (v6)
+Rules updated
+Rules updated (v6)
+Rules updated
+Rules updated (v6)
+Command may disrupt existing ssh connections. Proceed with operation (y|n)? y
+Firewall is active and enabled on system startup`}
+>
+
+Cada `allow` responde dos veces, una para IPv4 y otra para IPv6. Cuando `enable` pregunte, responde <kbd>y</kbd>: las conexiones abiertas siguen vivas. Lo que importa es la siguiente: desde tu ordenador, `ssh ubuntu@192.168.5.15 whoami` debe responder `ubuntu`. Si se queda esperando, no cierres esta sesión y ejecuta `sudo ufw allow OpenSSH`.
+
+Comprueba el resultado con `sudo ufw status verbose`, como en la sección del cortafuegos. Si ves `Status: inactive`, `enable` no llegó a ejecutarse: repítelo.
+
+</TryIt>
+
+Ahora, **desde tu ordenador**, el mismo `curl` del paso 1:
+
+<TryIt
+  title="El 9000 ya no contesta"
+  cmd="curl -m 3 http://192.168.5.15:9000"
+  windows="curl.exe -m 3 http://192.168.5.15:9000"
+  output="curl: (28) Connection timed out after 3005 milliseconds"
+>
+
+Antes, el error `7` llegaba en el acto. Ahora es el `28`: `curl` esperó sus 3 segundos y nadie le contestó. **El cortafuegos tiró la petición sin responder.** Desde fuera, el 9000 ya no dice ni que no hay nadie.
+
+Si ves el `7` todavía, `ufw` no está encendido. Si en la Fase 2 dejaste nginx en el 8080 de la VM, tampoco contesta ya: volverá a ser público en la lección 4, por el 80 y el 443.
+
+</TryIt>
+
+### 4. El agujero de Docker, y cómo se cierra
+
+**Dentro del servidor**, publica un nginx en el 9000, sin IP delante, como en el ejemplo de la sección de Docker:
+
+<TryIt
+  title="Un contenedor publicado sin 127.0.0.1"
+  cmd="docker run -d --name web -p 9000:80 nginx"
+  output={`…
+8d4704cb42813c3fc0b6de3b54c67364c9484a01bc807da0c0ebf130ab934be1`}
+>
+
+La primera vez, Docker descarga la imagen `nginx` (lo hemos recortado, `…`). La última línea es el identificador del contenedor; el tuyo será otro.
+
+</TryIt>
+
+**Desde tu ordenador**, llama al 9000, que `ufw` tiene cerrado:
+
+<TryIt
+  title="El 9000 contesta, con ufw encendido"
+  cmd="curl -m 3 -I http://192.168.5.15:9000"
+  windows="curl.exe -m 3 -I http://192.168.5.15:9000"
+  output={`HTTP/1.1 200 OK
+Server: nginx/1.31.7
+Date: Sat, 17 Oct 2026 19:15:13 GMT
+Content-Type: text/html
+Content-Length: 896
+Last-Modified: Thu, 01 Oct 2026 17:19:27 GMT
+Connection: keep-alive
+ETag: "6abe961f-380"
+Accept-Ranges: bytes`}
+>
+
+`-I` pide solo las cabeceras. **`HTTP/1.1 200 OK`: el nginx del contenedor te contesta**, con el cortafuegos encendido y el 9000 cerrado. Es la promesa de la Fase 7, comprobada. En un VPS, te contestaría a ti y a cualquiera de internet. Tu versión de nginx y tu fecha serán otras.
+
+</TryIt>
+
+**Dentro del servidor**, vuelve a crearlo con `127.0.0.1` delante:
+
+<TryIt
+  title="El mismo contenedor, solo en 127.0.0.1"
+  cmd={`docker rm -f web\ndocker run -d --name web -p 127.0.0.1:9000:80 nginx`}
+  output={`web
+b089e878c5865e6c2ce9a215df77783a486aff47f06b48109b8b661ea8cf6cee`}
+>
+
+`docker rm -f` para y borra el contenedor, y escribe su nombre. El nuevo solo se publica en `127.0.0.1`.
+
+</TryIt>
+
+Desde tu ordenador, el mismo `curl` responde ahora `curl: (28) Connection timed out after 3006 milliseconds`, y dentro del servidor, `curl -I http://127.0.0.1:9000` sigue respondiendo `HTTP/1.1 200 OK`. **Solo el servidor llega al contenedor.** Bórralo al acabar con `docker rm -f web`.
+
+**En el camino gratis, quita también tu clave de `root`:** con `PermitRootLogin no` ya no sirve y es mejor que no esté. Dentro del servidor, esto borra las líneas que empiezan por `ssh-ed25519`:
+
+```sh
+sudo sed -i '/^ssh-ed25519 /d' /root/.ssh/authorized_keys
+```
+
+### 5. Camino de pago: el cortafuegos del proveedor
+
+En el panel de tu proveedor ([Hetzner](https://docs.hetzner.com/cloud/firewalls/getting-started/creating-a-firewall/), [DigitalOcean](https://docs.digitalocean.com/products/networking/firewalls/)):
+
+<Steps>
+
+1. **Crea un cortafuegos** en la sección de cortafuegos o *Firewalls*.
+
+2. **Añade tres reglas de entrada:** TCP 22, TCP 80 y TCP 443, desde cualquier dirección. Lo que no esté en la lista no entra.
+
+3. **Deja la salida abierta,** como en `ufw`: el servidor necesita descargar actualizaciones e imágenes.
+
+4. **Aplícalo a tu servidor.** Arranca otra vez el contenedor del paso 4 sin `127.0.0.1` y repite el `curl` al 9000: con este cortafuegos delante ya no contesta, aunque Docker se salte `ufw`. Borra el contenedor después.
+
+</Steps>
+
+## Ya lo has visto
+
+- **El cortafuegos de tu ordenador.** Cuando un programa nuevo quiere recibir conexiones, macOS o Windows te preguntan si lo permites. Es la misma idea que `ufw`: lo que entra se decide, programa a programa o puerto a puerto.
+- **El router de tu casa.** Su <Term id="nat">NAT</Term> tira lo que llega de fuera sin que nadie lo pidiera, como viste en la [Fase 0](/fase-0/ip-puertos-y-sockets/#cómo-sale-tu-ip-privada-a-internet-nat). Un VPS no tiene ese router delante: tiene `ufw`.
+- **Las actualizaciones automáticas de tu móvil.** Se instalan de noche, y algunas te piden reiniciar para terminar: como `unattended-upgrades` y su `System restart required`.
+
+## Errores comunes
+
+- **Encender `ufw` sin permitir antes OpenSSH.** La próxima conexión al 22 no entra. En un VPS, entra por la consola web del proveedor, con `ubuntu` y la contraseña de `adduser`, y ejecuta `sudo ufw allow OpenSSH`. En la VM, `multipass shell` también entra por SSH, así que lo más rápido es crearla de nuevo, como en la [introducción](/fase-8/).
+- **Creer que `ufw` protege los puertos de Docker.** Un `-p 5432:5432` deja PostgreSQL abierto a internet con `ufw` encendido. Publica siempre en `127.0.0.1:`, o no publiques.
+- **Un fichero de SSH que pierde.** Si lo llamas `99-…`, un fichero que va antes puede ganarle. No te fíes de lo que escribiste: mira `sudo sshd -T`.
+- **No reiniciar nunca.** Las actualizaciones del núcleo se instalan solas, pero solo protegen después de reiniciar. Si el saludo dice `System restart required`, busca un momento y reinicia.
+
+## Resumen
+
+- Trabaja con tu propio usuario y `sudo`. En la VM ya es `ubuntu`; en un VPS lo creas con `adduser` y le copias tu clave.
+- SSH solo con clave y sin `root`: un fichero `00-seguridad.conf` en `/etc/ssh/sshd_config.d/`, `sshd -t` antes de `reload`, `sshd -T` para comprobarlo, y una sesión abierta hasta entrar desde otra.
+- `ufw` con todo cerrado menos el 22, el 80 y el 443. Un puerto cerrado no contesta: `curl` espera y acaba en un `28`.
+- Docker se salta `ufw` porque sus reglas van antes: lo que no deba ser público se publica en `127.0.0.1`, y solo nginx atiende fuera. En un VPS, el cortafuegos del proveedor filtra antes de llegar.
+- `unattended-upgrades` instala las actualizaciones de seguridad cada día, pero no reinicia: eso lo decides tú.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Ana enciende ufw en su VPS con default deny incoming, sin ufw allow OpenSSH, responde y a la pregunta y cierra la terminal. ¿Qué pasa cuando vuelve a entrar?"
+  review="El cortafuegos: ufw"
+>
+
+<QuizOption text="Entra sin problema: ufw siempre deja pasar el 22 para que no te quedes fuera.">
+
+`ufw` no tiene excepciones escondidas: por eso pregunta antes de encenderse. Lo que no permites, no entra, tampoco el 22.
+
+</QuizOption>
+
+<QuizOption text="Su ssh se queda esperando: el 22 está cerrado, y solo le queda la consola web del proveedor." correct>
+
+La conexión nueva al 22 se tira sin respuesta. Desde la consola web, `sudo ufw allow OpenSSH` lo arregla.
+
+</QuizOption>
+
+<QuizOption text="El servidor deshace el cambio al ver que nadie puede entrar, y vuelve a la configuración anterior.">
+
+Nadie comprueba que puedas entrar: esa red de seguridad es tuya, OpenSSH antes de `enable`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Escribes PasswordAuthentication no en 99-seguridad.conf. Tu VPS ya tenía un 50-cloud-init.conf con PasswordAuthentication yes. ¿Con qué se queda sshd?"
+  review="El primero que lo dice, gana"
+>
+
+<QuizOption text="Con yes: el 50 se lee antes, y en sshd gana el primer valor." correct>
+
+Los ficheros se leen por orden alfabético, y `sshd` se queda con lo primero que lee. Llámalo `00-…` y compruébalo con `sudo sshd -T`.
+
+</QuizOption>
+
+<QuizOption text="Con no: el 99 se lee el último y sobrescribe lo anterior.">
+
+Es lo que pasa en muchos programas, pero no en `sshd`: su documentación dice que se usa el primer valor que obtiene.
+
+</QuizOption>
+
+<QuizOption text="Con ninguno: sshd -t da error al ver dos valores contrarios, y no arranca.">
+
+Repetir una opción no es un error: `sshd` se queda con la primera, sin avisar.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="En tu VPS, con ufw dejando pasar solo el 22, el 80 y el 443, arrancas PostgreSQL con docker run -p 5432:5432. ¿Llega alguien de internet al 5432?"
+  review="Docker se salta ufw"
+>
+
+<QuizOption text="No: ufw tira todo lo que no está en su lista, y el 5432 no lo está.">
+
+Las reglas de `ufw` para lo que entra no ven esos paquetes: Docker cambia su destino al contenedor, y en la cadena `FORWARD` sus reglas van antes que las de `ufw`.
+
+</QuizOption>
+
+<QuizOption text="Solo si además añades ufw allow 5432, porque Docker pide permiso al cortafuegos.">
+
+Docker no consulta a `ufw`: escribe sus propias reglas en el núcleo, y se aplican antes.
+
+</QuizOption>
+
+<QuizOption text="Sí: Docker desvía esas conexiones al contenedor antes de que ufw las mire." correct>
+
+Es la promesa de la Fase 7. Publica en `127.0.0.1:5432`, o mejor, no publiques: la API llega a PostgreSQL por la red de Docker.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Desde tu portátil, curl -m 3 al puerto 6379 de tu VPS acaba en curl: (28) Connection timed out. ¿Qué te dice?"
+  review="Un puerto cerrado no contesta"
+>
+
+<QuizOption text="Que Redis está escuchando, pero va lento y necesita más de 3 segundos para contestar.">
+
+Un programa que escucha acepta la conexión enseguida. Aquí ni se abrió.
+
+</QuizOption>
+
+<QuizOption text="Que algo en el camino, como un cortafuegos, tiró la petición sin contestar." correct>
+
+Es el silencio de `deny`. Desde fuera no se sabe si detrás hay un programa o no: justo lo que quieres.
+
+</QuizOption>
+
+<QuizOption text="Que en el 6379 no escucha ningún programa, y el servidor te lo dice así.">
+
+Eso sería el error `7`, que llega en el acto: el servidor contesta que no hay nadie. El `28` es que nadie contestó.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Pruebas a entrar con contraseña en tu servidor y ssh responde Permission denied (publickey,password). ¿Qué significa?"
+  review="SSH: solo con clave, y root nunca"
+>
+
+<QuizOption text="Que todo está bien: el servidor ha rechazado tu contraseña, que es justo lo que querías.">
+
+Rechazó esa contraseña, pero el paréntesis dice que sigue ofreciendo `password`: un bot puede seguir probando otras.
+
+</QuizOption>
+
+<QuizOption text="Que tu clave pública no está en el authorized_keys del servidor.">
+
+Ese intento ni usó tu clave. El paréntesis no habla de tu clave, sino de las formas de entrar que el servidor acepta.
+
+</QuizOption>
+
+<QuizOption text="Que el servidor aún acepta contraseñas: el paréntesis lista lo que ofrece." correct>
+
+Con las contraseñas cerradas diría solo `(publickey)`. Mira `sudo sshd -T`: algún fichero dice `PasswordAuthentication yes` antes que el tuyo.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Al entrar en tu servidor, el saludo dice *** System restart required ***, y tienes unattended-upgrades encendido. ¿Qué pasa?"
+  review="Actualizaciones de seguridad, solas"
+>
+
+<QuizOption text="Están instaladas, pero la del núcleo solo cuenta al reiniciar." correct>
+
+`unattended-upgrades` no reinicia por defecto. Elige un momento tranquilo y haz `sudo reboot`, o activa `Automatic-Reboot` con una hora.
+
+</QuizOption>
+
+<QuizOption text="El servidor se reiniciará solo esta noche para terminar de instalarlas.">
+
+Por defecto, `Automatic-Reboot` está en `false`: el reinicio no llega hasta que lo hagas tú.
+
+</QuizOption>
+
+<QuizOption text="Las actualizaciones automáticas fallaron, y hay que instalarlas a mano con apt.">
+
+El aviso no es un fallo: es lo que deja una actualización que sí se instaló y necesita un arranque nuevo.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [OpenSSH server](https://documentation.ubuntu.com/server/how-to/security/openssh-server/), de la documentación de Ubuntu Server, en inglés: configurar `sshd` en Ubuntu.
+- [sshd_config](https://man.openbsd.org/sshd_config), en inglés: cada opción, `Include` y la regla del primer valor.
+- [Firewalls](https://documentation.ubuntu.com/server/how-to/security/firewalls/), de la documentación de Ubuntu Server, en inglés: `ufw` desde cero.
+- [Automatic updates](https://documentation.ubuntu.com/server/how-to/software/automatic-updates/), en inglés: `unattended-upgrades` y sus opciones.
+- [Packet filtering and firewalls](https://docs.docker.com/engine/network/packet-filtering-firewalls/), de la documentación de Docker, en inglés: por qué Docker y `ufw` no se llevan bien, y la cadena `DOCKER-USER`.
+- [fail2ban](https://github.com/fail2ban/fail2ban), en inglés: bloquear IP que fallan muchas veces.

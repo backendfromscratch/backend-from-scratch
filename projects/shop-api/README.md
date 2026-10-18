@@ -1,6 +1,6 @@
 # The API for Ana and Luis's shop
 
-The guided project for [Backend from Scratch](https://backenddesdecero.com/en/): it starts in Phase 3, "Your first server", carries on in Phase 4, "API design", in Phase 5, "Databases", in Phase 6, "Authentication, authorization and security", and in Phase 7, "Docker and containers". Each folder is the project as it stands at the end of a lesson: if you get stuck, compare your code with the folder for that lesson.
+The guided project for [Backend from Scratch](https://backenddesdecero.com/en/): it starts in Phase 3, "Your first server", carries on in Phase 4, "API design", in Phase 5, "Databases", in Phase 6, "Authentication, authorization and security", in Phase 7, "Docker and containers", and in Phase 8, "Deployment and infrastructure". Each folder is the project as it stands at the end of a lesson: if you get stuck, compare your code with the folder for that lesson.
 
 | Folder               | Lesson                             |
 | -------------------- | ---------------------------------- |
@@ -38,6 +38,7 @@ The guided project for [Backend from Scratch](https://backenddesdecero.com/en/):
 | `32-dockerfile`      | Dockerfile                         |
 | `33-small-image`     | Multi-stage                        |
 | `34-compose`         | Compose                            |
+| `35-production`      | Production, nginx and HTTPS        |
 
 You need Node.js 24 or later; the course uses 26 (with nvm, `nvm use` in the folder picks it). On Linux and WSL, Node 26 also needs the `libatomic1` library (`sudo apt install libatomic1`). In each folder:
 
@@ -95,3 +96,39 @@ The Redis store's tests (`test/redis-store.test.ts`, from `34-compose`) need a R
 ```sh
 docker run --rm -d --name redis-tests -p 127.0.0.1:6379:6379 redis:8
 ```
+
+## Phase 8: on a server
+
+`35-production` brings what changes when you put the shop on a server, next to `compose.yaml` (which stays the one for your computer):
+
+- `compose.production.yaml`: the same shop, with `restart: unless-stopped`, the image `${IMAGE:-shop-api}` (the one `--build` builds, or the published one if you set `IMAGE`), the network's subnet pinned (`172.18.0.0/16`) and no practice accounts: `migrate` only loads the sample products (`--no-accounts`). The API is still published only on `127.0.0.1`.
+- `.env.production.example`: a server's configuration. Copy it as `.env` **on the server**, generate the secrets there (`openssl rand -base64 32` and `openssl rand -hex 24`) and change `shop.example` to your name. The four `OIDC_*` stay commented out: without an identity provider, the shop works with email and password.
+- `nginx/shop.conf`: nginx in front, with port 80 redirecting to 443, the `X-Forwarded-For` and `X-Forwarded-Proto` headers, the two copies of the API in an `upstream`, and a `location` of its own for an order's events. It carries the instructions to install it. As it is, it uses your own certificate authority's certificate (`/etc/ssl/shop/`, the free path); with Let's Encrypt, `certbot --nginx` replaces those two lines.
+- `deployment/backup.sh`, with `shop-backup.service` and `shop-backup.timer`: a `pg_dump` every night at 03:30, in `backups/` (readable only by your user), kept for 7 days. Your user has to be in the `docker` group (it's equivalent to root: be careful) and change `User` and the paths in the `.service` if it isn't `ubuntu` and `/opt/shop`.
+
+```sh
+cp .env.production.example .env && chmod 600 .env    # and generate the secrets in .env
+docker compose -f compose.production.yaml up -d --build
+docker compose -f compose.production.yaml run --rm api node scripts/create-admin.ts you@email.com
+deployment/backup.sh                                 # a backup now
+```
+
+`create-admin` creates your admin account with a long random password, shows it just once and keeps only its hash. With `TRUSTED_PROXY`, the API reads the visitor's IP from `X-Forwarded-For` only when the request comes from that address (the gateway of Compose's network: `docker network inspect shop_default`). Only one proxy hop is supported (the last `X-Forwarded-For` entry): with another proxy in front, like Cloudflare's, the limiter would see that proxy's addresses.
+
+`36-deployment` publishes the image and deploys it without GitHub having to get into your server:
+
+- `.github/workflows/publish.yml`: on every pull request it installs, type-checks and runs the tests with a PostgreSQL 18; on every push to `main` it also builds the image for `linux/amd64` and `linux/arm64` and publishes it to `ghcr.io/<your-user>/shop-api` with the tags `sha-<7 letters of the commit>` and `main`. GitHub only runs the workflows at the root of a repository: here, inside the step's folder, it does nothing. Copy the step's contents to the root of your own repository and it switches on.
+- `deployment/deploy.sh`, with `shop-deploy.service` and `shop-deploy.timer`: every two minutes the server asks whether `IMAGE` (in `.env`, for example `ghcr.io/your-user/shop-api:main`) points to a new image. If not, it does nothing and writes nothing. If so: backup, migrations, new API, and it waits for `/health`; if it never gets healthy, it goes back to the previous image (kept as `:previous`) and ends with an error. One deployment at a time (`flock`). It installs like the backup, with the same user.
+
+```sh
+# on the server: follow the published image (put yours)
+echo 'IMAGE=ghcr.io/your-user/shop-api:main' >> .env
+docker compose -f compose.production.yaml pull api       # downloads the published one (build isn't used)
+sudo cp deployment/shop-deploy.service deployment/shop-deploy.timer /etc/systemd/system/
+sudo systemctl daemon-reload && sudo systemctl enable --now shop-deploy.timer
+journalctl -u shop-deploy                                # what it has done
+```
+
+The first time the image is published, ghcr.io creates it **private**: on its package page (Package settings → Change visibility) make it public, or the server won't be able to download it without credentials. An image the script judged bad isn't retried by itself (every attempt is seconds without an API): if the fault was in the environment and not in the image (a badly written `.env`, say), fix it and delete `.deploy-failed` so it tries again.
+
+Going back changes the code, not the data: that's why the script makes a backup before migrating.

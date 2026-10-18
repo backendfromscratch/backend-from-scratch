@@ -1,0 +1,102 @@
+# SOLO PARA LEER: el servidor de la tienda en Hetzner Cloud, su cortafuegos y su registro DNS.
+# Este archivo no acaba en .tf a propósito: Terraform lo ignora, así que ni `validate` ni `apply`
+# lo cargan y no se crea (ni se cobra) nada. Para usarlo de verdad, ponle un nombre .tf en una
+# carpeta tuya, con tu cuenta, tu token y tu dominio.
+#
+# Los datos privados (el token, tu clave SSH) llegan como variables: no se escriben aquí.
+# Ojo: el estado de Terraform guarda los valores de todos los recursos, secretos incluidos.
+
+terraform {
+  required_providers {
+    hcloud = {
+      source  = "hetznercloud/hcloud"
+      version = "1.70.0"
+    }
+    # El DNS lo gestiona Cloudflare, no Hetzner: Cloudflare sirve el DNS de cualquier dominio,
+    # lo hayas comprado donde lo hayas comprado, y su plan gratuito basta para la tienda.
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "5.27.0"
+    }
+  }
+}
+
+variable "hcloud_token" {
+  description = "Token de la API de Hetzner Cloud (proyecto > Seguridad > Tokens de API)"
+  type        = string
+  sensitive   = true # Terraform no lo imprime en la pantalla
+}
+
+variable "cloudflare_token" {
+  description = "Token de la API de Cloudflare con permiso de editar el DNS de la zona"
+  type        = string
+  sensitive   = true
+}
+
+variable "clave_ssh_publica" {
+  description = "Tu clave pública SSH (el contenido de id_ed25519.pub)"
+  type        = string
+}
+
+variable "zona_id" {
+  description = "El identificador de la zona de tu dominio en Cloudflare"
+  type        = string
+}
+
+variable "dominio" {
+  description = "El nombre que apuntará al servidor, por ejemplo tienda.ejemplo.com"
+  type        = string
+}
+
+provider "hcloud" {
+  token = var.hcloud_token
+}
+
+provider "cloudflare" {
+  api_token = var.cloudflare_token
+}
+
+# Tu clave pública en Hetzner, para entrar por SSH sin contraseña.
+resource "hcloud_ssh_key" "tienda" {
+  name       = "tienda"
+  public_key = var.clave_ssh_publica
+}
+
+# El cortafuegos del proveedor: SSH, HTTP y HTTPS desde cualquier sitio, y nada más.
+resource "hcloud_firewall" "web" {
+  name = "tienda-web"
+
+  dynamic "rule" {
+    for_each = ["22", "80", "443"]
+    content {
+      direction  = "in"
+      protocol   = "tcp"
+      port       = rule.value
+      source_ips = ["0.0.0.0/0", "::/0"]
+    }
+  }
+}
+
+# El servidor: Ubuntu 26.04, el plan más pequeño, con la clave y el cortafuegos de arriba.
+resource "hcloud_server" "web" {
+  name         = "tienda"
+  server_type  = "cx23"
+  image        = "ubuntu-26.04"
+  location     = "nbg1"
+  ssh_keys     = [hcloud_ssh_key.tienda.id]
+  firewall_ids = [hcloud_firewall.web.id]
+}
+
+# El registro DNS de tipo A (Fase 0): el nombre apunta a la IPv4 del servidor.
+resource "cloudflare_dns_record" "web" {
+  zone_id = var.zona_id
+  name    = var.dominio
+  type    = "A"
+  content = hcloud_server.web.ipv4_address
+  ttl     = 300
+  proxied = false # DNS solo: el tráfico va directo a tu servidor
+}
+
+output "ip_del_servidor" {
+  value = hcloud_server.web.ipv4_address
+}

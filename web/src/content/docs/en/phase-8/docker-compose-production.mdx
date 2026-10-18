@@ -1,0 +1,668 @@
+---
+translationKey: production
+title: "Docker Compose in production on a server"
+description: "Docker Compose in production: secrets that only live on the server, restart: unless-stopped, logs with a limit and a PostgreSQL backup every night."
+sidebar:
+  label: Production
+  order: 3
+lesson:
+  oneLiner: "Taking the shop to production with Docker Compose is starting on the server the same shop as on your computer, with a file of its own, compose.production.yaml: the secrets are generated there and never leave, Docker starts it again if it crashes or the server reboots, the logs have a limit and a copy of the database is saved every night."
+  objectives:
+    - Read compose.production.yaml and explain what changes compared to your computer's compose.yaml.
+    - Take the shop to the server with its secrets generated there, and create your admin account.
+    - Check that everything comes back on its own after a reboot, and put a limit on Docker's logs.
+    - Schedule a copy of the database every night with a systemd timer, and restore it.
+  prerequisites: [server-hardening, compose]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+Picture Ana copying the Phase 7 shop to her server, typing `docker compose up -d` and going to bed. It works, but with the practice accounts: two of them are admins, with their password published in the course's README.
+
+A week later, Ana reboots the server after an update, and the shop doesn't come back: nobody told Docker to start it. Months later, the logs fill the disk. And the day a `down -v` slips out, there's no copy of the orders anywhere.
+
+**What's enough on your computer isn't enough on a server.** In this lesson the shop goes up to yours with what it's missing.
+
+## The analogy
+
+<Analogy>
+
+Think of someone who cooks at home and opens a restaurant. The recipes are the same, but the place needs more:
+
+- **The key to the till** is kept at the restaurant, not in the recipe book: the secrets, in a `.env` that only exists on the server.
+- **The cold room comes back on its own** after a power cut: the restart policy.
+- **Old receipts get thrown out**, or there'd be no room left in the kitchen: logs with a limit.
+- **Every night, the accountant copies the books:** the copy of the database.
+
+<div slot="limits">
+
+- The cold room comes back because it's electric. Docker only starts again what has a restart policy, and it respects what you stopped yourself.
+- The accountant keeps the copy at their own office. This lesson's copy stays on the server itself: getting it out of there is up to you.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### A file for the server: compose.production.yaml
+
+The `35-production` folder brings Phase 7's `compose.yaml`, for your computer, and one for the server, `compose.production.yaml`, which you pick with `-f` (*file*). Both describe the same four services. This is PostgreSQL:
+
+<ProjectCode file="shop-api/35-production/compose.production.yaml" region="db" />
+
+- **`restart: unless-stopped`**: the <Term id="restart-policy">restart policy</Term>, in the next section.
+- **`${POSTGRES_PASSWORD:?…}`**: with no password in `.env`, Compose starts nothing and prints the message.
+- **No `ports`**: PostgreSQL isn't published, and neither is Redis. Only the shop's containers can see them.
+
+`migrate` changes in two ways:
+
+<ProjectCode file="shop-api/35-production/compose.production.yaml" region="migrate" />
+
+- **`build: .` next to `image: ${IMAGE:-shop-api}`**: `up --build` builds the image on the server and calls it `shop-api`. `:-` means "if `IMAGE` doesn't exist, use this." In [lesson 6](/en/phase-8/ci-cd-github-actions/), `IMAGE` will name the image GitHub publishes.
+- **`--no-accounts`**: it loads the sample products, not the practice accounts. You'll create your admin account with a script in the step, `create-admin`.
+
+And the API:
+
+<ProjectCode file="shop-api/35-production/compose.production.yaml" region="api" />
+
+**`127.0.0.1:3000-3001:3000`** is the rule from [lesson 2](/en/phase-8/secure-linux-server/#docker-bypasses-ufw): since Docker bypasses `ufw`, the API is published only on the server's own address. It can't be reached from outside; in [lesson 4](/en/phase-8/nginx-reverse-proxy/), nginx will talk to it from inside.
+
+The last piece pins the network:
+
+<ProjectCode file="shop-api/35-production/compose.production.yaml" region="network" />
+
+Docker's internal network has its own range of addresses, and Compose picks a free one when it creates it. Pinning it keeps the address the API sees nginx arriving from, `172.18.0.1`, from changing. Today it does nothing; in [lesson 4](/en/phase-8/nginx-reverse-proxy/#the-visitors-ip-x-forwarded-for), the API will use it to know each visitor's IP.
+
+### Inside, 0.0.0.0 and the node user
+
+In [Phase 3](/en/phase-3/node-http-server/#a-server-is-a-function-node-calls-with-every-request) we told you that a public server listens on `0.0.0.0`, all the machine's addresses. **Inside the container, the API listens on `0.0.0.0`** (the `HOST` variable in the `Dockerfile`), so Docker can pass the requests on to it. On the server, it's only published on `127.0.0.1`.
+
+And in [Phase 1](/en/phase-1/linux-users-and-permissions/#why-each-server-has-its-own-user) we told you your program would listen on 3000 as its own user. It's **`node`**, a user with no privileges that comes with the image, not `root`.
+
+### If it crashes, it comes back: the restart policy
+
+With no policy, a container that stops stays stopped. The shop's, `unless-stopped`, means "start it again, unless I'm the one who stopped it." This is what it looks like when you kill the API's process from the server:
+
+```sh
+$ sudo kill -9 $(docker inspect --format "{{.State.Pid}}" shop-api-1)
+$ docker compose -f compose.production.yaml ps --format "table {{.Name}}\t{{.Status}}" api
+NAME         STATUS
+shop-api-1   Up 2 seconds (health: starting)
+$ docker inspect --format "{{.RestartCount}}" shop-api-1
+1
+```
+
+A moment later it's running again (`Up 2 seconds`), with one restart counted. With `docker compose stop api`, on the other hand, it stays `Exited`.
+
+| Policy | If it crashes | If you stop it | When the server boots |
+|---|---|---|---|
+| `no`, the default | Stays stopped | Stays stopped | Stays stopped |
+| `always` | Comes back | Stays stopped | Comes back, even if you stopped it |
+| `unless-stopped` | Comes back | Stays stopped | Comes back, unless you stopped it |
+
+When the server boots, the one starting the containers is Docker, a <Term id="systemd">systemd</Term> service since the [introduction](/en/phase-8/#install-docker-on-the-vm), not Compose: it starts them all at once, without waiting for the healthchecks. In our test, the three started within 10 milliseconds of each other, and by the time we logged back in, 18 seconds later, all three were healthy. `migrate` has no policy: it's a task.
+
+### The secrets are generated on the server
+
+You copy `.env.production.example` as `.env` **on the server**. Its two secrets:
+
+<ProjectCode file="shop-api/35-production/.env.production.example" region="secrets" />
+
+In [Phase 5](/en/phase-5/#the-shop-role), PostgreSQL's password was `shop`, and we promised you that on a server it would be long and secret. Now it's 48 random characters:
+
+- **They're generated on the server** with `openssl rand`, and never leave it: not through a chat, not through your laptop. They aren't the development ones: if a production one leaks, your laptop's are still safe, and the other way around.
+- **`chmod 600 .env`**: only your user can read it, with the permissions from [Phase 1](/en/phase-1/linux-users-and-permissions/#changing-permissions-with-chmod-letters-or-numbers).
+- **Never in Git**, as in [Phase 6](/en/phase-6/rate-limiting-secrets/#secrets-out-of-the-code-and-out-of-git).
+
+The other lines come in other lessons: `TRUSTED_PROXY` in [lesson 4](/en/phase-8/nginx-reverse-proxy/), `ALLOWED_ORIGINS` in 5, `IMAGE` in [6](/en/phase-8/ci-cd-github-actions/). Phase 6's identity provider stays off: the practice one lives on your laptop.
+
+<ProjectCode file="shop-api/35-production/.env.production.example" region="provider" />
+
+**Leave the four lines with their `#`.** `OIDC_ISSUER=` with no value isn't the same as not having it: the variable exists, empty, and the API refuses to start.
+
+### Logs: Docker doesn't trim them
+
+Docker saves what the API writes in one file per container, with its default *driver*, `json-file`. According to [Docker's documentation](https://docs.docker.com/engine/logging/drivers/json-file/), **that file isn't rotated**: it grows with no limit. The installation from the introduction doesn't change that: `/etc/docker` is left empty.
+
+Do the math. The healthcheck asks `/health` every 10 seconds, and each question is a line of about 290 bytes. That's 8,640 lines a day, about 2.5 MB: about 900 MB a year **without a single visitor**.
+
+You fix it in `/etc/docker/daemon.json`, the engine's configuration:
+
+```json
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+```
+
+At 10 MB, Docker starts another file, and it keeps three at most. **It only applies to containers created afterwards**: you have to recreate them. systemd's journal, on the other hand, trims itself.
+
+### A copy every night
+
+A volume isn't a copy, as you saw in [Phase 7](/en/phase-7/docker-volumes/#backups-with-pg_dump): it's the only place your data lives. The <Term id="backup">backup</Term> is made by a script in the step:
+
+<ProjectCode file="shop-api/35-production/deployment/backup.sh" region="backup" />
+
+- **`umask 077`**: whatever the script creates is born for your user only. A backup holds the emails and the password hashes.
+- **`exec -T db pg_dump … | gzip`**: the dump, compressed. `-T` means "no terminal," so it can go through the *pipe*.
+- **First `.tmp`, then `mv`**: `set -e` stops the script at the first failure, and `trap … EXIT` is what runs on the way out, whether things went well or badly: it deletes the `.tmp`. There's never a half-made copy with the name of a good one.
+
+<ProjectCode file="shop-api/35-production/deployment/backup.sh" region="prune" />
+
+The pruning deletes the ones 7 days old or more, and only after a good new copy: if the database is down, the script has already failed and the old ones stay.
+
+A systemd timer launches it, with two files like the service from [Phase 1](/en/phase-1/systemd-services-and-apt/#the-service-sheet-the-unit-file):
+
+<ProjectCode file="shop-api/35-production/deployment/shop-backup.service" />
+
+<ProjectCode file="shop-api/35-production/deployment/shop-backup.timer" />
+
+- **`Type=oneshot`**: a task that ends, not a server.
+- **`User=ubuntu`**: your user, not `root`. It can talk to Docker because it's in the `docker` group, which [is as good as root](/en/phase-8/#without-sudo-the-docker-group).
+- **`OnCalendar=*-*-* 03:30:00`**: every day at 03:30. **`Persistent=true`**: if the server was off, it makes the copy when it boots.
+
+**A copy on the same disk doesn't save you if you lose the disk.** Take it somewhere else every now and then, for example from your computer: `rsync -av ubuntu@192.168.5.15:/opt/shop/backups/ shop-backups/`.
+
+## Try it
+
+The goal: the shop running on your server, coming back on its own after a reboot, with your admin account, logs with a limit and a copy restored into an empty database.
+
+The outputs are from a VM with Ubuntu 26.04, Docker 29.9.1, Compose 5.6.0 and the IP `192.168.5.15`: **use your server's.** Your times, IDs, ports and passwords will be different. On a VPS, everything is the same.
+
+### The step, on the server
+
+The shop will live in `/opt/shop`: `/opt` is the folder for programs that don't come with the system, and the step's systemd files expect it there. Since it belongs to `root`, you first copy the step to your folder on the server. On **your computer**:
+
+<TryIt
+  title="1. Copy the step to the server"
+  cmd={`curl -O https://backenddesdecero.com/practicas/shop-api/35-production.tar.gz
+tar -xzf 35-production.tar.gz
+rsync -av 35-production/ ubuntu@192.168.5.15:shop/`}
+  windows={`curl.exe -O https://backenddesdecero.com/practicas/shop-api/35-production.tar.gz
+tar -xzf 35-production.tar.gz
+scp -r 35-production ubuntu@192.168.5.15:shop`}
+  output={`Transfer starting: 143 files
+created directory shop
+./
+.dockerignore
+.env.example
+.env.production.example
+…
+sent 578767 bytes  received 2974 bytes  36132981 bytes/sec
+total size is 566278  speedup is 0.97`}
+>
+
+It's the `rsync` from [Phase 1](/en/phase-1/what-is-ssh/#copying-files-scp-and-rsync): look at `created directory shop`. On Linux, the first line is `sending incremental file list`. PowerShell doesn't come with `rsync`, but it does have `scp`: `scp -r` copies the folder and, since `shop` doesn't exist on the server, creates it with that name.
+
+The download doesn't include `.env`: **your development `.env` must not reach the server.** If you copy your own project, add `--exclude node_modules --exclude .env`.
+
+</TryIt>
+
+Now, **inside the server**, move it to `/opt` and go into it. The folder is still yours: you don't need `sudo` to work in it.
+
+```sh
+sudo mv shop /opt/
+cd /opt/shop
+```
+
+### The .env, with new secrets
+
+<TryIt
+  title="2. A .env only you can read"
+  cmd={`cp .env.production.example .env
+chmod 600 .env
+ls -l .env`}
+  output="-rw------- 1 ubuntu ubuntu 2351 Oct 18 01:47 .env"
+>
+
+Look at `-rw-------`: read and write for `ubuntu`, nothing for anyone else. If you start it now, Compose refuses with `required variable POSTGRES_PASSWORD is missing a value`.
+
+</TryIt>
+
+Generate the two secrets and write them into `.env` without them going through your screen:
+
+```sh
+sed -i "s|^WEBHOOK_SECRET=.*|WEBHOOK_SECRET=$(openssl rand -base64 32)|" .env
+sed -i "s|^POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=$(openssl rand -hex 24)|" .env
+```
+
+- **`$(openssl rand …)`**: the terminal runs what's inside and puts its output in its place.
+- **`sed -i "s|A|B|"`**: changes in the file (`-i`) whatever matches `A` into `B`. `^WEBHOOK_SECRET=.*` is the line that starts with `WEBHOOK_SECRET=`. The separator is `|` because base64 uses `/`.
+
+`.env` is still `600`. `grep -c change-this .env` should say `0`: the example secret is gone.
+
+### Start the shop
+
+<TryIt
+  title="3. The shop, in production"
+  cmd="docker compose -f compose.production.yaml up -d --build"
+  output={`…
+[+] up 7/7
+ ✔ Image shop-api           Built                                           3.1s
+ ✔ Network shop_default     Created                                         0.0s
+ ✔ Volume shop_data         Created                                         0.0s
+ ✔ Container shop-redis-1   Healthy                                         3.4s
+ ✔ Container shop-db-1      Healthy                                         3.4s
+ ✔ Container shop-migrate-1 Exited                                          3.8s
+ ✔ Container shop-api-1     Started                                         3.9s`}
+>
+
+As in Phase 7, but **everything is built on the server**: the first time it takes a few minutes, and before this come the build steps, which we trimmed (`…`). If it stops with `Killed`, it's short of memory: the VM needs the 2 GB from the introduction.
+
+</TryIt>
+
+<TryIt
+  title="4. Does it answer?"
+  cmd={`docker compose -f compose.production.yaml ps --format "table {{.Name}}\\t{{.Status}}\\t{{.Ports}}"
+curl -s http://$(docker compose -f compose.production.yaml port api 3000)/health; echo`}
+  output={`NAME           STATUS                    PORTS
+shop-api-1     Up 23 seconds (healthy)   127.0.0.1:3001->3000/tcp
+shop-db-1      Up 27 seconds (healthy)   5432/tcp
+shop-redis-1   Up 27 seconds (healthy)   6379/tcp
+{"status":"ok"}`}
+>
+
+`--format` leaves three columns. Only the API has an arrow in `PORTS`, and it starts with `127.0.0.1`. **Ours got `3001`**, from the range; yours may be on `3000`. That's why `curl` asks `docker compose port` for the port. If you see `(health: starting)`, wait a few seconds.
+
+</TryIt>
+
+<TryIt
+  title="5. Who's listening, and as whom"
+  cmd={`ss -ltn | grep -E ":(3000|3001|5432|6379) "
+docker compose -f compose.production.yaml exec api whoami
+docker compose -f compose.production.yaml exec api printenv HOST`}
+  output={`LISTEN 0      4096       127.0.0.1:3001       0.0.0.0:*
+node
+0.0.0.0`}
+>
+
+`ss -ltn` lists the ports listening on the server: of the shop's, **only the API's, on `127.0.0.1`**. Inside the container, the API is `node` and listens on `0.0.0.0`. From your computer, `http://192.168.5.15:3001` doesn't answer, and that's how it should be.
+
+</TryIt>
+
+### Your admin account
+
+<TryIt
+  title="6. create-admin"
+  cmd={`docker compose -f compose.production.yaml run --rm api node scripts/create-admin.ts admin@shop.example
+docker compose -f compose.production.yaml exec db psql -U shop -c "SELECT id, email, role FROM users;"`}
+  output={`…
+ Container shop-api-run-a8c42ca470dc Created
+Admin account created: admin@shop.example
+Password (save it now, it is not shown again): 4i5QbeyYxzyO_6TIXLLd-Tou
+ id |       email        | role
+----+--------------------+-------
+  1 | admin@shop.example | admin
+(1 row)`}
+>
+
+Use your own email. **`run --rm api`** creates a container with the API's image, runs the script and deletes it. The script generates a random password and saves only its <Term id="hash">hash</Term>. **Save it now** in your password manager: it isn't shown again. The query confirms it: a single account, yours.
+
+</TryIt>
+
+### Reboot the server
+
+<TryIt
+  title="7. Off and on again"
+  cmd={`sudo reboot
+# … log back in over SSH, and:
+cd /opt/shop
+uptime -p
+docker compose -f compose.production.yaml ps --format "table {{.Name}}\\t{{.Status}}"
+curl -s http://$(docker compose -f compose.production.yaml port api 3000)/health; echo`}
+  output={`up 0 minutes
+NAME           STATUS
+shop-api-1     Up 18 seconds (healthy)
+shop-db-1      Up 18 seconds (healthy)
+shop-redis-1   Up 18 seconds (healthy)
+{"status":"ok"}`}
+>
+
+`sudo reboot` kicks you out: wait half a minute and log back in. `uptime -p` says the server has just been turned on, and the shop is already healthy **without you typing `up`**. If it doesn't show up, `systemctl is-enabled docker` should say `enabled`.
+
+</TryIt>
+
+### Put a limit on the logs
+
+`docker compose -f compose.production.yaml logs api` shows what the API has written; with `-f`, it waits for new lines. Look at its limits:
+
+<TryIt
+  title="8. No limit"
+  cmd={`docker info --format "{{.LoggingDriver}}"
+docker inspect --format "{{json .HostConfig.LogConfig}}" shop-api-1`}
+  output={`json-file
+{"Type":"json-file","Config":{}}`}
+>
+
+`Config` is empty: neither `max-size` nor `max-file`.
+
+</TryIt>
+
+`sudo tee` writes, with `root`'s permissions, whatever reaches it up to the `EOF` line:
+
+<TryIt
+  title="9. With a limit"
+  cmd={`sudo tee /etc/docker/daemon.json <<'EOF'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+EOF
+sudo systemctl restart docker
+docker compose -f compose.production.yaml up -d --force-recreate
+docker inspect --format "{{json .HostConfig.LogConfig}}" shop-api-1`}
+  output={`{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  }
+}
+…
+{"Type":"json-file","Config":{"max-file":"3","max-size":"10m"}}`}
+>
+
+`tee` repeats what it writes. When Docker restarts, the shop comes back on its own, but with an empty `Config` until `--force-recreate` creates its containers again. The last line now has the limits. If Docker doesn't start, the JSON has a mistake: `sudo journalctl -u docker -n 20` tells you which.
+
+</TryIt>
+
+### The nightly copy
+
+<TryIt
+  title="10. The timer"
+  cmd={`chmod +x deployment/backup.sh
+sudo cp deployment/shop-backup.service deployment/shop-backup.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now shop-backup.timer
+systemctl list-timers shop-backup.timer`}
+  output={`Created symlink '/etc/systemd/system/timers.target.wants/shop-backup.timer' → '/etc/systemd/system/shop-backup.timer'.
+NEXT                             LEFT LAST                         PASSED UNIT              ACTIVATES
+Sun 2026-10-18 03:30:00 CEST 1h 40min Sat 2026-10-17 18:20:27 CEST      - shop-backup.timer shop-backup.service
+…`}
+>
+
+`chmod +x` makes the script executable: the download doesn't keep that permission, on any system. `daemon-reload` reads the new files, and `enable --now` turns the timer on now and at every boot. Look at `NEXT`: 03:30. `LAST` is the last copy; in ours, from earlier tests, and in yours, `-`. If your user or your folder are different, change `User` and the paths in the `.service` before copying it.
+
+</TryIt>
+
+Don't wait until 03:30:
+
+<TryIt
+  title="11. A copy right now"
+  cmd={`sudo systemctl start shop-backup.service
+journalctl -u shop-backup.service -n 5 --no-pager
+ls -l backups`}
+  output={`Oct 18 01:49:42 course systemd[1]: Starting shop-backup.service - Backup of the shop's database...
+Oct 18 01:49:42 course backup.sh[5079]: Backup made: backups/shop-2026-10-18-014942.sql.gz (4.0K)
+Oct 18 01:49:42 course systemd[1]: shop-backup.service: Deactivated successfully.
+Oct 18 01:49:42 course systemd[1]: Finished shop-backup.service - Backup of the shop's database.
+total 4
+-rw------- 1 ubuntu ubuntu 2764 Oct 18 01:49 shop-2026-10-18-014942.sql.gz`}
+>
+
+Look at `Backup made` and at `-rw-------`: only `ubuntu` can read it. If you've run it before, the journal shows earlier lines too. If it says `service "db" is not running`, the shop is stopped: there's no new copy and no `.tmp`, and the old ones are still there.
+
+</TryIt>
+
+### Restore the copy
+
+A copy you've never restored is a hope. Try it in a new database, `test`, with your file's name:
+
+<TryIt
+  title="12. Restore"
+  cmd={`docker compose -f compose.production.yaml exec -T db createdb -U shop test
+gunzip -c backups/shop-2026-10-18-014942.sql.gz | docker compose -f compose.production.yaml exec -T db psql -U shop -d test -q -v ON_ERROR_STOP=1`}
+  output={`…
+ setval
+--------
+      1
+(1 row)`}
+>
+
+`createdb` creates the empty database, `gunzip -c` decompresses the copy and `psql` runs it in `test`. **`ON_ERROR_STOP=1`** stops at the first error instead of leaving it half done. The last `setval` puts the `id` counter back where it was.
+
+</TryIt>
+
+<TryIt
+  title="13. Is everything there?"
+  cmd={`for db in shop test; do echo "== $db"; docker compose -f compose.production.yaml exec -T db psql -U shop -d $db -tc "select (select count(*) from products) as products, (select count(*) from users) as users, (select count(*) from orders) as orders"; done
+docker compose -f compose.production.yaml exec -T db dropdb -U shop test`}
+  output={`== shop
+        4 |     1 |     25
+
+== test
+        4 |     1 |     25`}
+>
+
+Products, users and orders in both: **the same numbers**. The 4 products and the 25 orders are the sample ones, and the user is your account. `dropdb` deletes `test`.
+
+</TryIt>
+
+Now, the real way back. Imagine a mistake deletes the shop's accounts. With the API stopped, you delete the database, create it empty, load the copy and start the API. Only do it with a copy you've just tested:
+
+<TryIt
+  title="14. Back to the copy"
+  cmd={`docker compose -f compose.production.yaml exec -T db psql -U shop -c "DELETE FROM users;"
+docker compose -f compose.production.yaml stop api
+docker compose -f compose.production.yaml exec -T db dropdb -U shop shop
+docker compose -f compose.production.yaml exec -T db createdb -U shop shop
+gunzip -c backups/shop-2026-10-18-014942.sql.gz | docker compose -f compose.production.yaml exec -T db psql -U shop -d shop -q -v ON_ERROR_STOP=1 > /dev/null
+docker compose -f compose.production.yaml start api
+docker compose -f compose.production.yaml exec db psql -U shop -c "SELECT id, email, role FROM users;"`}
+  output={`DELETE 1
+ Container shop-api-1 Stopping
+ Container shop-api-1 Stopped
+…
+ Container shop-api-1 Started
+ id |       email        | role
+----+--------------------+-------
+  1 | admin@shop.example | admin
+(1 row)`}
+>
+
+`DELETE 1` is the disaster. `dropdb` can't delete a database with open connections: that's why the API is stopped first. `> /dev/null` throws away `psql`'s results, which you already saw in `test`. At the end, your account is back. If what you lost is newer than the copy, that doesn't come back: the copy is from last night.
+
+</TryIt>
+
+The shop stays running: [lesson 4](/en/phase-8/nginx-reverse-proxy/) puts nginx in front of it.
+
+## You have already seen it
+
+- **Your home router.** After a power cut, it gives you wifi again without you doing anything: its policy is "always."
+- **WhatsApp backups.** They happen on their own every day, if you choose so, and they go to iCloud or Google Drive, not to the phone: if you lose it, the copy is still there.
+- **Time Machine, on the Mac.** It keeps hourly copies for the last day, daily copies for the last month and weekly copies before that: it deletes the old ones, like the 7-day pruning.
+
+## Common mistakes
+
+- **`docker compose up` without `-f` on the server.** It starts the development `compose.yaml`, with the same volume: it loads the practice accounts, with two admins whose password is public, and it doesn't come back after a reboot. You don't need it on the server: after `rm compose.yaml`, Compose will say `no configuration file provided: not found`.
+- **Copying your development `.env`, or pushing it to Git.** The same secret lives in two places, and `localhost` and your laptop's provider get mixed up with production.
+- **An `OIDC_` line with no `#` and no value.** The API doesn't start: `OIDC_ISSUER is not a URL`.
+- **Copies that never leave the server, or that you've never restored.** If the disk dies, they go with it; if they don't restore, you find out on the worst possible day.
+- **`down -v` in production.** It deletes the volume with all the orders. To stop, plain `down`.
+
+## Summary
+
+- `compose.production.yaml` is the server's shop: `restart: unless-stopped`, the API only on `127.0.0.1`, PostgreSQL and Redis with no ports and no practice accounts.
+- The secrets are generated on the server, in a `.env` with `600` permissions that never goes to Git.
+- With `unless-stopped`, Docker starts the shop again if it crashes and when the server boots, except what you stopped yourself.
+- `json-file` doesn't trim the logs: `max-size` and `max-file` in `daemon.json`, and recreated containers.
+- A systemd timer runs a `pg_dump` every night and keeps 7 days. A copy is worth what its last restore was worth, and it's better off the server.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="A colleague started the shop on the server with docker compose up -d, without -f. It works, but after a sudo reboot it doesn’t come back. Why?"
+  review="Common mistakes"
+>
+
+<QuizOption text="Docker doesn’t start on its own when the server boots: you have to add it to systemd.">
+
+Docker is already a systemd service that starts with the server, since the introduction. It starts, but it has nothing to start again.
+
+</QuizOption>
+
+<QuizOption text="It started the development compose.yaml, which has no restart policy." correct>
+
+Without `-f`, Compose uses `compose.yaml`, with no `restart`, and its containers stay stopped. On top of that, it loaded the practice accounts.
+
+</QuizOption>
+
+<QuizOption text="Containers are deleted when the server reboots, and you always have to run up again.">
+
+Containers survive the reboot, stopped. With `unless-stopped`, Docker starts them again on its own.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You want to have “Sign in with Google” ready: you remove the # from the four OIDC_ lines and leave them with no value. What happens at startup?"
+  review="The secrets are generated on the server"
+>
+
+<QuizOption text="The API doesn’t start: an empty variable exists, and it isn’t a URL." correct>
+
+Without `#`, the variable is defined, even if empty, and the configuration rejects it: `OIDC_ISSUER is not a URL`.
+
+</QuizOption>
+
+<QuizOption text="It starts, and the provider’s routes answer 404 until you give them a value.">
+
+That's what happens with the four commented out: then the variables don't exist. Empty isn't the same as missing.
+
+</QuizOption>
+
+<QuizOption text="Compose refuses to start any service and says so when you run up.">
+
+Compose only requires what the file marks with `:?`, like `POSTGRES_PASSWORD`. The API checks the `OIDC_*` ones when it starts.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You write daemon.json with max-size and max-file, and restart Docker. A week later, the API’s log is still growing with no limit. What was missing?"
+  review="Logs: Docker doesn't trim them"
+>
+
+<QuizOption text="Rebooting the whole server: daemon.json is only read when it’s turned on.">
+
+Docker reads `daemon.json` every time the engine starts, and `systemctl restart docker` starts it.
+
+</QuizOption>
+
+<QuizOption text="Swapping json-file for another driver: json-file can’t rotate.">
+
+`json-file` rotates when it has `max-size`. What it doesn't do is rotate without it, which is how it comes.
+
+</QuizOption>
+
+<QuizOption text="Recreating the containers: the old ones keep their configuration." correct>
+
+The options in `daemon.json` are applied when a container is created. After `up -d --force-recreate`, `LogConfig` shows the limits.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Your VPS’s disk breaks beyond repair. The timer made a copy every night in /opt/shop/backups. What have you lost?"
+  review="A copy every night"
+>
+
+<QuizOption text="Only the last day’s work: last night’s copy has everything.">
+
+Last night's copy was on the disk that broke. It went with it.
+
+</QuizOption>
+
+<QuizOption text="Everything: the copies lived on the same disk." correct>
+
+All seven copies were on the server. That's why a copy has to leave it.
+
+</QuizOption>
+
+<QuizOption text="Nothing: with seven copies, one of them survives.">
+
+Seven copies on the same disk fall together. What saves you is where the copy is, not how many there are.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="From your computer, curl http://192.168.5.15:3000/health doesn’t answer, but inside the server, curl to 127.0.0.1:3000 does. What’s going on?"
+  review="A file for the server: compose.production.yaml"
+>
+
+<QuizOption text="ufw is blocking 3000: you have to open it with ufw allow 3000.">
+
+Docker bypasses `ufw` (lesson 2): if the API were published on every address, you'd get through anyway. And opening it would be a mistake.
+
+</QuizOption>
+
+<QuizOption text="The API listens on 127.0.0.1 inside the container, and you have to change its HOST.">
+
+Inside, it listens on `0.0.0.0`. What limits it is where it's published on the server.
+
+</QuizOption>
+
+<QuizOption text="Nothing’s wrong: the API is published only on 127.0.0.1, on purpose." correct>
+
+`127.0.0.1:3000-3001:3000` leaves it within reach of the server itself and nobody else. In [lesson 4](/en/phase-8/nginx-reverse-proxy/), nginx will talk to it from inside.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You stop the API with docker compose stop api to look at something, and forget to start it. That night you reboot the server for an update. Does the API come back?"
+  review="If it crashes, it comes back: the restart policy"
+>
+
+<QuizOption text="No: unless-stopped respects that you stopped it." correct>
+
+`unless-stopped` means "always, unless I stop it," after a reboot too. `db` and `redis` come back; the API waits for you to start it.
+
+</QuizOption>
+
+<QuizOption text="Yes: unless-stopped starts every container when the server boots.">
+
+That's what `always` does. `unless-stopped` remembers that you stopped it.
+
+</QuizOption>
+
+<QuizOption text="Yes: Compose starts it after db, because of its depends_on.">
+
+When the server boots, Compose isn't involved: Docker starts the containers according to their policy. `depends_on` only counts in `docker compose up`.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [Start containers automatically](https://docs.docker.com/engine/containers/start-containers-automatically/), from Docker's documentation: restart policies.
+- [JSON File logging driver](https://docs.docker.com/engine/logging/drivers/json-file/): `max-size`, `max-file` and why it doesn't rotate by default.
+- [Use Compose in production](https://docs.docker.com/compose/how-tos/production/): what changes from a development file to a production one.
+- [SQL Dump](https://www.postgresql.org/docs/current/backup-dump.html), from PostgreSQL's documentation: `pg_dump` and how to restore.
+- [systemd.timer](https://www.freedesktop.org/software/systemd/man/latest/systemd.timer.html): `OnCalendar`, `Persistent` and the rest.

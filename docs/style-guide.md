@@ -95,7 +95,7 @@ import QuizOption from '~/components/QuizOption.astro';
 - `<Term id="port">puerto</Term>`: the `id` is the file name in `src/content/glossary/<language>/`. If it does not exist, the build fails.
 - `<TryIt cmd="…" output={`…`}>explanation</TryIt>`:
   - `output` is copied from a real run, never made up;
-  - `windows` is not used: on Windows, the course is followed with WSL, with the same commands as on Linux (decided on 2026-10-07; Phase 1 spec, §2.2). The prop stays in the component in case it is needed some day;
+  - `windows` is only for what WSL cannot do: on Windows, the course is followed with WSL, with the same commands as on Linux (decided on 2026-10-07; Phase 1 spec, §2.2). The exception is Phase 8's free path, where the server is a Multipass VM that Windows readers reach from PowerShell: lesson 1 gives its PowerShell commands in `windows` (decided on 2026-10-17);
   - for several lines, use a template literal: ``cmd={`línea 1\nlínea 2`}``.
   - `lang` changes the highlighting of `cmd` (default `sh`); use `lang="http"` when what the reader types is an HTTP message and not a command.
 - `<Analogy>…<div slot="limits">…</div></Analogy>`: without `limits`, the build fails.
@@ -176,6 +176,8 @@ acronym:
   translation: interfaz de programación de aplicaciones   # only in Spanish
 ```
 
+The `acronym` block only accepts all-capital letters. A mixed-case acronym, like «IaaS» or «PaaS», has no block: what it stands for goes at the start of `short` («Infraestructura como servicio (en inglés, Infrastructure as a Service): …»; in English, "Infrastructure as a Service: …").
+
 The glossary links each term to the lesson that explains it («Se explica en…», "Explained in…"): by default, the first one in the course that uses it with `<Term>`, counting the phase introductions. If that lesson only mentions it and another one explains it, point to the right one with `lesson`. If the key does not exist in any language, the build fails.
 
 If `short` contains a colon followed by a space («Nombre: valor»), put it in single quotes. Otherwise YAML interprets it as a new key and the build fails.
@@ -193,7 +195,7 @@ If `short` contains a colon followed by a space («Nombre: valor»), put it in s
 
 From Phase 3 the reader writes code. These rules keep every line a lesson shows working.
 
-- **The code comes from the guided projects** (`projects/tienda-api/` in Spanish, `projects/shop-api/` in English), which CI installs, type-checks and tests with Node 26. A lesson never pastes code: it shows a file, or one region of it, with `<ProjectCode file="tienda-api/04-servidor-http/src/app.ts" region="rutas" />`. Regions are marked in the file with `// #region name` and `// #endregion name`; a region that does not exist fails the build.
+- **The code comes from the guided projects** (`projects/tienda-api/` in Spanish, `projects/shop-api/` in English), which CI installs, type-checks and tests with Node 26. A lesson never pastes code: it shows a file, or one region of it, with `<ProjectCode file="tienda-api/04-servidor-http/src/app.ts" region="rutas" />`. Regions are marked in the file with `// #region name` and `// #endregion name` (`-- #region name` in SQL; `# #region name` in YAML, shell scripts, env files and systemd units), each on a line of its own; a region that does not exist fails the build.
 - **One folder per lesson** (`04-servidor-http/`…): the project as it is at the end of that lesson, complete and runnable. The reader can download it (`curl -O https://backenddesdecero.com/practicas/tienda-api/04-servidor-http.tar.gz` and `tar -xzf`) to compare it with theirs. Changing a step's code means changing the same lines in the later steps that keep it, and in the other language.
 - **The project is in the reader's language:** identifiers, routes (`/productos`), data, messages and comments. Environment variables keep their usual English names (`PORT`, `LOG_LEVEL`, `ADMIN_TOKEN`), because hosting platforms read them by those names.
 - **Short blocks, explained piece by piece:** 5 to 20 lines per block, and after it, what each new piece does, like the commands of Phase 1 («Palabra a palabra»). A longer file is shown in regions.

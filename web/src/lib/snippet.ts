@@ -1,13 +1,14 @@
 /**
  * The code the lessons show comes from the guided projects (projects/), which CI runs and tests:
  * a lesson never copies code by hand. A file is shown whole or one region of it, marked with
- * `// #region name` and `// #endregion name` (`-- #region name` in SQL files). A region that does not
- * exist fails the build.
+ * `// #region name` and `// #endregion name` (`-- #region name` in SQL files, and `# #region name` in
+ * files whose comments start with `#`: YAML, shell, env files and systemd units). Only a whole line
+ * is a marker. A region that does not exist fails the build.
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 
-const marker = /^\s*(?:\/\/|--) #(end)?region\b.*$/;
+const marker = /^\s*(?:\/\/|--|#) #(end)?region\b.*$/;
 
 /** The common indentation of the non-empty lines, removed. */
 function dedent(lines: string[]): string[] {
@@ -31,9 +32,9 @@ export function extractRegion(source: string, region?: string): string {
   if (region === undefined) {
     return trimBlank(lines.filter((line) => !marker.test(line))).join('\n');
   }
-  const opens = (line: string) => /^(?:\/\/|--) #region (.*)$/.exec(line.trim())?.[1] === region;
+  const opens = (line: string) => /^(?:\/\/|--|#) #region (.*)$/.exec(line.trim())?.[1] === region;
   const closes = (line: string) =>
-    /^(?:\/\/|--) #endregion (.*)$/.exec(line.trim())?.[1] === region;
+    /^(?:\/\/|--|#) #endregion (.*)$/.exec(line.trim())?.[1] === region;
   const start = lines.findIndex(opens);
   if (start === -1) throw new Error(`There is no region «${region}»`);
   if (lines.findIndex((line, i) => i > start && opens(line)) !== -1) {
@@ -51,6 +52,8 @@ export function languageOf(file: string): string {
   if (/(^|\/)tsconfig[^/]*\.json$/.test(file)) return 'jsonc';
   // A Dockerfile has no extension: its name is its language.
   if (/(^|\/)Dockerfile$/.test(file)) return 'dockerfile';
+  // nginx's configuration lives in an nginx/ folder (nginx/tienda.conf); other .conf files are not nginx.
+  if (/(^|\/)nginx\/[^/]+\.conf$/.test(file)) return 'nginx';
   const extension = file.slice(file.lastIndexOf('.') + 1);
   const languages: Record<string, string> = {
     ts: 'ts',
@@ -61,6 +64,9 @@ export function languageOf(file: string): string {
     sql: 'sql',
     yaml: 'yaml',
     yml: 'yaml',
+    // systemd units: sections and key=value lines, like an ini file.
+    service: 'ini',
+    timer: 'ini',
   };
   const language = languages[extension] ?? (file.split('/').at(-1)?.startsWith('.') ? 'ini' : '');
   if (!language) throw new Error(`No language for «${file}»`);
