@@ -63,7 +63,9 @@ const esquemaConfig = z
     // se guardan en la memoria del servidor. En Docker Compose la pone compose.yaml.
     REDIS_URL: z.url({ error: 'REDIS_URL no es una URL: redis://servidor:6379' }).optional(),
     // Las IP de tu proxy (Nginx), separadas por comas: solo de ellas se lee X-Forwarded-For para saber
-    // la IP de quien pide (limites.ts). Sin proxy, vacío: esa cabecera se ignora.
+    // la IP de quien pide (limites.ts). Sin proxy, vacío: esa cabecera se ignora. Solo se admite UN
+    // salto de proxy (se lee la última entrada de X-Forwarded-For): con otro proxy delante (el de
+    // Cloudflare, por ejemplo), el limitador vería las direcciones de ese proxy, no las de los visitantes.
     PROXY_CONFIABLE: lista('PROXY_CONFIABLE')
       .pipe(
         z.array(

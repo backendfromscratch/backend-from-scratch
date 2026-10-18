@@ -65,7 +65,9 @@ const configSchema = z
     REDIS_URL: z.url({ error: 'REDIS_URL is not a URL: redis://server:6379' }).optional(),
     // The IPs of your proxy (Nginx), separated by commas: X-Forwarded-For is only read from them, to
     // know the IP of whoever makes the request (rate-limits.ts). Without a proxy, empty: that header
-    // is ignored.
+    // is ignored. Only ONE proxy hop is supported (the last X-Forwarded-For entry is read): with
+    // another proxy in front (Cloudflare's, say), the limiter would see that proxy's addresses, not
+    // the visitors'.
     TRUSTED_PROXY: list('TRUSTED_PROXY')
       .pipe(
         z.array(

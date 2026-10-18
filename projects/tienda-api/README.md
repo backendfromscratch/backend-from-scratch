@@ -113,7 +113,7 @@ docker compose -f compose.produccion.yaml run --rm api node scripts/crear-admin.
 despliegue/copia-seguridad.sh                        # una copia ahora
 ```
 
-`crear-admin` crea tu cuenta de admin con una contraseña larga al azar, la enseña una sola vez y guarda solo su hash. Con `PROXY_CONFIABLE`, la API lee la IP del visitante en `X-Forwarded-For` solo cuando la petición llega de esa dirección (la puerta de enlace de la red de Compose: `docker network inspect tienda_default`).
+`crear-admin` crea tu cuenta de admin con una contraseña larga al azar, la enseña una sola vez y guarda solo su hash. Con `PROXY_CONFIABLE`, la API lee la IP del visitante en `X-Forwarded-For` solo cuando la petición llega de esa dirección (la puerta de enlace de la red de Compose: `docker network inspect tienda_default`). Solo se admite un salto de proxy (se lee la última entrada de `X-Forwarded-For`): con otro proxy delante, como el de Cloudflare, el limitador vería las direcciones de ese proxy.
 
 `36-despliegue` publica la imagen y la despliega sin que GitHub tenga que entrar en tu servidor:
 

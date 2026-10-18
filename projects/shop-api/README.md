@@ -113,7 +113,7 @@ docker compose -f compose.production.yaml run --rm api node scripts/create-admin
 deployment/backup.sh                                 # a backup now
 ```
 
-`create-admin` creates your admin account with a long random password, shows it just once and keeps only its hash. With `TRUSTED_PROXY`, the API reads the visitor's IP from `X-Forwarded-For` only when the request comes from that address (the gateway of Compose's network: `docker network inspect shop_default`).
+`create-admin` creates your admin account with a long random password, shows it just once and keeps only its hash. With `TRUSTED_PROXY`, the API reads the visitor's IP from `X-Forwarded-For` only when the request comes from that address (the gateway of Compose's network: `docker network inspect shop_default`). Only one proxy hop is supported (the last `X-Forwarded-For` entry): with another proxy in front, like Cloudflare's, the limiter would see that proxy's addresses.
 
 `36-deployment` publishes the image and deploys it without GitHub having to get into your server:
 
