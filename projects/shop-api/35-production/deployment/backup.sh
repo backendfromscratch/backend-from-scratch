@@ -15,6 +15,12 @@ cd "$(dirname "$0")/.."
 
 days="${BACKUP_DAYS:-7}"
 mkdir -p backups
+# A folder created by another user (a sudo, say) can't be closed by this one: say how to fix it
+# instead of failing on chmod with a bare error.
+if [ ! -O backups ]; then
+  echo "backups/ belongs to another user (did a sudo create it?): sudo chown -R \"\$(id -un)\": backups" >&2
+  exit 1
+fi
 # If the folder already existed with other permissions, it's closed too.
 chmod 700 backups
 final="backups/shop-$(date +%Y-%m-%d-%H%M%S).sql.gz"

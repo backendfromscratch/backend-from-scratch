@@ -90,6 +90,9 @@ test('deploy.sh: one deployment at a time, no building, and the backup before mi
   assert.match(script, /if "\$\{compose\[@\]\}" up -d --no-build --no-deps api; then/);
   // A single copy of the API; the image is kept as :previous only if the container is healthy.
   assert.match(script, /the deployment expects a single copy of the API/);
+  // Only the service's containers count, not the ones from a "compose run" (oneoff=False).
+  assert.match(script, /label=com\.docker\.compose\.oneoff=False/);
+  assert.ok(!/ps --all --quiet api/.test(script.replace(/^\s*#.*$/gm, '')), 'ps includes run ones');
   assert.match(script, /= healthy \]; then\n {2}docker tag "\$running" "\$previous"/);
   // The quotes of IMAGE="…" are removed; a failed image says how to retry it.
   assert.match(script, /image="\$\{image#\[\\"\\'\]\}"/);

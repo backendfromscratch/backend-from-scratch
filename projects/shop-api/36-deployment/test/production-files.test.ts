@@ -149,6 +149,12 @@ test('the backup: .tmp until it ends well, and only then deletes the old ones', 
   const remove = script.indexOf('-mtime');
   assert.ok(dump < move && move < remove, 'the order: dump, move and, at the end, delete');
   assert.match(script, /trap .*rm -f/);
+  // A folder owned by someone else gets a hint, not a bare chmod error.
+  assert.match(script, /if \[ ! -O backups \]; then/);
+  assert.match(
+    await readFile('deployment/shop-backup.service', 'utf8'),
+    /^TimeoutStartSec=30min$/m,
+  );
   assert.match(
     await readFile('deployment/shop-backup.timer', 'utf8'),
     /OnCalendar=\*-\*-\* 03:30:00/,

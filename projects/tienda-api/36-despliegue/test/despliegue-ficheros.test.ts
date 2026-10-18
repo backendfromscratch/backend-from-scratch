@@ -90,6 +90,12 @@ test('desplegar.sh: un solo despliegue, sin construir, y la copia antes de migra
   assert.match(script, /if "\$\{compose\[@\]\}" up -d --no-build --no-deps api; then/);
   // Solo una copia de la API; la imagen se guarda como :anterior solo si el contenedor está sano.
   assert.match(script, /el despliegue espera una sola copia de la API/);
+  // Solo cuenta los contenedores del servicio, no los de un «compose run» (oneoff=False).
+  assert.match(script, /label=com\.docker\.compose\.oneoff=False/);
+  assert.ok(
+    !/ps --all --quiet api/.test(script.replace(/^\s*#.*$/gm, '')),
+    'ps incluye los de run',
+  );
   assert.match(script, /= healthy \]; then\n {2}docker tag "\$corriendo" "\$anterior"/);
   // Las comillas de IMAGEN="…" se quitan; una imagen fallida dice cómo reintentarla.
   assert.match(script, /imagen="\$\{imagen#\[\\"\\'\]\}"/);

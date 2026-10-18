@@ -33,6 +33,17 @@ flock -n 9 || exit 0
 
 compose=(docker compose -f compose.production.yaml)
 
+# The containers of the api service, and only those: "ps --all -q api" also lists the ones from a
+# "compose run" (a create-admin that is running), and with one of those the script would think
+# there are two copies. oneoff=False leaves out the "run" ones. The project is named like the
+# "name:" in compose.production.yaml.
+api_containers() {
+  docker ps --all --quiet \
+    --filter label=com.docker.compose.project=shop \
+    --filter label=com.docker.compose.service=api \
+    --filter label=com.docker.compose.oneoff=False
+}
+
 # The image the server follows: IMAGE from the environment, or the one in .env (grep, not source:
 # .env is for Compose, and a value with spaces or quotes would break the script).
 image="${IMAGE:-$(grep -E '^IMAGE=' .env | tail -n 1 | cut -d= -f2- || true)}"
@@ -56,7 +67,7 @@ previous="$name:previous"
 # What is running now: the ID of the API container's image (empty if there is no container). The ID
 # is compared, not the tag: the main tag is always called the same, and it is what changes image.
 # The ID is the image's hash: same ID, same image.
-container="$("${compose[@]}" ps --all --quiet api)"
+container="$(api_containers)"
 # This script expects a single copy of the API. With two (docker compose up --scale api=2) it
 # wouldn't know which one to compare or which one to recreate: it touches nothing and says so.
 if [ "$(printf '%s\n' "$container" | grep -c .)" -gt 1 ]; then
@@ -145,7 +156,7 @@ log "starting the API with the new image"
 wait_for_health() {
   local c status
   for _ in $(seq 30); do
-    c="$("${compose[@]}" ps --all --quiet api)"
+    c="$(api_containers)"
     status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-check{{end}}' "$c" 2>/dev/null || true)"
     if [ "$status" = healthy ]; then
       return 0

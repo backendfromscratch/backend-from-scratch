@@ -149,6 +149,12 @@ test('la copia de seguridad: .tmp hasta que acaba bien, y solo entonces borra la
   const borrar = script.indexOf('-mtime');
   assert.ok(volcar < mover && mover < borrar, 'el orden: volcar, mover y, al final, borrar');
   assert.match(script, /trap .*rm -f/);
+  // A folder owned by someone else gets a hint, not a bare chmod error.
+  assert.match(script, /if \[ ! -O copias \]; then/);
+  assert.match(
+    await readFile('despliegue/tienda-copia.service', 'utf8'),
+    /^TimeoutStartSec=30min$/m,
+  );
   assert.match(
     await readFile('despliegue/tienda-copia.timer', 'utf8'),
     /OnCalendar=\*-\*-\* 03:30:00/,

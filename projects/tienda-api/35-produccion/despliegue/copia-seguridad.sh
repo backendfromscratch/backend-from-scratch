@@ -15,6 +15,12 @@ cd "$(dirname "$0")/.."
 
 dias="${COPIAS_DIAS:-7}"
 mkdir -p copias
+# Una carpeta creada por otro usuario (un sudo, por ejemplo) no la puede cerrar este: se dice cómo
+# arreglarlo en lugar de fallar en el chmod con un error pelado.
+if [ ! -O copias ]; then
+  echo "copias/ es de otro usuario (¿lo creó un sudo?): sudo chown -R \"\$(id -un)\": copias" >&2
+  exit 1
+fi
 # Si la carpeta ya existía con otros permisos, también se cierra.
 chmod 700 copias
 final="copias/tienda-$(date +%Y-%m-%d-%H%M%S).sql.gz"
