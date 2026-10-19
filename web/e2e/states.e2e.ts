@@ -213,11 +213,15 @@ for (const theme of themes) {
       const toggle = page.locator('.ide-explorer-toggle');
       await toggle.click();
       await expect(toggle).toHaveAttribute('aria-expanded', 'false');
-      await expect(page.locator('.sidebar-pane')).toBeHidden();
+      // The panel stays as a narrow rail with only the button, to show it again.
+      await expect(page.locator('#ide-files')).toBeHidden();
+      await expect(toggle).toBeVisible();
       await expectAccessible(page);
       await page.goto('/fase-0/tls-y-https/');
-      await expect(page.locator('.sidebar-pane')).toBeHidden();
+      await expect(page.locator('#ide-files')).toBeHidden();
       await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+      await toggle.click();
+      await expect(page.locator('#ide-files')).toBeVisible();
     });
 
     test('the menu open on a phone', async ({ page }) => {

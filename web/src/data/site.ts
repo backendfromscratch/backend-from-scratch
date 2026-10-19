@@ -12,3 +12,6 @@ export const contentLicense = {
     en: 'https://creativecommons.org/licenses/by/4.0/deed.en',
   },
 };
+
+/** The public repository: lessons, code and the issues and discussions where readers write. */
+export const repoUrl = 'https://github.com/backendfromscratch/backend-from-scratch';
