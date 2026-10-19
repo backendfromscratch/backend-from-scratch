@@ -39,7 +39,7 @@ A public, bilingual (Spanish and English) website with a backend course organise
 - Stack: Astro + Starlight, content in MDX, playgrounds in React, TypeScript, pnpm workspaces, Cloudflare for hosting.
 - Full design of the site and of Phase 0: `docs/specs/2026-10-02-site-and-phase-0-design.md`.
 - Visual design ("code editor" theme, dark and light): `docs/specs/2026-10-02-ide-theme-design.md`.
-- Editor layout (design C: outline in the explorer, minimap, a discreet status bar and VS Code-like scrollbars; since 2026-10-11 without tabs or breadcrumbs, a theme button, «ES · EN» links and smaller headings; since 2026-10-12 the side panel can be hidden and the explorer only has folders, the phases and `recursos/`): `docs/specs/2026-10-03-editor-layout-design.md`.
+- Editor layout (design C: outline in the explorer, minimap, a discreet status bar and VS Code-like scrollbars; since 2026-10-11 without tabs or breadcrumbs, a theme button, «ES · EN» links and smaller headings; since 2026-10-12 the side panel can be hidden and the explorer only has folders, the phases and `recursos/`; since 2026-10-19 its button lives in the panel, which hides to a narrow rail, and every lesson ends with a link to report a problem on GitHub; the about page, `/sobre-el-curso/`, holds the contact): `docs/specs/2026-10-03-editor-layout-design.md`.
 - `tcp-handshake` lab (the first React playground, the pattern for the next ones): `docs/specs/2026-10-03-tcp-lab-design.md`.
 - Phase 1 design (approved on 2026-10-07; completed on 2026-10-12, in Spanish and English): `docs/specs/2026-10-03-phase-1-design.md`.
 - `cors-lab` lab (Phase 2, lesson 6; approved and built on 2026-10-13): `docs/specs/2026-10-12-cors-lab-design.md`. Chrome's console messages are captured from Chromium, never written by hand.
@@ -158,6 +158,7 @@ src/lib/                        pure logic, no DOM, with tests:
   explorer-panel.ts             whether the side panel starts hidden
   reading.ts                    reading minutes
   quiz.ts                       the quiz: score, sections to review and the heading each question links to
+  contact.ts                    the link at the end of each lesson: a GitHub issue with the lesson form already filled in
   term-punctuation.ts           Sätteri plugin: a glossary term and the punctuation glued to it stay on one line
   storage.ts                    localStorage that doesn't fail (private browsing, full quota)
   structured-data.ts            JSON-LD: breadcrumbs and the site name (WebSite, home page only)

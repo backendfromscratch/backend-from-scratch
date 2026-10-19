@@ -75,6 +75,10 @@ export const collections = {
         'playgrounds.playground': z.string(),
         'playgrounds.inLesson': z.string(),
         'footer.license': z.string(),
+        'footer.about': z.string(),
+        // The link at the end of each lesson to report a problem on GitHub (lib/contact.ts).
+        'lesson.feedback': z.string(),
+        'lesson.feedbackLink': z.string(),
       }),
     }),
   }),
