@@ -118,6 +118,11 @@ test('production: Redis keeps the queue on disk, no Mailpit, and SMTP_URL only f
   // SMTP_URL isn't written in the Compose file: it comes from .env, and without it no email is sent.
   assert.ok(!compose.includes('SMTP_URL'));
   assert.ok((await service('worker')).includes('    env_file: .env'));
+  // The worker, with the healthcheck of its heartbeat, as in compose.yaml.
+  const worker = await service('worker');
+  assert.ok(worker.some((l) => l.includes("statSync('/tmp/heartbeat').mtimeMs < 30000")));
+  assert.ok(!worker.some((l) => l.includes('disable: true')));
+  assert.ok(worker.includes('      start_interval: 1s'));
   assert.match(await readFile('.env.production.example', 'utf8'), /^# SMTP_URL=smtps:\/\//m);
 });
 

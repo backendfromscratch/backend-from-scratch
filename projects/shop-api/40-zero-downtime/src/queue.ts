@@ -96,6 +96,7 @@ export async function closeQueue(): Promise<void> {
 // the failure down and leaves the job waiting for its next attempt (JOB_OPTIONS). url and options:
 // in the tests, their Redis and the names allowed for the notifications.
 export function createWorker(settings: { url?: string | undefined; options?: Options } = {}): {
+  running(): boolean;
   close(): Promise<void>;
 } {
   const url = settings.url ?? config.REDIS_URL;
@@ -126,6 +127,9 @@ export function createWorker(settings: { url?: string | undefined; options?: Opt
   // The connection's errors (Redis down): BullMQ reconnects on its own.
   worker.on('error', (error) => log.error({ reason: error.message }, 'worker error'));
   return {
+    // Whether it's taking jobs: running, and not shutting down. The heartbeat asks it
+    // (scripts/worker.ts).
+    running: () => worker.isRunning() && !worker.closing,
     // close() stops taking new jobs and waits for those half done to finish.
     async close() {
       await worker.close();

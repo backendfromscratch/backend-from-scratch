@@ -236,16 +236,19 @@ fi
 # Waits for Docker to consider the copy healthy (the Dockerfile's HEALTHCHECK asks /health every 10
 # seconds): up to 60 seconds, but it gives up as soon as Docker considers it bad (unhealthy:
 # /health failed three times in a row) or the container is no longer running (the process ended, for
-# example from an error when starting). Without a HEALTHCHECK (the worker), it is enough that it
-# runs. 0 if it's healthy, 1 if not. The status is read as "running healthy", "running starting",
-# "exited "…
+# example from an error when starting). The worker's health is its heartbeat
+# (compose.production.yaml): one that restarts in a loop never gets healthy. With a second
+# argument, "running", it is enough that the container runs and Docker hasn't considered it bad
+# (going back, for the worker: roll-back, further down). 0 if it's healthy, 1 if not. The status
+# is read as "running healthy", "running starting", "exited "…
 wait_for_health() {
   local status template='{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}'
   for _ in $(seq 30); do
     status="$(docker inspect --format "$template" "$(container_of "$1")" 2> /dev/null || true)"
     case "$status" in
-      'running healthy' | 'running ') return 0 ;;
+      'running healthy') return 0 ;;
       *unhealthy | exited* | dead* | restarting*) return 1 ;;
+      running*) if [ "${2-}" = running ]; then return 0; fi ;;
     esac
     sleep 2
   done
@@ -254,9 +257,10 @@ wait_for_health() {
 # #endregion wait-for-health
 
 # #region change
-# Changes a service's container for one with that image, and waits for it to be healthy. up -d
-# recreates the container: Docker sends SIGTERM to the old one, which stops accepting connections,
-# finishes what it has half done and exits (src/shutdown.ts), and starts the new one. Meanwhile,
+# Changes a service's container for one with that image, and waits for it to be healthy (or, with
+# "running" as a third argument, to run). up -d recreates the container: Docker sends SIGTERM to
+# the old one, which stops accepting connections, finishes what it has half done and exits
+# (src/shutdown.ts), and starts the new one. Meanwhile,
 # nginx sends everything to the other copy: a refused connection is repeated on the other one, even
 # if it's a POST, as long as Docker doesn't pass the ports through docker-proxy (the warning above).
 # IMAGE in the environment overrides the one in .env for this command only. --no-build: never build
@@ -264,7 +268,7 @@ wait_for_health() {
 # migrations were already applied above, and nothing else is touched: not the other copy and not the
 # worker.
 change() {
-  IMAGE="$2" "${compose[@]}" up -d --no-build --no-deps "$1" && wait_for_health "$1"
+  IMAGE="$2" "${compose[@]}" up -d --no-build --no-deps "$1" && wait_for_health "$1" "${3-}"
 }
 # #endregion change
 
@@ -283,18 +287,22 @@ nginx_pause() {
 # It didn't start or never got healthy: the copies it is told, back to the previous image (the one
 # kept as :previous), one at a time and in that order (the one that failed, first), and it ends with
 # an error. The new image's migrations are still applied: going back changes the code, not the data.
+# The copies have to be healthy again; the worker, only to run: the previous image may come from
+# before its heartbeat (step 39 or earlier), and its worker would never get healthy.
 roll_back() {
   if ! docker image inspect "$previous" > /dev/null 2>&1; then
     fail "the new image never got healthy, and there is no previous image to go back to"
   fi
-  local id first=yes
+  local id first=yes enough
   id="$(docker image inspect --format '{{.Id}}' "$previous")"
   log "the new image never got healthy on $1: going back to $(short "$id") ($*)" >&2
   for service in "$@"; do
+    enough=healthy
     case "$service" in
       api-*) if [ "$first" = no ]; then nginx_pause; fi && first=no ;;
+      worker) enough=running ;;
     esac
-    if ! change "$service" "$previous"; then
+    if ! change "$service" "$previous" "$enough"; then
       fail "the previous image is not healthy either on $service: look at docker compose -f compose.production.yaml logs $service"
     fi
   done
@@ -324,7 +332,8 @@ change "$second_copy" "$image" || roll_back "$second_copy" "$first_copy"
 # #region worker
 # The worker, when both copies already run the new image: it isn't behind nginx, and the jobs that
 # arrive while it is changed wait in the queue. When it's stopped, Docker sends it SIGTERM, and it
-# finishes the one it has half done (scripts/worker.ts). If it doesn't start, everything goes back.
+# finishes the one it has half done (scripts/worker.ts).
+# If it doesn't start or never gets healthy (its heartbeat), everything goes back.
 log "the worker, with the new image"
 change worker "$image" || roll_back worker "$second_copy" "$first_copy"
 rm -f .deploy-failed

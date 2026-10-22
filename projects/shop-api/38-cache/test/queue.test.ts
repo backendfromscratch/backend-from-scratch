@@ -6,8 +6,11 @@ import assert from 'node:assert/strict';
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
+import { rm, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { type AddressInfo, createServer as createTcpServer } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { Queue } from 'bullmq';
@@ -15,6 +18,7 @@ import { createKey } from '../src/api-keys.ts';
 import { config } from '../src/config.ts';
 import { findOrder } from '../src/data.ts';
 import { pool } from '../src/db.ts';
+import { startHeartbeat } from '../src/heartbeat.ts';
 import { notifyOne } from '../src/notifications.ts';
 import { createWorker, JOB_OPTIONS, type Job, QUEUE_NAME } from '../src/queue.ts';
 import { type RedisClient, connectRedis } from '../src/redis-store.ts';
@@ -310,6 +314,33 @@ test(
       delivery.close();
       await emptyQueue();
       await pool.query('DELETE FROM notifications');
+    }
+  },
+);
+
+test(
+  'the worker beats its heartbeat while it takes jobs, and stops when it shuts down',
+  { skip: noRedis },
+  async () => {
+    const file = join(tmpdir(), `heartbeat-${randomUUID()}`);
+    const worker = createWorker({ url });
+    const stopHeartbeat = startHeartbeat(() => worker.running(), { file, everyMs: 50 });
+    let closed = false;
+    try {
+      // The first beat, at once; then another one, and another.
+      const first = (await stat(file)).mtimeMs;
+      await waitFor(async () => (await stat(file)).mtimeMs > first, 2000, 'another beat');
+      // Shutting down (close, as on SIGTERM): it no longer takes jobs, and the file stays as it was.
+      await worker.close();
+      closed = true;
+      assert.equal(worker.running(), false);
+      const last = (await stat(file)).mtimeMs;
+      await sleep(300);
+      assert.equal((await stat(file)).mtimeMs, last);
+    } finally {
+      stopHeartbeat();
+      if (!closed) await worker.close();
+      await rm(file, { force: true });
     }
   },
 );

@@ -84,6 +84,7 @@ export async function encolar(trabajo: Trabajo): Promise<void> {
 // y deja el trabajo esperando su próximo intento (OPCIONES_TRABAJOS). url y opciones: en los
 // tests, su Redis y los nombres permitidos para los avisos.
 export function crearTrabajador(ajustes: { url?: string | undefined; opciones?: Opciones } = {}): {
+  enMarcha(): boolean;
   cerrar(): Promise<void>;
 } {
   const url = ajustes.url ?? config.REDIS_URL;
@@ -117,6 +118,9 @@ export function crearTrabajador(ajustes: { url?: string | undefined; opciones?: 
   // Los errores de la conexión (Redis caído): BullMQ se vuelve a conectar solo.
   trabajador.on('error', (error) => log.error({ motivo: error.message }, 'error del trabajador'));
   return {
+    // Si está cogiendo trabajos: en marcha, y sin estar apagándose. Lo pregunta el latido
+    // (scripts/trabajador.ts).
+    enMarcha: () => trabajador.isRunning() && !trabajador.closing,
     // close() deja de coger trabajos nuevos y espera a que acaben los que están a medias.
     async cerrar() {
       await trabajador.close();

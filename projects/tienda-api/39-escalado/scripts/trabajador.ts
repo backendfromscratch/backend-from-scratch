@@ -6,6 +6,7 @@
 import { pool } from '../src/bd.ts';
 import { crearTrabajador } from '../src/cola.ts';
 import { config } from '../src/config.ts';
+import { empezarLatido } from '../src/latido.ts';
 import { log } from '../src/log.ts';
 
 if (!config.REDIS_URL) {
@@ -14,6 +15,8 @@ if (!config.REDIS_URL) {
 }
 
 const trabajador = crearTrabajador();
+// El latido (src/latido.ts): mientras el trabajador coge trabajos, Docker lo da por sano.
+const pararLatido = empezarLatido(() => trabajador.enMarcha());
 log.info('El trabajador espera trabajos de la cola');
 
 // #region apagar
@@ -24,6 +27,8 @@ log.info('El trabajador espera trabajos de la cola');
 // respuesta: ni un aviso (url-segura.ts) ni un correo (correo.ts).
 for (const senal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(senal, async () => {
+    // Lo primero, sin más latidos: ya se está yendo.
+    pararLatido();
     log.info(`${senal}: el trabajador acaba lo que tiene a medias y se apaga`);
     // Si aun así algo se atasca, sale a los 9 segundos, antes de que docker stop lo mate.
     setTimeout(() => process.exit(0), 9000).unref();

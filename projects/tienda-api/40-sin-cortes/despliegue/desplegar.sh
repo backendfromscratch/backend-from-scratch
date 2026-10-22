@@ -233,15 +233,19 @@ fi
 # Espera a que Docker dé por sana la copia (el HEALTHCHECK del Dockerfile pregunta a /salud cada 10
 # segundos): hasta 60 segundos, pero se rinde en cuanto Docker la da por mala (unhealthy: /salud ha
 # fallado tres veces seguidas) o el contenedor ya no corre (el proceso ha terminado, por ejemplo por
-# un error al arrancar). Sin HEALTHCHECK (el trabajador), basta con que corra. 0 si está sana, 1 si
-# no. El estado se lee como «running healthy», «running starting», «exited »…
+# un error al arrancar). La salud del trabajador es su latido (compose.produccion.yaml): uno que se
+# reinicia en bucle nunca se pone sano. Con un segundo argumento, «corriendo», basta con que el
+# contenedor corra y Docker no lo haya dado por malo (al volver, para el trabajador: volver, más
+# abajo). 0 si está sana, 1 si no. El estado se lee como «running healthy», «running starting»,
+# «exited »…
 esperar_salud() {
   local estado plantilla='{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}'
   for _ in $(seq 30); do
     estado="$(docker inspect --format "$plantilla" "$(contenedor_de "$1")" 2> /dev/null || true)"
     case "$estado" in
-      'running healthy' | 'running ') return 0 ;;
+      'running healthy') return 0 ;;
       *unhealthy | exited* | dead* | restarting*) return 1 ;;
+      running*) if [ "${2-}" = corriendo ]; then return 0; fi ;;
     esac
     sleep 2
   done
@@ -250,16 +254,17 @@ esperar_salud() {
 # #endregion esperar-salud
 
 # #region cambiar
-# Cambia el contenedor de un servicio por uno con esa imagen, y espera a que esté sano. up -d
-# recrea el contenedor: Docker le manda SIGTERM al viejo, que deja de aceptar conexiones, termina lo
-# que tiene a medias y sale (src/apagado.ts), y arranca el nuevo. Mientras, nginx manda todo a la
+# Cambia el contenedor de un servicio por uno con esa imagen, y espera a que esté sano (o, con
+# «corriendo» como tercer argumento, a que corra). up -d recrea el contenedor: Docker le manda
+# SIGTERM al viejo, que deja de aceptar conexiones, termina lo que tiene a medias y sale
+# (src/apagado.ts), y arranca el nuevo. Mientras, nginx manda todo a la
 # otra copia: una conexión rechazada se repite en la otra, aunque sea un POST, siempre que Docker
 # no pase los puertos por docker-proxy (el aviso de arriba).
 # IMAGEN en el entorno manda sobre la de .env solo en esta orden. --no-build: nunca construir (si
 # faltase la imagen, Compose daría un error, no un docker build). --no-deps: las migraciones ya se
 # han aplicado arriba, y nada más se toca: ni la otra copia ni el trabajador.
 cambiar() {
-  IMAGEN="$2" "${compose[@]}" up -d --no-build --no-deps "$1" && esperar_salud "$1"
+  IMAGEN="$2" "${compose[@]}" up -d --no-build --no-deps "$1" && esperar_salud "$1" "${3-}"
 }
 # #endregion cambiar
 
@@ -278,19 +283,22 @@ pausa_nginx() {
 # No arrancó o no llegó a estar sana: las copias que se le digan, de vuelta a la imagen anterior (la
 # guardada como :anterior), de una en una y en ese orden (la que ha fallado, primero), y termina con
 # error. Las migraciones de la imagen nueva siguen aplicadas: volver atrás cambia el código, no los
-# datos.
+# datos. Las copias tienen que volver a estar sanas; el trabajador, solo correr: la imagen anterior
+# puede ser de antes de su latido (del paso 39 o anterior), y su trabajador nunca se pondría sano.
 volver() {
   if ! docker image inspect "$anterior" > /dev/null 2>&1; then
     fallar "la imagen nueva no llegó a estar sana, y no hay imagen anterior a la que volver"
   fi
-  local id primera=si
+  local id primera=si basta
   id="$(docker image inspect --format '{{.Id}}' "$anterior")"
   registrar "la imagen nueva no llegó a estar sana en $1: vuelvo a $(corto "$id") ($*)" >&2
   for servicio in "$@"; do
+    basta=sana
     case "$servicio" in
       api-*) if [ "$primera" = no ]; then pausa_nginx; fi && primera=no ;;
+      trabajador) basta=corriendo ;;
     esac
-    if ! cambiar "$servicio" "$anterior"; then
+    if ! cambiar "$servicio" "$anterior" "$basta"; then
       fallar "la imagen anterior tampoco está sana en $servicio: mira docker compose -f compose.produccion.yaml logs $servicio"
     fi
   done
@@ -319,7 +327,8 @@ cambiar "$segunda_copia" "$imagen" || volver "$segunda_copia" "$primera_copia"
 # #region trabajador
 # El trabajador, cuando las dos copias ya corren la imagen nueva: no está detrás de nginx, y los
 # trabajos que lleguen mientras se cambia esperan en la cola. Al pararlo, Docker le manda SIGTERM, y
-# termina el que tiene a medias (scripts/trabajador.ts). Si no arranca, todo vuelve atrás.
+# termina el que tiene a medias (scripts/trabajador.ts).
+# Si no arranca o no se pone sano (su latido), todo vuelve atrás.
 registrar "el trabajador, con la imagen nueva"
 cambiar trabajador "$imagen" || volver trabajador "$segunda_copia" "$primera_copia"
 rm -f .despliegue-fallido

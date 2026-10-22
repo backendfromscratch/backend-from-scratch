@@ -471,10 +471,23 @@ async function vaciarCache() {
 type Precio = { precioCentimos: number };
 const claves = async () => (await redis.keys('productos:*')).sort();
 
-/** Espera a que las claves de productos de la caché sean esas: la API guarda sin esperar. */
-async function clavesSon(esperadas: string[]) {
+/**
+ * Lee esas rutas hasta que las claves de productos de la caché sean esas. La API guarda sin esperar,
+ * y en una máquina cargada una de sus órdenes a la caché puede tardar más que el límite de 200 ms:
+ * entonces la da por caída, y mientras está caída una lectura va a PostgreSQL sin guardar nada (solo
+ * mira, como mucho una vez por segundo, si ha vuelto, y al volver la vacía). Una lectura no basta:
+ * las repite todas hasta que se guardan.
+ */
+async function leerHastaQueClavesSean(rutas: string[], esperadas: string[]) {
   const texto = JSON.stringify(esperadas);
-  await hastaQue(async () => JSON.stringify(await claves()) === texto, 2000, `claves ${texto}`);
+  await hastaQue(
+    async () => {
+      for (const ruta of rutas) await pedir('GET', ruta);
+      return JSON.stringify(await claves()) === texto;
+    },
+    5000,
+    `claves ${texto}`,
+  );
 }
 
 // #region invalidar
@@ -487,7 +500,10 @@ test('cambiar un producto lo borra de la caché', { skip: sinRedis }, async () =
     ((await (await pedir('GET', '/v2/productos/2')).json()) as Precio).precioCentimos,
     850,
   );
-  await clavesSon(['productos:2', 'productos:lista:{"orden":"-precio"}', 'productos:lista:{}']);
+  await leerHastaQueClavesSean(
+    ['/v2/productos', '/v2/productos?orden=-precio', '/v2/productos/2'],
+    ['productos:2', 'productos:lista:{"orden":"-precio"}', 'productos:lista:{}'],
+  );
   // La admin cambia el precio de la taza: ella y las listas, fuera.
   const cambio = await pedir('PATCH', '/v2/productos/2', ana, { precioCentimos: 900 });
   assert.equal(cambio.status, 200);
@@ -497,7 +513,7 @@ test('cambiar un producto lo borra de la caché', { skip: sinRedis }, async () =
     ((await (await pedir('GET', '/v2/productos/2')).json()) as Precio).precioCentimos,
     900,
   );
-  await clavesSon(['productos:2']);
+  await leerHastaQueClavesSean(['/v2/productos/2'], ['productos:2']);
   assert.equal(
     ((await (await pedir('GET', '/v2/productos/2')).json()) as Precio).precioCentimos,
     900,
@@ -510,7 +526,10 @@ test('crear o borrar un producto también', { skip: sinRedis }, async () => {
   await vaciarCache();
   const antes = (await (await pedir('GET', '/v2/productos')).json()) as { id: number }[];
   await pedir('GET', '/v2/productos/1');
-  await clavesSon(['productos:1', 'productos:lista:{}']);
+  await leerHastaQueClavesSean(
+    ['/v2/productos', '/v2/productos/1'],
+    ['productos:1', 'productos:lista:{}'],
+  );
   // La admin crea uno: las listas, fuera (ya no son la verdad). El producto 1 no ha cambiado.
   const creado = await pedir('POST', '/v2/productos', ana, {
     nombre: 'Bufanda',
@@ -523,20 +542,29 @@ test('crear o borrar un producto también', { skip: sinRedis }, async () => {
   assert.equal(despues.length, antes.length + 1);
   // Lo lee alguien (queda en la caché) y la admin lo borra: fuera él y las listas.
   assert.equal((await pedir('GET', `/v2/productos/${id}`)).status, 200);
-  await clavesSon(['productos:1', `productos:${id}`, 'productos:lista:{}']);
+  await leerHastaQueClavesSean(
+    ['/v2/productos/1', '/v2/productos', `/v2/productos/${id}`],
+    ['productos:1', `productos:${id}`, 'productos:lista:{}'],
+  );
   assert.equal((await pedir('DELETE', `/v2/productos/${id}`, ana)).status, 204);
   assert.deepEqual(await claves(), ['productos:1']);
   assert.equal((await pedir('GET', `/v2/productos/${id}`)).status, 404);
   // La versión 1 lee la misma lista de la caché.
   assert.equal((await pedir('GET', '/v1/productos')).status, 200);
-  await clavesSon(['productos:1', 'productos:lista:{}']);
+  await leerHastaQueClavesSean(
+    ['/v1/productos', '/v2/productos/1'],
+    ['productos:1', 'productos:lista:{}'],
+  );
 });
 
 test('un pedido cambia el stock y lo borra de la caché', { skip: sinRedis }, async () => {
   await vaciarCache();
   const antes = await stockEnLaApi(2);
   await pedir('GET', '/v2/productos');
-  await clavesSon(['productos:2', 'productos:lista:{}']);
+  await leerHastaQueClavesSean(
+    ['/v2/productos/2', '/v2/productos'],
+    ['productos:2', 'productos:lista:{}'],
+  );
   const res = await pedir('POST', '/v2/pedidos', carmen, { productoId: 2, cantidad: 3 });
   assert.equal(res.status, 201);
   // El stock ha cambiado: el producto y las listas (que también lo llevan), fuera.
@@ -551,7 +579,10 @@ test('cancelar un pedido también', { skip: sinRedis }, async () => {
   const { id } = (await res.json()) as { id: number };
   const antes = await stockEnLaApi(3);
   await pedir('GET', '/v2/productos');
-  await clavesSon(['productos:3', 'productos:lista:{}']);
+  await leerHastaQueClavesSean(
+    ['/v2/productos/3', '/v2/productos'],
+    ['productos:3', 'productos:lista:{}'],
+  );
   assert.equal((await pedir('POST', `/v2/pedidos/${id}/cancelacion`, carmen)).status, 200);
   // Cancelar devuelve el stock: fuera de la caché.
   assert.deepEqual(await claves(), []);
@@ -566,7 +597,7 @@ test(
     await pool.query('UPDATE productos SET stock = 2 WHERE id = 4');
     // Una caché equivocada: dice que de la gorra quedan 1000.
     const gorra = (await (await pedir('GET', '/v2/productos/4')).json()) as { stock: number };
-    await clavesSon(['productos:4']);
+    await leerHastaQueClavesSean(['/v2/productos/4'], ['productos:4']);
     await redis.set('productos:4', JSON.stringify({ ...gorra, stock: 1000 }));
     assert.equal(await stockEnLaApi(4), 1000);
     // Comprar 5 no se fía de ella: lo comprueba PostgreSQL, en la transacción del pedido.

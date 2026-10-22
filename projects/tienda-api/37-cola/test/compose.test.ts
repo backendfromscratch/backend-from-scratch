@@ -82,5 +82,9 @@ test('Redis guarda la cola en disco, y el trabajador es la imagen de la API con 
     lineas.filter((l) => /^ {6}[A-Z_]+: /.test(l) && !l.includes('condition'));
   assert.deepEqual(entorno(trabajador), entorno(await servicio('api')));
   assert.ok(entorno(trabajador).includes('      SMTP_URL: smtp://mailpit:1025'));
-  assert.match(trabajador.join('\n'), /healthcheck:\n\s+disable: true/);
+  // Su propio healthcheck: el fichero del latido, reciente (src/latido.ts).
+  assert.ok(trabajador.some((l) => l.includes("statSync('/tmp/latido').mtimeMs < 30000")));
+  assert.ok(!trabajador.some((l) => l.includes('disable: true')));
+  // Cada segundo al empezar: sano en un segundo o dos, no tras el primer intervalo de 10 s.
+  assert.ok(trabajador.includes('      start_interval: 1s'));
 });

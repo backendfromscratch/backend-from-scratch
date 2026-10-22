@@ -113,7 +113,7 @@ export async function repartir(
 export function repartirCadaSegundo(
   aLaCola: (trabajo: Trabajo) => Promise<void> = encolar,
   intervaloMs = 1000,
-): { parar(): Promise<void> } {
+): { enMarcha(): boolean; parar(): Promise<void> } {
   const LIMITE = 50;
   let parado = false;
   let siguiente: NodeJS.Timeout | undefined;
@@ -138,6 +138,8 @@ export function repartirCadaSegundo(
 
   vuelta = unaVuelta();
   return {
+    // Si sigue repartiendo: hasta parar(). Lo pregunta el latido del trabajador.
+    enMarcha: () => !parado,
     async parar() {
       parado = true;
       clearTimeout(siguiente);

@@ -120,6 +120,9 @@ test('the deployment also updates the worker', async () => {
   assert.notEqual(others, -1);
   assert.ok(others < script.indexOf('run --rm migrate'));
   assert.ok(others < script.indexOf('up -d --no-build --no-deps api worker'));
+  // The new worker has to get healthy too (its heartbeat); going back, only the API.
+  assert.match(script, /if wait_for_health api worker; then/);
+  assert.match(script, /--no-deps api worker && wait_for_health api; then/);
   // The worker, with the API's image and its own command; the image carries it inside.
   const compose = await readFile('compose.production.yaml', 'utf8');
   const worker = compose.slice(compose.indexOf('\n  worker:\n'));

@@ -6,6 +6,7 @@
 // It needs REDIS_URL (the queue) and DATABASE_URL (the notifications and the emails are in the database).
 import { pool } from '../src/db.ts';
 import { config } from '../src/config.ts';
+import { startHeartbeat } from '../src/heartbeat.ts';
 import { log } from '../src/log.ts';
 import { createWorker } from '../src/queue.ts';
 
@@ -15,6 +16,8 @@ if (!config.REDIS_URL) {
 }
 
 const worker = createWorker();
+// The heartbeat (src/heartbeat.ts): while the worker takes jobs, Docker considers it healthy.
+const stopHeartbeat = startHeartbeat(() => worker.running());
 log.info('The worker is waiting for jobs from the queue');
 
 // #region shut-down
@@ -25,6 +28,8 @@ log.info('The worker is waiting for jobs from the queue');
 // without an answer: neither a notification (safe-url.ts) nor an email (email.ts).
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, async () => {
+    // First, no more heartbeats: it is on its way out.
+    stopHeartbeat();
     log.info(`${signal}: the worker finishes what it has half done and shuts down`);
     // If something still gets stuck, it leaves after 9 seconds, before docker stop kills it.
     setTimeout(() => process.exit(0), 9000).unref();

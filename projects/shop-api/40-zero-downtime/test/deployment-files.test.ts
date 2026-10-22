@@ -107,7 +107,7 @@ test('deploy.sh: one deployment at a time, no building, and the backup before mi
   assert.match(script, /image="\$\{image#\[\\"\\'\]\}"/);
   assert.match(script, /to retry it: rm \$PWD\/\.deploy-failed/);
   // Going back uses the image kept on the disk (change, with $previous), without migrating.
-  assert.match(code, /if ! change "\$service" "\$previous"; then/);
+  assert.match(code, /if ! change "\$service" "\$previous" "\$enough"; then/);
 });
 
 test('the deployment also updates the worker, with the same image and after the API', async () => {
@@ -173,6 +173,8 @@ interface Scenario {
   newHealth?: string;
   /** The health of a service's new containers with the new image (if not, newHealth). */
   healthOf?: Record<string, string>;
+  /** The health of a service's containers started again with the old image (if not, healthy). */
+  oldHealthOf?: Record<string, string>;
   /** Whether Docker passes the published ports through docker-proxy (its userland proxy, on). */
   dockerProxy?: boolean;
 }
@@ -230,7 +232,6 @@ async function deployIn(folder: string, scenario: Scenario) {
   }
   await writeFile(join(state, 'new'), `${scenario.new ?? NEW}\n`);
   for (const service of scenario.services ?? ['api-a', 'api-b', 'worker']) {
-    const health = service === 'worker' ? '' : 'healthy';
     const image = scenario.images?.[service] ?? OLD;
     const copies = service === 'api' ? (scenario.oldApi?.copies ?? 1) : 1;
     const ids = Array.from({ length: copies }, (_, n) => `old-${service}${n ? `-${n + 1}` : ''}`);
@@ -238,7 +239,7 @@ async function deployIn(folder: string, scenario: Scenario) {
       const port = service === 'api' ? (scenario.oldApi?.port ?? '127.0.0.1:3000') : '';
       await writeFile(
         join(state, 'c', id),
-        `image=${image}\nstatus=running\nhealth=${health}\nport=${port}\n`,
+        `image=${image}\nstatus=running\nhealth=healthy\nport=${port}\n`,
       );
     }
     await writeFile(join(state, 'containers', service), `${ids.join('\n')}\n`);
@@ -249,6 +250,9 @@ async function deployIn(folder: string, scenario: Scenario) {
   }
   for (const [service, health] of Object.entries(scenario.healthOf ?? {})) {
     await writeFile(join(state, 'health', `new-${service}`), `${health}\n`);
+  }
+  for (const [service, health] of Object.entries(scenario.oldHealthOf ?? {})) {
+    await writeFile(join(state, 'health', `old-${service}`), `${health}\n`);
   }
 
   const result = spawnSync('bash', [join(folder, 'deployment/deploy.sh')], {
@@ -347,6 +351,43 @@ test("if the second new copy isn't healthy, both go back, one at a time", async 
   assert.equal(d.container('api-b')?.image, OLD);
   assert.deepEqual(d.container('worker'), { id: 'old-worker', image: OLD });
   assert.equal(d.failed, NEW);
+});
+
+test('if the new worker never gets healthy (no heartbeat), everything goes back', async () => {
+  // A worker that hangs or restarts in a loop never writes its heartbeat: after 60 seconds, the
+  // worker and both copies go back to the previous image, the worker first.
+  const d = await deploy({ healthOf: { worker: 'starting' } });
+  assert.equal(d.status, 1);
+  assert.deepEqual(starts(d.orders), [
+    `IMAGE=${IMAGE} api-b`,
+    `IMAGE=${IMAGE} api-a`,
+    `IMAGE=${IMAGE} worker`,
+    'IMAGE=registry.example:5000/shop-api:previous worker',
+    'IMAGE=registry.example:5000/shop-api:previous api-a',
+    'IMAGE=registry.example:5000/shop-api:previous api-b',
+  ]);
+  for (const service of ['api-a', 'api-b', 'worker']) {
+    assert.equal(d.container(service)?.image, OLD, service);
+  }
+  assert.equal(d.failed, NEW);
+  assert.match(d.stderr, /never got healthy on worker/);
+});
+
+test('going back, the worker only has to run: an old image without a heartbeat still goes back', async () => {
+  // The previous image may come from before the heartbeat (step 39 or earlier): its worker never
+  // gets healthy, it stays starting. Going back doesn't wait for that: it is enough that it runs.
+  const d = await deploy({ healthOf: { worker: 'starting' }, oldHealthOf: { worker: 'starting' } });
+  assert.equal(d.status, 1);
+  assert.equal(starts(d.orders).at(-3), 'IMAGE=registry.example:5000/shop-api:previous worker');
+  for (const service of ['api-a', 'api-b', 'worker']) {
+    assert.equal(d.container(service)?.image, OLD, service);
+  }
+  assert.match(d.stderr, /back done/);
+  assert.doesNotMatch(d.stderr, /not healthy either/);
+  // Going forward, it did wait for the new worker: 30 times 2 s; going back, not once.
+  const back = d.orders.findIndex((o) => o.endsWith(':previous worker'));
+  assert.equal(d.orders.slice(0, back).filter((o) => o === 'sleep 2').length, 30);
+  assert.equal(d.orders.slice(back).filter((o) => o === 'sleep 2').length, 0);
 });
 
 test('it stops waiting as soon as the container is unhealthy', async () => {

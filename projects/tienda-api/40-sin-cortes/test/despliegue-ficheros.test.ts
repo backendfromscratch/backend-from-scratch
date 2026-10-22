@@ -107,7 +107,7 @@ test('desplegar.sh: un solo despliegue, sin construir, y la copia antes de migra
   assert.match(script, /imagen="\$\{imagen#\[\\"\\'\]\}"/);
   assert.match(script, /para reintentarla: rm \$PWD\/\.despliegue-fallido/);
   // La vuelta atrás usa la imagen guardada en el disco (cambiar, con $anterior), sin migrar.
-  assert.match(codigo, /if ! cambiar "\$servicio" "\$anterior"; then/);
+  assert.match(codigo, /if ! cambiar "\$servicio" "\$anterior" "\$basta"; then/);
 });
 
 test('el despliegue actualiza también el trabajador, con la misma imagen y después de la API', async () => {
@@ -173,6 +173,8 @@ interface Escenario {
   saludNueva?: string;
   /** La salud de los contenedores nuevos de un servicio con la imagen nueva (si no, saludNueva). */
   saludDe?: Record<string, string>;
+  /** La salud de los contenedores de un servicio que vuelven a la imagen vieja (si no, healthy). */
+  saludViejaDe?: Record<string, string>;
   /** Si Docker pasa los puertos publicados por docker-proxy (su userland proxy, encendido). */
   dockerProxy?: boolean;
 }
@@ -230,7 +232,6 @@ async function desplegarEn(carpeta: string, escenario: Escenario) {
   }
   await writeFile(join(estado, 'nueva'), `${escenario.nueva ?? NUEVA}\n`);
   for (const servicio of escenario.servicios ?? ['api-a', 'api-b', 'trabajador']) {
-    const salud = servicio === 'trabajador' ? '' : 'healthy';
     const imagen = escenario.imagenes?.[servicio] ?? VIEJA;
     const copias = servicio === 'api' ? (escenario.apiVieja?.copias ?? 1) : 1;
     const ids = Array.from(
@@ -241,7 +242,7 @@ async function desplegarEn(carpeta: string, escenario: Escenario) {
       const puerto = servicio === 'api' ? (escenario.apiVieja?.puerto ?? '127.0.0.1:3000') : '';
       await writeFile(
         join(estado, 'c', id),
-        `imagen=${imagen}\nestado=running\nsalud=${salud}\npuerto=${puerto}\n`,
+        `imagen=${imagen}\nestado=running\nsalud=healthy\npuerto=${puerto}\n`,
       );
     }
     await writeFile(join(estado, 'contenedores', servicio), `${ids.join('\n')}\n`);
@@ -252,6 +253,9 @@ async function desplegarEn(carpeta: string, escenario: Escenario) {
   }
   for (const [servicio, salud] of Object.entries(escenario.saludDe ?? {})) {
     await writeFile(join(estado, 'salud', `nueva-${servicio}`), `${salud}\n`);
+  }
+  for (const [servicio, salud] of Object.entries(escenario.saludViejaDe ?? {})) {
+    await writeFile(join(estado, 'salud', `vieja-${servicio}`), `${salud}\n`);
   }
 
   const resultado = spawnSync('bash', [join(carpeta, 'despliegue/desplegar.sh')], {
@@ -350,6 +354,49 @@ test('si la segunda copia nueva no está sana, vuelven las dos, de una en una', 
   assert.equal(d.contenedor('api-b')?.imagen, VIEJA);
   assert.deepEqual(d.contenedor('trabajador'), { id: 'viejo-trabajador', imagen: VIEJA });
   assert.equal(d.fallida, NUEVA);
+});
+
+test('si el trabajador nuevo no llega a estar sano (sin latido), todo vuelve atrás', async () => {
+  // Un trabajador que se cuelga o se reinicia en bucle nunca escribe su latido: a los 60 segundos,
+  // el trabajador y las dos copias vuelven a la imagen anterior, primero el trabajador.
+  const d = await desplegar({ saludDe: { trabajador: 'starting' } });
+  assert.equal(d.status, 1);
+  assert.deepEqual(arranques(d.ordenes), [
+    `IMAGEN=${IMAGEN} api-b`,
+    `IMAGEN=${IMAGEN} api-a`,
+    `IMAGEN=${IMAGEN} trabajador`,
+    'IMAGEN=registro.example:5000/tienda-api:anterior trabajador',
+    'IMAGEN=registro.example:5000/tienda-api:anterior api-a',
+    'IMAGEN=registro.example:5000/tienda-api:anterior api-b',
+  ]);
+  for (const servicio of ['api-a', 'api-b', 'trabajador']) {
+    assert.equal(d.contenedor(servicio)?.imagen, VIEJA, servicio);
+  }
+  assert.equal(d.fallida, NUEVA);
+  assert.match(d.stderr, /no llegó a estar sana en trabajador/);
+});
+
+test('al volver, al trabajador le basta con correr: una imagen vieja sin latido vuelve igual', async () => {
+  // La imagen anterior puede ser de antes del latido (del paso 39 o anterior): su trabajador nunca
+  // se pone sano, se queda en starting. La vuelta no lo espera: le basta con que corra.
+  const d = await desplegar({
+    saludDe: { trabajador: 'starting' },
+    saludViejaDe: { trabajador: 'starting' },
+  });
+  assert.equal(d.status, 1);
+  assert.equal(
+    arranques(d.ordenes).at(-3),
+    'IMAGEN=registro.example:5000/tienda-api:anterior trabajador',
+  );
+  for (const servicio of ['api-a', 'api-b', 'trabajador']) {
+    assert.equal(d.contenedor(servicio)?.imagen, VIEJA, servicio);
+  }
+  assert.match(d.stderr, /vuelta hecha/);
+  assert.doesNotMatch(d.stderr, /tampoco está sana/);
+  // Hacia delante sí esperó al trabajador nuevo: 30 veces 2 s; al volver, ninguna.
+  const vuelta = d.ordenes.findIndex((o) => o.endsWith(':anterior trabajador'));
+  assert.equal(d.ordenes.slice(0, vuelta).filter((o) => o === 'sleep 2').length, 30);
+  assert.equal(d.ordenes.slice(vuelta).filter((o) => o === 'sleep 2').length, 0);
 });
 
 test('deja de esperar en cuanto el contenedor está unhealthy', async () => {

@@ -59,6 +59,11 @@ test('producción: Redis guarda la cola en disco, sin Mailpit, y SMTP_URL solo d
   // SMTP_URL no se escribe en el Compose: llega de .env, y sin ella no se manda ningún correo.
   assert.ok(!compose.includes('SMTP_URL'));
   assert.ok((await servicio('trabajador')).includes('    env_file: .env'));
+  // El trabajador, con el healthcheck de su latido, como en compose.yaml.
+  const trabajador = await servicio('trabajador');
+  assert.ok(trabajador.some((l) => l.includes("statSync('/tmp/latido').mtimeMs < 30000")));
+  assert.ok(!trabajador.some((l) => l.includes('disable: true')));
+  assert.ok(trabajador.includes('      start_interval: 1s'));
   assert.match(await readFile('.env.produccion.ejemplo', 'utf8'), /^# SMTP_URL=smtps:\/\//m);
 });
 

@@ -8,8 +8,11 @@ import assert from 'node:assert/strict';
 import { type ChildProcessWithoutNullStreams, spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
+import { rm, stat } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { type AddressInfo, createServer as crearServidorTcp } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { after, before, test } from 'node:test';
 import { setTimeout as dormir } from 'node:timers/promises';
 import { Queue } from 'bullmq';
@@ -27,6 +30,7 @@ import { crearClave } from '../src/claves.ts';
 import { config } from '../src/config.ts';
 import { buscarPedido } from '../src/datos.ts';
 import { firmar } from '../src/firma.ts';
+import { empezarLatido } from '../src/latido.ts';
 import { repartir } from '../src/salientes.ts';
 import { usarBd } from './bd.ts';
 
@@ -329,6 +333,33 @@ test(
       reparto.cerrar();
       await vaciarCola();
       await pool.query('DELETE FROM avisos');
+    }
+  },
+);
+
+test(
+  'el trabajador late mientras coge trabajos, y deja de latir al apagarse',
+  { skip: sinRedis },
+  async () => {
+    const fichero = join(tmpdir(), `latido-${randomUUID()}`);
+    const trabajador = crearTrabajador({ url });
+    const pararLatido = empezarLatido(() => trabajador.enMarcha(), { fichero, cadaMs: 50 });
+    let cerrado = false;
+    try {
+      // El primer latido, enseguida; después otro, y otro.
+      const primero = (await stat(fichero)).mtimeMs;
+      await esperar(async () => (await stat(fichero)).mtimeMs > primero, 2000, 'otro latido');
+      // Al apagarse (cerrar, como con SIGTERM): ya no coge trabajos, y el fichero se queda como estaba.
+      await trabajador.cerrar();
+      cerrado = true;
+      assert.equal(trabajador.enMarcha(), false);
+      const ultimo = (await stat(fichero)).mtimeMs;
+      await dormir(300);
+      assert.equal((await stat(fichero)).mtimeMs, ultimo);
+    } finally {
+      pararLatido();
+      if (!cerrado) await trabajador.cerrar();
+      await rm(fichero, { force: true });
     }
   },
 );

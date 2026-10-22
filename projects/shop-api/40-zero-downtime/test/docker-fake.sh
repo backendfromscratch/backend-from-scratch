@@ -91,11 +91,8 @@ case "$1" in
           n=$(($(cat "$d/counter" 2> /dev/null || echo 0) + 1))
           echo "$n" > "$d/counter"
           container="c$n-$service"
-          health=""
-          if [ "$service" != worker ]; then
-            health="$(cat "$d/health/${id#sha256:}-$service" 2> /dev/null ||
-              cat "$d/health/${id#sha256:}" 2> /dev/null || echo healthy)"
-          fi
+          health="$(cat "$d/health/${id#sha256:}-$service" 2> /dev/null ||
+            cat "$d/health/${id#sha256:}" 2> /dev/null || echo healthy)"
           printf 'image=%s\nstatus=running\nhealth=%s\n' "$id" "$health" > "$d/c/$container"
           echo "$container" > "$d/containers/$service"
         done

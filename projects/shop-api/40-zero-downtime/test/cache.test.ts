@@ -475,10 +475,23 @@ async function emptyCache() {
 type Price = { priceCents: number };
 const keys = async () => (await redis.keys('products:*')).sort();
 
-/** Waits for the cache's product keys to be these: the API stores without waiting. */
-async function keysAre(expected: string[]) {
+/**
+ * Reads those paths until the cache's product keys are these. The API stores without waiting, and on
+ * a busy machine one of its cache commands can take longer than the 200 ms limit: then it considers
+ * the cache down, and while it is down a read goes to PostgreSQL without storing anything (it only
+ * checks, once a second at most, whether the cache is back, and on its return it empties it). One
+ * read isn't enough: it repeats them all until they are stored.
+ */
+async function readUntilKeysAre(paths: string[], expected: string[]) {
   const text = JSON.stringify(expected);
-  await eventually(async () => JSON.stringify(await keys()) === text, 2000, `keys ${text}`);
+  await eventually(
+    async () => {
+      for (const path of paths) await send('GET', path);
+      return JSON.stringify(await keys()) === text;
+    },
+    5000,
+    `keys ${text}`,
+  );
 }
 
 // #region invalidate
@@ -488,14 +501,17 @@ test('changing a product deletes it from the cache', { skip: noRedis }, async ()
   await send('GET', '/v2/products');
   await send('GET', '/v2/products?sort=-price');
   assert.equal(((await (await send('GET', '/v2/products/2')).json()) as Price).priceCents, 850);
-  await keysAre(['products:2', 'products:list:{"sort":"-price"}', 'products:list:{}']);
+  await readUntilKeysAre(
+    ['/v2/products', '/v2/products?sort=-price', '/v2/products/2'],
+    ['products:2', 'products:list:{"sort":"-price"}', 'products:list:{}'],
+  );
   // The admin changes the mug's price: it and the lists, out.
   const change = await send('PATCH', '/v2/products/2', ana, { priceCents: 900 });
   assert.equal(change.status, 200);
   assert.deepEqual(await keys(), []);
   // The cache already answers with the new one: the next read goes to PostgreSQL and stores it.
   assert.equal(((await (await send('GET', '/v2/products/2')).json()) as Price).priceCents, 900);
-  await keysAre(['products:2']);
+  await readUntilKeysAre(['/v2/products/2'], ['products:2']);
   assert.equal(((await (await send('GET', '/v2/products/2')).json()) as Price).priceCents, 900);
   const list = (await (await send('GET', '/v2/products')).json()) as ({ id: number } & Price)[];
   assert.equal(list.find((product) => product.id === 2)!.priceCents, 900);
@@ -505,7 +521,7 @@ test('creating or deleting a product too', { skip: noRedis }, async () => {
   await emptyCache();
   const listBefore = (await (await send('GET', '/v2/products')).json()) as { id: number }[];
   await send('GET', '/v2/products/1');
-  await keysAre(['products:1', 'products:list:{}']);
+  await readUntilKeysAre(['/v2/products', '/v2/products/1'], ['products:1', 'products:list:{}']);
   // The admin creates one: the lists, out (they are no longer the truth). Product 1 hasn't changed.
   const created = await send('POST', '/v2/products', ana, {
     name: 'Scarf',
@@ -518,20 +534,23 @@ test('creating or deleting a product too', { skip: noRedis }, async () => {
   assert.equal(listAfter.length, listBefore.length + 1);
   // Someone reads it (it stays in the cache) and the admin deletes it: it and the lists, out.
   assert.equal((await send('GET', `/v2/products/${id}`)).status, 200);
-  await keysAre(['products:1', `products:${id}`, 'products:list:{}']);
+  await readUntilKeysAre(
+    ['/v2/products/1', '/v2/products', `/v2/products/${id}`],
+    ['products:1', `products:${id}`, 'products:list:{}'],
+  );
   assert.equal((await send('DELETE', `/v2/products/${id}`, ana)).status, 204);
   assert.deepEqual(await keys(), ['products:1']);
   assert.equal((await send('GET', `/v2/products/${id}`)).status, 404);
   // Version 1 reads the same list from the cache.
   assert.equal((await send('GET', '/v1/products')).status, 200);
-  await keysAre(['products:1', 'products:list:{}']);
+  await readUntilKeysAre(['/v1/products', '/v2/products/1'], ['products:1', 'products:list:{}']);
 });
 
 test('an order changes the stock and deletes it from the cache', { skip: noRedis }, async () => {
   await emptyCache();
   const before = await stockInApi(2);
   await send('GET', '/v2/products');
-  await keysAre(['products:2', 'products:list:{}']);
+  await readUntilKeysAre(['/v2/products/2', '/v2/products'], ['products:2', 'products:list:{}']);
   const res = await send('POST', '/v2/orders', carmen, { productId: 2, quantity: 3 });
   assert.equal(res.status, 201);
   // The stock has changed: the product and the lists (which carry it too), out.
@@ -546,7 +565,7 @@ test('cancelling an order too', { skip: noRedis }, async () => {
   const { id } = (await res.json()) as { id: number };
   const before = await stockInApi(3);
   await send('GET', '/v2/products');
-  await keysAre(['products:3', 'products:list:{}']);
+  await readUntilKeysAre(['/v2/products/3', '/v2/products'], ['products:3', 'products:list:{}']);
   assert.equal((await send('POST', `/v2/orders/${id}/cancellation`, carmen)).status, 200);
   // Cancelling gives the stock back: out of the cache.
   assert.deepEqual(await keys(), []);
@@ -561,7 +580,7 @@ test(
     await pool.query('UPDATE products SET stock = 2 WHERE id = 4');
     // A wrong cache: it says 1000 caps are left.
     const cap = (await (await send('GET', '/v2/products/4')).json()) as { stock: number };
-    await keysAre(['products:4']);
+    await readUntilKeysAre(['/v2/products/4'], ['products:4']);
     await redis.set('products:4', JSON.stringify({ ...cap, stock: 1000 }));
     assert.equal(await stockInApi(4), 1000);
     // Buying 5 doesn't trust it: PostgreSQL checks it, in the order's transaction.

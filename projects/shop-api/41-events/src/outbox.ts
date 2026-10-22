@@ -114,7 +114,7 @@ export async function relay(
 export function relayEverySecond(
   toQueue: (job: Job) => Promise<void> = enqueue,
   intervalMs = 1000,
-): { stop(): Promise<void> } {
+): { running(): boolean; stop(): Promise<void> } {
   const LIMIT = 50;
   let stopped = false;
   let next: NodeJS.Timeout | undefined;
@@ -139,6 +139,8 @@ export function relayEverySecond(
 
   round = oneRound();
   return {
+    // Whether it's still relaying: until stop(). The worker's heartbeat asks it.
+    running: () => !stopped,
     async stop() {
       stopped = true;
       clearTimeout(next);

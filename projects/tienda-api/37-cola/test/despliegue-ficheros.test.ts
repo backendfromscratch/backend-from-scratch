@@ -123,6 +123,9 @@ test('el despliegue actualiza también el trabajador', async () => {
   assert.notEqual(otros, -1);
   assert.ok(otros < script.indexOf('run --rm migrar'));
   assert.ok(otros < script.indexOf('up -d --no-build --no-deps api trabajador'));
+  // El trabajador nuevo también tiene que ponerse sano (su latido); al volver, solo la API.
+  assert.match(script, /if esperar_salud api trabajador; then/);
+  assert.match(script, /--no-deps api trabajador && esperar_salud api; then/);
   // El trabajador, con la imagen de la API y su propio comando; la imagen lo lleva dentro.
   const compose = await readFile('compose.produccion.yaml', 'utf8');
   const trabajador = compose.slice(compose.indexOf('\n  trabajador:\n'));

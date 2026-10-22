@@ -6,8 +6,9 @@
 #
 # Sin novedades no hace nada y no escribe nada: ni una línea en el diario cada dos minutos. Con una
 # imagen nueva: los demás servicios al día, copia de seguridad, migraciones, la API y el trabajador
-# nuevos (Fase 9: la misma imagen), y espera a que /salud dé la API por buena. Si no llega a estarlo,
-# vuelve a la imagen anterior, las dos cosas, y termina con error (código 1).
+# nuevos (Fase 9: la misma imagen), y espera a que /salud dé la API por buena y a que el trabajador
+# lata. Si alguno no llega a estar sano, vuelve a la imagen anterior, las dos cosas, y termina con
+# error (código 1).
 #
 # Cada paso escribe una línea (el diario de systemd la guarda: journalctl -u tienda-despliegue).
 # Nunca escribe ningún secreto: ni el .env ni las contraseñas de la base de datos.
@@ -158,14 +159,30 @@ fi
 # dentro de los segundos sin API.
 registrar "arrancando la API y el trabajador con la imagen nueva"
 
-# Espera hasta 60 segundos a que Docker dé la API por sana (el HEALTHCHECK del Dockerfile pregunta a
-# /salud cada 10 segundos). Devuelve 0 si lo está y 1 si no.
+# La salud que Docker da al contenedor de un servicio (api o trabajador): healthy, starting,
+# unhealthy… La de la API sale del HEALTHCHECK del Dockerfile, que pregunta a /salud cada 10
+# segundos; la del trabajador, de su latido (compose.produccion.yaml). Vacía si no hay contenedor.
+salud_de() {
+  local c
+  c="$(docker ps --all --quiet \
+    --filter label=com.docker.compose.project=tienda \
+    --filter "label=com.docker.compose.service=$1" \
+    --filter label=com.docker.compose.oneoff=False)"
+  docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$c" 2>/dev/null || true
+}
+
+# Espera hasta 60 segundos a que Docker dé por sanos todos los servicios que se le dan (api,
+# trabajador). Devuelve 0 si lo están y 1 si no.
 esperar_salud() {
-  local c estado
+  local servicio todos
   for _ in $(seq 30); do
-    c="$(contenedores_api)"
-    estado="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}sin-comprobacion{{end}}' "$c" 2>/dev/null || true)"
-    if [ "$estado" = healthy ]; then
+    todos=si
+    for servicio in "$@"; do
+      if [ "$(salud_de "$servicio")" != healthy ]; then
+        todos=no
+      fi
+    done
+    if [ "$todos" = si ]; then
       return 0
     fi
     sleep 2
@@ -179,10 +196,12 @@ esperar_salud() {
 # sana: volver a la imagen anterior. El trabajador va con la API: los dos son el mismo código, y uno
 # nuevo con otro viejo podría no entender los trabajos del otro. Al pararlo, Docker le manda
 # SIGTERM, y termina lo que tiene a medias (scripts/trabajador.ts).
+# El trabajador también tiene que ponerse sano: uno nuevo que se reinicia en bucle (un error al
+# arrancar) nunca escribe su latido, y todo vuelve atrás, la API con él.
 sana=no
 if "${compose[@]}" up -d --no-build --no-deps api trabajador; then
-  registrar "esperando a /salud (hasta 60 s)"
-  if esperar_salud; then
+  registrar "esperando a /salud de la API y al latido del trabajador (hasta 60 s)"
+  if esperar_salud api trabajador; then
     sana=si
   fi
 fi
@@ -196,13 +215,15 @@ fi
 # #region volver
 # No arrancó o no llegó a estar sana: de vuelta a la imagen anterior (la guardada como :anterior),
 # la API y el trabajador. IMAGEN en el entorno manda sobre la de .env solo en este comando, y
-# --no-deps evita volver a ejecutar las migraciones con el código viejo.
+# --no-deps evita volver a ejecutar las migraciones con el código viejo. Al volver, espera solo a
+# la API: la imagen anterior puede ser de antes del latido del trabajador (la del paso 36 no tenía
+# trabajador), y su trabajador nunca se pondría sano.
 if ! docker image inspect "$anterior" > /dev/null 2>&1; then
   fallar "la imagen nueva no arrancó o no llegó a estar sana, y no hay imagen anterior a la que volver"
 fi
 volver="$(docker image inspect --format '{{.Id}}' "$anterior")"
 registrar "la imagen nueva no arrancó o no llegó a estar sana: vuelvo a $(corto "$volver")" >&2
-if IMAGEN="$anterior" "${compose[@]}" up -d --no-build --no-deps api trabajador && esperar_salud; then
+if IMAGEN="$anterior" "${compose[@]}" up -d --no-build --no-deps api trabajador && esperar_salud api; then
   fallar "vuelta hecha: la API y el trabajador corren otra vez con $(corto "$volver"). Las migraciones de la imagen nueva siguen aplicadas"
 fi
 fallar "la imagen anterior tampoco está sana: mira docker compose logs api"

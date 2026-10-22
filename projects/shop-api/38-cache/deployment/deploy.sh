@@ -7,8 +7,9 @@
 #
 # With nothing new it does nothing and writes nothing: not a line in the journal every two minutes.
 # With a new image: the other services up to date, backup, migrations, the new API and worker (Phase
-# 9: the same image), and it waits for /health to approve the API. If it never gets healthy, it goes
-# back to the previous image, both of them, and ends with an error (code 1).
+# 9: the same image), and it waits for /health to approve the API and for the worker's heartbeat. If
+# either never gets healthy, it goes back to the previous image, both of them, and ends with an
+# error (code 1).
 #
 # Every step writes one line (systemd's journal keeps it: journalctl -u shop-deploy). It never
 # writes any secret: not the .env and not the database's passwords.
@@ -162,14 +163,30 @@ fi
 # inside the seconds without an API.
 log "starting the API and the worker with the new image"
 
-# Waits up to 60 seconds for Docker to consider the API healthy (the Dockerfile's HEALTHCHECK asks
-# /health every 10 seconds). Returns 0 if it is and 1 if it isn't.
+# The health Docker gives a service's container (api or worker): healthy, starting, unhealthy… The
+# API's comes from the Dockerfile's HEALTHCHECK, which asks /health every 10 seconds; the worker's,
+# from its heartbeat (compose.production.yaml). Empty if there is no container.
+health_of() {
+  local c
+  c="$(docker ps --all --quiet \
+    --filter label=com.docker.compose.project=shop \
+    --filter "label=com.docker.compose.service=$1" \
+    --filter label=com.docker.compose.oneoff=False)"
+  docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' "$c" 2>/dev/null || true
+}
+
+# Waits up to 60 seconds for Docker to consider healthy all the services it is given (api,
+# worker). Returns 0 if they are and 1 if they aren't.
 wait_for_health() {
-  local c status
+  local service all
   for _ in $(seq 30); do
-    c="$(api_containers)"
-    status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}no-check{{end}}' "$c" 2>/dev/null || true)"
-    if [ "$status" = healthy ]; then
+    all=yes
+    for service in "$@"; do
+      if [ "$(health_of "$service")" != healthy ]; then
+        all=no
+      fi
+    done
+    if [ "$all" = yes ]; then
       return 0
     fi
     sleep 2
@@ -183,10 +200,12 @@ wait_for_health() {
 # healthy: going back to the previous image. The worker goes with the API: they are the same code,
 # and a new one with an old one might not understand each other's jobs. When it's stopped, Docker
 # sends it SIGTERM, and it finishes what it has half done (scripts/worker.ts).
+# The worker has to get healthy too: a new one that restarts in a loop (an error when starting)
+# never writes its heartbeat, and everything goes back, the API with it.
 healthy=no
 if "${compose[@]}" up -d --no-build --no-deps api worker; then
-  log "waiting for /health (up to 60 s)"
-  if wait_for_health; then
+  log "waiting for the API's /health and the worker's heartbeat (up to 60 s)"
+  if wait_for_health api worker; then
     healthy=yes
   fi
 fi
@@ -201,13 +220,15 @@ fi
 # It didn't start or never got healthy: back to the previous image (the one kept as :previous), the
 # API and the worker.
 # IMAGE in the environment overrides the one in .env for this command only, and --no-deps avoids
-# running the migrations again with the old code.
+# running the migrations again with the old code. Going back, it waits only for the API: the
+# previous image may come from before the worker's heartbeat (step 36's had no worker at all), and
+# its worker would never get healthy.
 if ! docker image inspect "$previous" > /dev/null 2>&1; then
   fail "the new image didn't start or never got healthy, and there is no previous image to go back to"
 fi
 back="$(docker image inspect --format '{{.Id}}' "$previous")"
 log "the new image didn't start or didn't get healthy: going back to $(short "$back")" >&2
-if IMAGE="$previous" "${compose[@]}" up -d --no-build --no-deps api worker && wait_for_health; then
+if IMAGE="$previous" "${compose[@]}" up -d --no-build --no-deps api worker && wait_for_health api; then
   fail "back done: the API and the worker are running $(short "$back") again. The new image's migrations are still applied"
 fi
 fail "the previous image is not healthy either: look at docker compose logs api"

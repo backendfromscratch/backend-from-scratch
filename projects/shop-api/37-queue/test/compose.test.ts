@@ -82,5 +82,9 @@ test("Redis keeps the queue on disk, and the worker is the API's image with anot
     lines.filter((l) => /^ {6}[A-Z_]+: /.test(l) && !l.includes('condition'));
   assert.deepEqual(environment(worker), environment(await service('api')));
   assert.ok(environment(worker).includes('      SMTP_URL: smtp://mailpit:1025'));
-  assert.match(worker.join('\n'), /healthcheck:\n\s+disable: true/);
+  // Its own healthcheck: the heartbeat file, recent (src/heartbeat.ts).
+  assert.ok(worker.some((l) => l.includes("statSync('/tmp/heartbeat').mtimeMs < 30000")));
+  assert.ok(!worker.some((l) => l.includes('disable: true')));
+  // Every second at the start: healthy in a second or two, not after the first 10 s interval.
+  assert.ok(worker.includes('      start_interval: 1s'));
 });
