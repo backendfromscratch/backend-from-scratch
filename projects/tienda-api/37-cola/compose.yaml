@@ -1,0 +1,131 @@
+# La tienda entera con un comando (Fase 7, lección 7): la API, PostgreSQL y Redis, cada uno en su
+# contenedor, en una red propia en la que se encuentran por el nombre del servicio (db, redis).
+# Desde la Fase 9, también el trabajador, que hace los trabajos de la cola, y Mailpit, que recibe
+# los correos de la tienda y los enseña en http://localhost:8025.
+#   docker compose up --build    arranca todo (Ctrl + C lo para)
+#   docker compose down          lo para y borra los contenedores; con -v, también los datos
+#
+# Los secretos no se escriben aquí: este fichero va a Git. Llegan de tu .env, que Compose lee solo
+# (cópialo de .env.ejemplo): ${POSTGRES_PASSWORD} se sustituye por su valor.
+
+# El nombre del proyecto: los contenedores se llaman tienda-api-1, tienda-db-1…
+name: tienda
+
+services:
+  # PostgreSQL 18, fijada por su digest. Sin puerto publicado: solo la ven los contenedores de la
+  # tienda, y no choca con el PostgreSQL de tu ordenador (el 5432).
+  db:
+    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    # La imagen crea el usuario y la base de datos la primera vez que arranca con el volumen vacío.
+    environment:
+      POSTGRES_USER: tienda
+      POSTGRES_DB: tienda
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Falta POSTGRES_PASSWORD en .env (mira .env.ejemplo)}
+    # Los datos, en un volumen con nombre: sobreviven a docker compose down (no a down -v).
+    volumes:
+      - datos:/var/lib/postgresql
+    # Sano cuando acepta conexiones: hasta entonces, quien depende de él espera.
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'tienda', '-d', 'tienda']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # #region redis
+  # Redis 8, fijada por su digest: los intentos de los límites, compartidos por todas las copias de
+  # la API, y desde la Fase 9 la cola de trabajos. Sin puerto publicado, como db.
+  # Hasta la Fase 8 no guardaba nada en disco: perder los intentos de los límites no importa. Perder
+  # la cola, sí: serían avisos y correos que nunca salen. Por eso ahora apunta en disco cada cambio
+  # (--appendonly yes), en un volumen, y al reiniciarse los lee otra vez. Y nunca borra claves para
+  # hacer sitio (--maxmemory-policy noeviction): con un límite de memoria (--maxmemory), al llegar a
+  # él daría un error, y el trabajo que no cabe fallaría a la vista en vez de desaparecer. Es lo que
+  # pide BullMQ.
+  redis:
+    image: redis:8@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+  # #endregion redis
+
+  # Una tarea, no un servidor: aplica las migraciones, carga los datos de práctica (las cuentas
+  # siempre; los productos, solo si no hay ninguno) y termina. Con la imagen de la API.
+  migrar:
+    build: .
+    command: ['sh', '-c', 'node scripts/migrar.ts && node scripts/cargar-datos.ts']
+    environment:
+      DATABASE_URL: postgres://tienda:${POSTGRES_PASSWORD}@db:5432/tienda
+    depends_on:
+      db:
+        condition: service_healthy
+    # El HEALTHCHECK de la imagen pregunta a la API, y aquí no hay API.
+    healthcheck:
+      disable: true
+
+  # La API, construida con el Dockerfile de esta carpeta.
+  api:
+    build: .
+    # Tu configuración (los secretos, el proveedor de identidad…), de .env. Lo que cambia dentro de
+    # Compose va en environment, que manda sobre env_file: la base de datos y Redis, por su nombre.
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://tienda:${POSTGRES_PASSWORD}@db:5432/tienda
+      REDIS_URL: redis://redis:6379
+      SMTP_URL: smtp://mailpit:1025
+    # Solo en tu ordenador (127.0.0.1). Un rango, y no un puerto: con docker compose up --scale
+    # api=2, cada copia toma uno libre, el 3000 o el 3001 (docker compose ps dice cuál).
+    ports:
+      - '127.0.0.1:3000-3001:3000'
+    # No arranca hasta que la base de datos y Redis están sanos y las migraciones han terminado bien.
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrar:
+        condition: service_completed_successfully
+
+  # #region trabajador
+  # El trabajador (Fase 9, lección 1): la misma imagen que la API, con otro comando. No escucha en
+  # ningún puerto: coge los trabajos de la cola de Redis y los hace. La misma configuración que la
+  # API, porque usa lo mismo: la base de datos, Redis y el servidor de correo.
+  #   docker compose stop trabajador     los trabajos esperan en la cola
+  #   docker compose start trabajador    y salen
+  trabajador:
+    build: .
+    command: ['node', 'scripts/trabajador.ts']
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://tienda:${POSTGRES_PASSWORD}@db:5432/tienda
+      REDIS_URL: redis://redis:6379
+      SMTP_URL: smtp://mailpit:1025
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrar:
+        condition: service_completed_successfully
+    # El HEALTHCHECK de la imagen pregunta a /salud, y el trabajador no tiene: no es un servidor.
+    healthcheck:
+      disable: true
+  # #endregion trabajador
+
+  # #region mailpit
+  # Mailpit, fijada por su digest: un servidor de correo de práctica. Recibe por SMTP (el 1025, solo
+  # dentro de la red de Compose) lo que manda la tienda, no lo manda a nadie y lo enseña en una
+  # bandeja de entrada en http://localhost:8025, solo en tu ordenador.
+  mailpit:
+    image: axllent/mailpit:v1.31.5@sha256:94f6b70c1436defae6799d9ac7ff0eeff9540465b842026d5cdb018f1c0234ea
+    ports:
+      - '127.0.0.1:8025:8025'
+  # #endregion mailpit
+
+volumes:
+  datos:
+  # La cola de Redis: sobrevive a docker compose down y a un reinicio (no a down -v).
+  redis:

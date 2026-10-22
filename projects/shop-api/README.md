@@ -1,6 +1,6 @@
 # The API for Ana and Luis's shop
 
-The guided project for [Backend from Scratch](https://backenddesdecero.com/en/): it starts in Phase 3, "Your first server", carries on in Phase 4, "API design", in Phase 5, "Databases", in Phase 6, "Authentication, authorization and security", in Phase 7, "Docker and containers", and in Phase 8, "Deployment and infrastructure". Each folder is the project as it stands at the end of a lesson: if you get stuck, compare your code with the folder for that lesson.
+The guided project for [Backend from Scratch](https://backenddesdecero.com/en/): it starts in Phase 3, "Your first server", carries on in Phase 4, "API design", in Phase 5, "Databases", in Phase 6, "Authentication, authorization and security", in Phase 7, "Docker and containers", in Phase 8, "Deployment and infrastructure", and in Phase 9, "Architecture and scaling". Each folder is the project as it stands at the end of a lesson: if you get stuck, compare your code with the folder for that lesson.
 
 | Folder               | Lesson                             |
 | -------------------- | ---------------------------------- |
@@ -39,6 +39,12 @@ The guided project for [Backend from Scratch](https://backenddesdecero.com/en/):
 | `33-small-image`     | Multi-stage                        |
 | `34-compose`         | Compose                            |
 | `35-production`      | Production, nginx and HTTPS        |
+| `36-deployment`      | CI/CD                              |
+| `37-queue`           | Queues                             |
+| `38-cache`           | Cache                              |
+| `39-scaling`         | Scaling                            |
+| `40-zero-downtime`   | Zero downtime                      |
+| `41-events`          | Events                             |
 
 You need Node.js 24 or later; the course uses 26 (with nvm, `nvm use` in the folder picks it). On Linux and WSL, Node 26 also needs the `libatomic1` library (`sudo apt install libatomic1`). In each folder:
 
@@ -132,3 +138,67 @@ journalctl -u shop-deploy                                # what it has done
 The first time the image is published, ghcr.io creates it **private**: on its package page (Package settings → Change visibility) make it public, or the server won't be able to download it without credentials. An image the script judged bad isn't retried by itself (every attempt is seconds without an API): if the fault was in the environment and not in the image (a badly written `.env`, say), fix it and delete `.deploy-failed` so it tries again.
 
 Going back changes the code, not the data: that's why the script makes a backup before migrating.
+
+## Phase 9: the queue, the worker, Mailpit and the cache
+
+From `37-queue`, what a request doesn't have to wait for goes to a job queue in Redis (with BullMQ): when an order becomes paid, one notification for each URL of the delivery company (with the `X-Event-Id` header, the same on every retry) and the confirmation email for whoever placed it. Another process does them, the worker (`scripts/worker.ts`): the same code and the same image as the API, with another command. A job that fails is tried again, up to five attempts in all, waiting 1, 2, 4 and 8 seconds between one and the next. Redis now keeps the queue on disk (`--appendonly yes`, in the `redis` volume).
+
+With Docker, `docker compose up --build` also starts the worker and Mailpit, a practice mail server: it receives the shop's emails, sends them to nobody and shows them at `http://localhost:8025`.
+
+```sh
+docker compose up --build --wait                  # everything, in the background
+npm run gateway -- 21                             # the payment gateway notifies: order 21, paid
+curl -s http://localhost:8025/api/v1/messages     # the email, in Mailpit's inbox (or in the browser)
+docker compose logs worker                        # what the worker has done
+docker compose stop worker                        # without a worker, the jobs wait in the queue...
+docker compose start worker                       # ...and go out as soon as it's back
+```
+
+`npm run gateway` reads `WEBHOOK_SECRET` from your `.env`, the same one the API uses in Compose, and calls the API on port 3000 (another one, with `PORT=3001 npm run gateway -- 21`).
+
+**Without Docker**, the shop still works without Redis: the jobs are done in the API's own process, as soon as they arrive and without retries, as until Phase 8. With Redis on your computer (`REDIS_URL` in `.env`), start the worker in another terminal with `npm run worker`. Without `SMTP_URL`, no email goes out: the log says which one would have. On a server, `SMTP_URL` is optional (`.env.production.example` explains what an email provider asks for), and `deploy.sh` updates the worker together with the API.
+
+Load tests are done with autocannon (`npm run load`), with the shop running:
+
+```sh
+npm run load -- -d 10 http://127.0.0.1:3000/v2/products   # 10 seconds of requests, and the results table
+```
+
+The queue's tests (`test/queue.test.ts`) need Redis, like the store's: without `REDIS_URL_TESTS`, the ones that use it are skipped.
+
+From `38-cache`, the catalogue (the list of products and each product) is kept for a minute in a cache, a second Redis (the `cache` service, with `CACHE_URL`): at most 64 MB, it deletes the least-read keys when it fills up and keeps nothing on disk, the opposite of the queue's. Creating, changing (`PATCH /v2/products/{id}`, new in this step: the name or the price, admin only) or deleting a product, and placing and cancelling an order (both change the stock) delete from the cache what has changed; buying still checks the stock in PostgreSQL. Without `CACHE_URL`, or with the cache down or stuck (no command waits for it longer than 200 ms), everything is read from PostgreSQL, as before. To look inside: `docker compose exec cache redis-cli keys '*'`. Its tests (`test/cache.test.ts`) use database 2 of the Redis in `REDIS_URL_TESTS`.
+
+From `39-scaling`, the API can run as several copies (`docker compose up --scale api=2`, each one on its own port, 3000 or 3001: `docker compose port --index 1 api 3000`). The only thing that lived in a copy's memory, the notices of the changes in the orders that `GET /v2/orders/{id}/events` follows, now goes through Redis (pub/sub, on the `shop:orders` channel, `src/order-events.ts`): an order cancelled through one copy reaches whoever follows it on the other. Each copy subscribes to the channel the first time it needs it. If Redis is cut, whoever follows an order gets no changes; when it comes back, the API closes those streams, and the browser (`EventSource`) connects again and gets the current status. Without `REDIS_URL`, they stay in the process's memory, as before. To watch them go by: `docker compose exec redis redis-cli subscribe shop:orders`. Its tests (`test/scaling.test.ts`) use the Redis in `REDIS_URL_TESTS`, with a channel of their own on each run.
+
+From `40-zero-downtime`, the server runs two copies of the API, `api-a` (port 3000) and `api-b` (3001), the two ports nginx already had in its `upstream`, so nginx doesn't need touching (in `nginx/shop.conf` only the `upstream` comment changes). `deploy.sh` changes them one at a time: `api-b` with the new image and, when Docker considers it healthy, 10 seconds of margin for nginx and then `api-a`; at the end, the worker, and `docker image prune` deletes the images with no tag (the new one and the previous one stay). If a new copy never gets healthy (it stops waiting as soon as Docker considers it `unhealthy`), the ones it has already changed go back to the previous image, also one at a time. The first deployment of this step removes the single copy of the earlier steps (the `api` service, which will be on 3000 or on 3001) once the new copy on the other port is already answering: if the old one is on 3001, it starts with `api-a`. On receiving `SIGTERM`, the API shuts down without cutting anyone off (`src/shutdown.ts`): it stops accepting connections, finishes the requests it has half done, closes the event streams and the WebSockets (their clients connect again, to the other copy), and then PostgreSQL and Redis, all within 8 seconds at most; meanwhile, `/health` answers 503. nginx repeats on the other copy what the one shutting down refuses, even if it's a POST, as long as Docker doesn't put its `docker-proxy` in front of the published ports: with it (it comes turned on), the port accepts the connection and cuts it, and nginx doesn't repeat a POST it already sent (502). So on the server, once only, before this step's first deployment, it is turned off in Docker's configuration, `/etc/docker/daemon.json`. If you followed Phase 8, that file already exists, with the log limits from its lesson 3, which must not be lost; look at it first:
+
+```sh
+cat /etc/docker/daemon.json
+```
+
+If it has those limits and nothing else, or doesn't exist ("No such file or directory"), write the whole file: those limits plus the new key:
+
+```sh
+sudo tee /etc/docker/daemon.json <<'EOF'
+{
+  "log-driver": "json-file",
+  "log-opts": {
+    "max-size": "10m",
+    "max-file": "3"
+  },
+  "userland-proxy": false
+}
+EOF
+```
+
+If it has other settings, open it with `sudo nano /etc/docker/daemon.json` and add `"userland-proxy": false` inside its braces without deleting anything, with a comma after the setting before it. Then:
+
+```sh
+sudo systemctl restart docker   # stops and starts every container, once
+```
+
+If Docker doesn't start, the JSON has a mistake: `sudo journalctl -u docker -n 20` tells you which.
+
+The `127.0.0.1` ports keep serving on the server itself and stay closed from outside, and the API still sees nginx arriving from `172.18.0.1` (`TRUSTED_PROXY` doesn't change). As long as you haven't done it, `deploy.sh` warns about it on every deployment. Its tests: `test/shutdown.test.ts`, and `test/deployment-files.test.ts`, which runs `deploy.sh` with a fake `docker` (`test/docker-fake.sh`).
+
+From `41-events`, paying an order no longer puts anything in the queue: in a single transaction, it writes down the gateway's event, turns the order into paid and saves its jobs (the notifications and the email) in the `outbox_events` table (migration `011`). If the API goes down right after, or the queue's Redis doesn't answer, the jobs are already in PostgreSQL. The worker relays them (`src/outbox.ts`): on start and every second, it takes the ones that haven't been sent (`FOR UPDATE SKIP LOCKED`: two workers never take the same one), puts them in the queue and writes down when (`sent_at`); if Redis fails or doesn't answer, it writes nothing down, and tries again a second later; if it is slow, it writes down the ones that arrived within 2 seconds and leaves the rest for the next round. A job can reach the queue twice (the worker goes down after enqueuing it and before writing it down), so each one carries its id (`email-<order>`; `notice-<payment id>-<notification>`), and BullMQ doesn't write down the same one twice. Without Redis, the API itself relays them, and each job is done in that process, as before. To look at the table: `docker compose exec db psql -U shop -c 'SELECT id, type, created_at, sent_at FROM outbox_events'`. Its tests: `test/events.test.ts`.
