@@ -589,6 +589,23 @@ test('cancelar un pedido también', { skip: sinRedis }, async () => {
   assert.equal(await stockEnLaApi(3), antes + 2);
 });
 
+test('cambiar la cantidad de un pedido, también', { skip: sinRedis }, async () => {
+  await vaciarCache();
+  const res = await pedir('POST', '/v2/pedidos', carmen, { productoId: 3, cantidad: 1 });
+  assert.equal(res.status, 201);
+  const { id } = (await res.json()) as { id: number };
+  const antes = await stockEnLaApi(3);
+  await pedir('GET', '/v2/productos');
+  await leerHastaQueClavesSean(
+    ['/v2/productos/3', '/v2/productos'],
+    ['productos:3', 'productos:lista:{}'],
+  );
+  assert.equal((await pedir('PATCH', `/v2/pedidos/${id}`, carmen, { cantidad: 3 })).status, 200);
+  // Dos más: salen del stock, y el producto y las listas, fuera de la caché.
+  assert.deepEqual(await claves(), []);
+  assert.equal(await stockEnLaApi(3), antes - 2);
+});
+
 test(
   'comprar comprueba el stock en la base de datos aunque la caché diga otra cosa',
   { skip: sinRedis },

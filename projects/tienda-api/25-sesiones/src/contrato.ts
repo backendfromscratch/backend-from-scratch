@@ -186,7 +186,7 @@ export const cambiarPedido = createRoute({
   responses: {
     200: enJson(esquemaPedido, 'El pedido, cambiado'),
     404: conProblema('No existe ese pedido'),
-    409: conProblema('El pedido ya no está pendiente'),
+    409: conProblema('El pedido ya no está pendiente, o no queda bastante stock'),
     422: datosNoValidos,
   },
 });

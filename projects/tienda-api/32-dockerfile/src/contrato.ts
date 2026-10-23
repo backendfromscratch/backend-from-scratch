@@ -226,7 +226,7 @@ export const cambiarPedido = createRoute({
     401: sinIdentidad,
     403: sinPermiso,
     404: conProblema('No existe ese pedido, o no es tuyo'),
-    409: conProblema('El pedido ya no está pendiente'),
+    409: conProblema('El pedido ya no está pendiente, o no queda bastante stock'),
     422: datosNoValidos,
   },
 });

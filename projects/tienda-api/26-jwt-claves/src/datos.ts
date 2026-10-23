@@ -153,10 +153,23 @@ export const cambiosDePedidos = new EventEmitter<{ cambio: [Pedido] }>();
 cambiosDePedidos.setMaxListeners(0);
 
 // Cambiar el estado siempre por aquí (o con cancelarPedido, que también avisa), para que nadie se
-// pierda el aviso: primero se guarda en la base de datos y después se avisa.
-export async function cambiarEstado(id: number, estado: EstadoPedido): Promise<Pedido> {
-  const [fila] = await bd.update(pedidos).set({ estado }).where(eq(pedidos.id, id)).returning();
-  const pedido = aPedido(fila!);
+// pierda el aviso: primero se guarda en la base de datos y después se avisa. Con desde, solo lo
+// cambia si el pedido sigue en ese estado, en el mismo UPDATE (como al quitar el stock): si otra
+// petición lo ha cambiado antes, una cancelación por ejemplo, no cambia nada, no avisa y devuelve
+// undefined.
+export async function cambiarEstado(
+  id: number,
+  estado: EstadoPedido,
+  desde?: EstadoPedido,
+): Promise<Pedido | undefined> {
+  // and() se salta la condición que es undefined: sin desde, solo mira el id.
+  const [fila] = await bd
+    .update(pedidos)
+    .set({ estado })
+    .where(and(eq(pedidos.id, id), desde === undefined ? undefined : eq(pedidos.estado, desde)))
+    .returning();
+  if (fila === undefined) return undefined;
+  const pedido = aPedido(fila);
   cambiosDePedidos.emit('cambio', pedido);
   return pedido;
 }
@@ -235,7 +248,52 @@ export async function cancelarPedido(id: number): Promise<Pedido> {
 }
 // #endregion cancelar-pedido
 
-export async function cambiarCantidad(id: number, cantidad: number): Promise<Pedido> {
-  const [fila] = await bd.update(pedidos).set({ cantidad }).where(eq(pedidos.id, id)).returning();
-  return aPedido(fila!);
+// Lo que puede pasar al cambiar la cantidad: sale bien, el pedido ya no está pendiente o no queda
+// bastante stock para las unidades de más (mas: cuántas se piden de más).
+export type ResultadoCambio =
+  | { pedido: Pedido }
+  | { error: 'estado'; estado: EstadoPedido }
+  | { error: 'sin-stock'; mas: number; quedan: number };
+
+// Cambiar la cantidad también cambia el stock, en la misma transacción: si se piden más, se quitan
+// las de más (si quedan); si se piden menos, se devuelven las de menos.
+export async function cambiarCantidad(id: number, cantidad: number): Promise<ResultadoCambio> {
+  return bd.transaction(async (tx): Promise<ResultadoCambio> => {
+    // for('update') es el FOR UPDATE de SQL: bloquea la fila del pedido hasta el COMMIT. Si a la
+    // vez llega un pago o una cancelación, espera a que esto acabe (o esto espera a que acabe lo
+    // otro, y lee lo que ha dejado). Primero el pedido y después el producto, en el mismo orden que
+    // cancelarPedido: si cada una bloqueara primero una fila distinta, las dos se quedarían
+    // esperando a la otra.
+    const [fila] = await tx.select().from(pedidos).where(eq(pedidos.id, id)).for('update');
+    const pedido = fila!; // existe: la ruta ya lo ha buscado, y los pedidos no se borran
+    // La ruta ya ha mirado el estado, pero antes del bloqueo: entretanto lo pueden haber pagado.
+    if (pedido.estado !== 'pendiente') return { error: 'estado', estado: pedido.estado };
+    const diferencia = cantidad - pedido.cantidad;
+    if (diferencia > 0) {
+      // Las de más, con el mismo UPDATE condicional que al hacer el pedido.
+      const quitado = await tx
+        .update(productos)
+        .set({ stock: sql`${productos.stock} - ${diferencia}` })
+        .where(and(eq(productos.id, pedido.productoId), gte(productos.stock, diferencia)))
+        .returning({ stock: productos.stock });
+      if (quitado.length === 0) {
+        const [producto] = await tx
+          .select({ stock: productos.stock })
+          .from(productos)
+          .where(eq(productos.id, pedido.productoId));
+        return { error: 'sin-stock', mas: diferencia, quedan: producto!.stock };
+      }
+    } else if (diferencia < 0) {
+      await tx
+        .update(productos)
+        .set({ stock: sql`${productos.stock} + ${-diferencia}` })
+        .where(eq(productos.id, pedido.productoId));
+    }
+    const [cambiado] = await tx
+      .update(pedidos)
+      .set({ cantidad })
+      .where(eq(pedidos.id, id))
+      .returning();
+    return { pedido: aPedido(cambiado!) };
+  });
 }

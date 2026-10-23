@@ -197,7 +197,21 @@ v2.openapi(contrato.cambiarPedido, async (c) => {
   if (pedido.estado !== 'pendiente') {
     return estadoNoLoPermite(c, `El pedido está ${pedido.estado}: ya no se puede cambiar`);
   }
-  return c.json(await cambiarCantidad(pedido.id, c.req.valid('json').cantidad), 200);
+  // Pedir más unidades quita stock, y pedir menos lo devuelve (datos.ts). En detail van las
+  // unidades que se piden de más, no la cantidad nueva: son las que tendría que haber en el stock.
+  const resultado = await cambiarCantidad(pedido.id, c.req.valid('json').cantidad);
+  if ('error' in resultado) {
+    if (resultado.error === 'estado') {
+      return estadoNoLoPermite(c, `El pedido está ${resultado.estado}: ya no se puede cambiar`);
+    }
+    return problema(c, {
+      type: tipo('sin-stock'),
+      title: 'No queda bastante stock',
+      status: 409,
+      detail: `Pides ${resultado.mas} más y quedan ${resultado.quedan}`,
+    });
+  }
+  return c.json(resultado.pedido, 200);
 });
 
 v2.openapi(contrato.cancelarPedido, async (c) => {
@@ -206,8 +220,13 @@ v2.openapi(contrato.cancelarPedido, async (c) => {
   if (pedido.estado === 'enviado') {
     return estadoNoLoPermite(c, 'El pedido ya está enviado: no se puede cancelar');
   }
-  // Cancelar devuelve el stock (datos.ts).
-  return c.json(await cancelarPedido(pedido.id), 200);
+  // Cancelar devuelve el stock (datos.ts). cancelarPedido solo cancela uno pendiente o pagado: si
+  // lo han enviado entretanto, devuelve el pedido sin cambiar, y la respuesta es el mismo 409.
+  const cancelado = await cancelarPedido(pedido.id);
+  if (cancelado.estado !== 'cancelado') {
+    return estadoNoLoPermite(c, `El pedido ya está ${cancelado.estado}: no se puede cancelar`);
+  }
+  return c.json(cancelado, 200);
 });
 
 // #region enviar-pedido
@@ -218,7 +237,13 @@ v2.openapi(contrato.enviarPedido, async (c) => {
   if (pedido.estado !== 'pagado') {
     return estadoNoLoPermite(c, `El pedido está ${pedido.estado}: solo se envía uno pagado`);
   }
-  return c.json(await cambiarEstado(pedido.id, 'enviado'), 200);
+  // Solo si sigue pagado, en el mismo UPDATE: si lo han cancelado entretanto, el mismo 409.
+  const enviado = await cambiarEstado(pedido.id, 'enviado', 'pagado');
+  if (!enviado) {
+    const ahora = (await buscarPedido(pedido.id))!;
+    return estadoNoLoPermite(c, `El pedido está ${ahora.estado}: solo se envía uno pagado`);
+  }
+  return c.json(enviado, 200);
 });
 // #endregion enviar-pedido
 
@@ -236,9 +261,10 @@ v2.openapi(contrato.recibirPago, async (c) => {
   if (!(await apuntarEvento(evento.id))) {
     return c.json({ recibido: evento.id, repetido: true }, 200);
   }
-  // Solo un pedido pendiente pasa a pagado: uno cancelado sigue cancelado.
-  if (pedido.estado === 'pendiente') {
-    const pagado = await cambiarEstado(pedido.id, 'pagado');
+  // Solo un pedido pendiente pasa a pagado: uno cancelado sigue cancelado. La comprobación va en
+  // el mismo UPDATE (desde 'pendiente'): si una cancelación llega justo antes, no lo paga.
+  const pagado = await cambiarEstado(pedido.id, 'pagado', 'pendiente');
+  if (pagado) {
     // A la cola: un aviso por cada URL de reparto (si una falla, solo esa se reintenta) y el correo.
     // Apuntarlos es rápido; hacerlos, no, y lo hace el trabajador. Un id para este pago, el mismo en
     // todos los avisos y en cada reintento: con él, la empresa reconoce un aviso repetido.

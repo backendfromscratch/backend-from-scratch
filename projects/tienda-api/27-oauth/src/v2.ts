@@ -138,7 +138,21 @@ v2.openapi(contrato.cambiarPedido, async (c) => {
   if (pedido.estado !== 'pendiente') {
     return estadoNoLoPermite(c, `El pedido está ${pedido.estado}: ya no se puede cambiar`);
   }
-  return c.json(await cambiarCantidad(pedido.id, c.req.valid('json').cantidad), 200);
+  // Pedir más unidades quita stock, y pedir menos lo devuelve (datos.ts). En detail van las
+  // unidades que se piden de más, no la cantidad nueva: son las que tendría que haber en el stock.
+  const resultado = await cambiarCantidad(pedido.id, c.req.valid('json').cantidad);
+  if ('error' in resultado) {
+    if (resultado.error === 'estado') {
+      return estadoNoLoPermite(c, `El pedido está ${resultado.estado}: ya no se puede cambiar`);
+    }
+    return problema(c, {
+      type: tipo('sin-stock'),
+      title: 'No queda bastante stock',
+      status: 409,
+      detail: `Pides ${resultado.mas} más y quedan ${resultado.quedan}`,
+    });
+  }
+  return c.json(resultado.pedido, 200);
 });
 
 v2.openapi(contrato.cancelarPedido, async (c) => {
@@ -164,8 +178,9 @@ v2.openapi(contrato.recibirPago, async (c) => {
   if (!(await apuntarEvento(evento.id))) {
     return c.json({ recibido: evento.id, repetido: true }, 200);
   }
-  // Solo un pedido pendiente pasa a pagado: uno cancelado sigue cancelado.
-  if (pedido.estado === 'pendiente') await cambiarEstado(pedido.id, 'pagado');
+  // Solo un pedido pendiente pasa a pagado: uno cancelado sigue cancelado. La comprobación va en
+  // el mismo UPDATE (desde 'pendiente'): si una cancelación llega justo antes, no lo paga.
+  await cambiarEstado(pedido.id, 'pagado', 'pendiente');
   return c.json({ recibido: evento.id, repetido: false }, 200);
 });
 

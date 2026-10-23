@@ -572,6 +572,20 @@ test('cancelling an order too', { skip: noRedis }, async () => {
   assert.equal(await stockInApi(3), before + 2);
 });
 
+test('changing the quantity of an order too', { skip: noRedis }, async () => {
+  await emptyCache();
+  const res = await send('POST', '/v2/orders', carmen, { productId: 3, quantity: 1 });
+  assert.equal(res.status, 201);
+  const { id } = (await res.json()) as { id: number };
+  const before = await stockInApi(3);
+  await send('GET', '/v2/products');
+  await readUntilKeysAre(['/v2/products/3', '/v2/products'], ['products:3', 'products:list:{}']);
+  assert.equal((await send('PATCH', `/v2/orders/${id}`, carmen, { quantity: 3 })).status, 200);
+  // Two more: they come out of the stock, and the product and the lists, out of the cache.
+  assert.deepEqual(await keys(), []);
+  assert.equal(await stockInApi(3), before - 2);
+});
+
 test(
   'buying checks the stock in the database even if the cache says otherwise',
   { skip: noRedis },

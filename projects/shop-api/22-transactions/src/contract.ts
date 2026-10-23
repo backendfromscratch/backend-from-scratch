@@ -183,7 +183,7 @@ export const changeOrder = createRoute({
   responses: {
     200: asJson(orderSchema, 'The order, changed'),
     404: withProblem('No such order'),
-    409: withProblem('The order is no longer pending'),
+    409: withProblem('The order is no longer pending, or there is not enough stock'),
     422: invalidData,
   },
 });
