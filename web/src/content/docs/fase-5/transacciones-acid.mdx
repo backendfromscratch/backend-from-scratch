@@ -277,7 +277,7 @@ A veces tu código tiene que leer antes de decidir, porque la decisión depende 
 
    Ve que no queda y hace `ROLLBACK`.
 
-B ha esperado **toda** la transacción de A. Por eso, entre un `FOR UPDATE` y su `COMMIT` no debe haber nada lento. El `UPDATE` condicional bloquea menos tiempo, y es lo que usa la tienda.
+B ha esperado **toda** la transacción de A. Por eso, entre un `FOR UPDATE` y su `COMMIT` no debe haber nada lento. El `UPDATE` condicional bloquea menos tiempo, y es lo que usa la tienda para vender. `FOR UPDATE` lo usa solo cuando tiene que leer antes de decidir, como al cambiar la cantidad de un pedido.
 
 ### Niveles de aislamiento: cuánto ve cada transacción
 
@@ -342,6 +342,10 @@ Sin stock, un `409 Conflict`: la petición está bien escrita, pero choca con el
 
 Cancelar devuelve el stock (`cancelarPedido`), con el mismo truco: en una transacción, el `UPDATE` del estado lleva `WHERE estado IN ('pendiente', 'pagado')`. Si llegan dos cancelaciones a la vez, la segunda ya no encuentra el pedido, y las tazas vuelven una sola vez.
 
+El webhook paga con el mismo truco: `cambiarEstado(pedido.id, 'pagado', 'pendiente')` solo cambia el pedido si sigue pendiente, en el mismo `UPDATE`. Sin esa condición, una cancelación que llegara justo antes volvería a dejarlo pagado, y cancelarlo otra vez devolvería las tazas dos veces.
+
+Cambiar la cantidad de un pedido pendiente (`cambiarCantidad`) también mueve el stock: si pides más, quita las de más con el mismo `UPDATE` condicional (si no quedan bastantes, `409` con «Pides 2 más y quedan 1»); si pides menos, las devuelve. Antes de decidir tiene que leer el pedido, así que usa el arreglo 2: lo lee con `FOR UPDATE`, y nadie lo paga ni lo cancela mientras tanto.
+
 ## Pruébalo
 
 El objetivo: vender dos veces la última taza, y después comprobar que tu API ya no puede.
@@ -375,8 +379,8 @@ Queda una taza, y B pedía dos: `1 >= 2` no se cumple. En la API, sería `409` c
 Parte de tu proyecto de la [lección 7, «Índices»](/fase-5/indices-sql-explain/). Escribe estos cambios, o cópialos de la carpeta de esta lección (abajo):
 
 1. En `src/bd.ts`, `enTransaccion`, con `type PoolClient` en el `import` de `'pg'`.
-2. En `src/datos.ts`, el `import` de `enTransaccion`, el nuevo `crearPedido` y `cancelarPedido`.
-3. En `src/v2.ts`, la ruta que crea pedidos, y la que cancela llama a `cancelarPedido`. En `src/contrato.ts`, el `409` de `crearPedido`.
+2. En `src/datos.ts`, el `import` de `enTransaccion`, el nuevo `crearPedido`, `cancelarPedido` y `cambiarCantidad`, y `cambiarEstado` con su `desde`.
+3. En `src/v2.ts`, la ruta que crea pedidos; la que cancela llama a `cancelarPedido`, y la que cambia la cantidad contesta `409` si no queda stock; el webhook paga solo un pedido pendiente (`'pendiente'`, el tercer argumento de `cambiarEstado`). En `src/contrato.ts`, el `409` de `crearPedido` y la descripción del `409` de `cambiarPedido`.
 
 El ejemplo de la carrera y los tests nuevos vienen en la carpeta de esta lección:
 
@@ -453,21 +457,29 @@ Usa el número de tu pedido. La taza vuelve al stock. Si cancelas otra vez, la r
   output={`> tienda-api@1.0.0 test
 > node --env-file=test/.env --test --test-concurrency=1 test/transacciones.test.ts
 
-✔ 20 pedidos a la vez de un producto con stock 5: 5 se hacen, 15 reciben 409, y el stock queda en 0 (153.256407ms)
-✔ sin bastante stock: 409, con su propio tipo y lo que queda en detail (5.885025ms)
-✔ un pedido quita su cantidad del stock; cancelarlo la devuelve, una sola vez (11.489918ms)
-✔ un error a mitad de la transacción deja el stock como estaba (4.681199ms)
-✔ enTransaccion: si la función lanza un error, no se guarda nada de lo que hizo (3.905539ms)
-✔ ejemplos/carrera.ts: leyendo y escribiendo por separado se vende de más; con un UPDATE condicional, no (289.258293ms)
-✔ el contrato documenta el 409 de POST /pedidos (9.716569ms)
-ℹ tests 7
+✔ 20 pedidos a la vez de un producto con stock 5: 5 se hacen, 15 reciben 409, y el stock queda en 0 (65.697116ms)
+✔ sin bastante stock: 409, con su propio tipo y lo que queda en detail (2.40475ms)
+✔ un pedido quita su cantidad del stock; cancelarlo la devuelve, una sola vez (4.768374ms)
+✔ un error a mitad de la transacción deja el stock como estaba (1.592263ms)
+✔ enTransaccion: si la función lanza un error, no se guarda nada de lo que hizo (0.862238ms)
+✔ pedir más unidades de un pedido pendiente quita la diferencia del stock (3.33174ms)
+✔ pedir más unidades de las que quedan: 409, con lo que queda, y no cambia ni el pedido ni el stock (3.456078ms)
+✔ pedir menos unidades devuelve la diferencia al stock (3.029605ms)
+✔ cambiar la cantidad y después cancelar deja el stock como antes del pedido (7.297962ms)
+✔ cambiar la cantidad y cancelar a la vez: el stock queda como antes de los pedidos (27.997722ms)
+✔ un pedido que ya no está pendiente: 409, y no cambia ni el pedido ni el stock (4.744248ms)
+✔ pagar y cancelar a la vez: un pedido cancelado no vuelve a pagado, y el stock vuelve una sola vez (37.728269ms)
+✔ pagar y cambiar la cantidad a la vez: el pedido queda pagado con la cantidad final, y el stock cuadra (19.373589ms)
+✔ ejemplos/carrera.ts: leyendo y escribiendo por separado se vende de más; con un UPDATE condicional, no (280.272111ms)
+✔ el contrato documenta el 409 de POST /pedidos (9.743047ms)
+ℹ tests 15
 ℹ suites 0
-ℹ pass 7
+ℹ pass 15
 ℹ fail 0
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 758.90496`}
+ℹ duration_ms 729.255586`}
 >
 
 Lo que va detrás de `--` le llega a `node --test`: solo este fichero; sin él, `npm test` pasa todas. Las salidas son de Node 26.11.1; tus tiempos serán otros.

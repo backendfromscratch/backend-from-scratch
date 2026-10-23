@@ -198,9 +198,22 @@ orderChanges.setMaxListeners(0);
 
 // Always change the status through here (or with cancelOrder, which also notifies), so that nobody
 // misses the notification: first it's saved in the database and then the notification goes out.
-export async function changeStatus(id: number, status: OrderStatus): Promise<Order> {
-  const [row] = await db.update(orders).set({ status }).where(eq(orders.id, id)).returning();
-  const order = toOrder(row!);
+// With from, it only changes it if the order is still in that status, in the same UPDATE (like when
+// taking the stock off): if another request changed it first, a cancellation for example, it
+// changes nothing, doesn't notify and returns undefined.
+export async function changeStatus(
+  id: number,
+  status: OrderStatus,
+  from?: OrderStatus,
+): Promise<Order | undefined> {
+  // and() skips the condition that is undefined: without from, it only looks at the id.
+  const [row] = await db
+    .update(orders)
+    .set({ status })
+    .where(and(eq(orders.id, id), from === undefined ? undefined : eq(orders.status, from)))
+    .returning();
+  if (row === undefined) return undefined;
+  const order = toOrder(row);
   orderChanges.emit('change', order);
   return order;
 }
@@ -295,8 +308,55 @@ export async function cancelOrder(id: number): Promise<Order> {
 }
 // #endregion cancel-order
 
-// Changes only the order's quantity: the stock isn't touched here, so the cache doesn't change.
-export async function changeQuantity(id: number, quantity: number): Promise<Order> {
-  const [row] = await db.update(orders).set({ quantity }).where(eq(orders.id, id)).returning();
-  return toOrder(row!);
+// What can happen when changing the quantity: it goes well, the order is no longer pending or there
+// isn't enough stock for the extra units (more: how many are asked for on top of the current ones).
+export type ChangeResult =
+  | { order: Order }
+  | { error: 'status'; status: OrderStatus }
+  | { error: 'out-of-stock'; more: number; left: number };
+
+// Changing the quantity also changes the stock, in the same transaction: if more are asked for, the
+// extra ones are taken (if there are enough left); if fewer, the difference is given back.
+export async function changeQuantity(id: number, quantity: number): Promise<ChangeResult> {
+  const result = await db.transaction(async (tx): Promise<ChangeResult> => {
+    // for('update') is SQL's FOR UPDATE: it locks the order's row until the COMMIT. If a payment or a
+    // cancellation arrives at the same time, it waits for this to finish (or this waits for the
+    // other one, and reads what it left). The order first and then the product, in the same order as
+    // cancelOrder: if each locked a different row first, the two would end up waiting for each other.
+    const [row] = await tx.select().from(orders).where(eq(orders.id, id)).for('update');
+    const order = row!; // it exists: the route already looked it up, and orders are never deleted
+    // The route already looked at the status, but before the lock: meanwhile it may have been paid.
+    if (order.status !== 'pending') return { error: 'status', status: order.status };
+    const difference = quantity - order.quantity;
+    if (difference > 0) {
+      // The extra ones, with the same conditional UPDATE as when placing the order.
+      const taken = await tx
+        .update(products)
+        .set({ stock: sql`${products.stock} - ${difference}` })
+        .where(and(eq(products.id, order.productId), gte(products.stock, difference)))
+        .returning({ stock: products.stock });
+      if (taken.length === 0) {
+        const [product] = await tx
+          .select({ stock: products.stock })
+          .from(products)
+          .where(eq(products.id, order.productId));
+        return { error: 'out-of-stock', more: difference, left: product!.stock };
+      }
+    } else if (difference < 0) {
+      await tx
+        .update(products)
+        .set({ stock: sql`${products.stock} + ${-difference}` })
+        .where(eq(products.id, order.productId));
+    }
+    const [changed] = await tx
+      .update(orders)
+      .set({ quantity })
+      .where(eq(orders.id, id))
+      .returning();
+    return { order: toOrder(changed!) };
+  });
+  // The stock has changed (unless the quantity was the same): out of the cache, after the COMMIT,
+  // like when placing the order.
+  if ('order' in result) await forgetProducts(result.order.productId);
+  return result;
 }

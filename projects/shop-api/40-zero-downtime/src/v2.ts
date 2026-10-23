@@ -193,7 +193,22 @@ v2.openapi(contract.changeOrder, async (c) => {
   if (order.status !== 'pending') {
     return statusDoesNotAllow(c, `The order is ${order.status}: it can no longer be changed`);
   }
-  return c.json(await changeQuantity(order.id, c.req.valid('json').quantity), 200);
+  // Asking for more units takes stock, and asking for fewer gives it back (data.ts). detail has the
+  // units asked for on top of the current ones, not the new quantity: those are the ones that would
+  // have to be in stock.
+  const result = await changeQuantity(order.id, c.req.valid('json').quantity);
+  if ('error' in result) {
+    if (result.error === 'status') {
+      return statusDoesNotAllow(c, `The order is ${result.status}: it can no longer be changed`);
+    }
+    return problem(c, {
+      type: problemType('out-of-stock'),
+      title: 'Not enough stock left',
+      status: 409,
+      detail: `You ask for ${result.more} more and ${result.left} are left`,
+    });
+  }
+  return c.json(result.order, 200);
 });
 
 v2.openapi(contract.cancelOrder, async (c) => {
@@ -202,8 +217,16 @@ v2.openapi(contract.cancelOrder, async (c) => {
   if (order.status === 'shipped') {
     return statusDoesNotAllow(c, 'The order is already shipped: it cannot be cancelled');
   }
-  // Cancelling gives the stock back (data.ts).
-  return c.json(await cancelOrder(order.id), 200);
+  // Cancelling gives the stock back (data.ts). cancelOrder only cancels a pending or paid order: if
+  // it was shipped in the meantime, it returns the order unchanged, and the response is the same 409.
+  const cancelled = await cancelOrder(order.id);
+  if (cancelled.status !== 'cancelled') {
+    return statusDoesNotAllow(
+      c,
+      `The order is already ${cancelled.status}: it cannot be cancelled`,
+    );
+  }
+  return c.json(cancelled, 200);
 });
 
 // #region ship-order
@@ -214,7 +237,13 @@ v2.openapi(contract.shipOrder, async (c) => {
   if (order.status !== 'paid') {
     return statusDoesNotAllow(c, `The order is ${order.status}: only a paid one is shipped`);
   }
-  return c.json(await changeStatus(order.id, 'shipped'), 200);
+  // Only if it is still paid, in the same UPDATE: if it was cancelled in the meantime, the same 409.
+  const shipped = await changeStatus(order.id, 'shipped', 'paid');
+  if (!shipped) {
+    const now = (await findOrder(order.id))!;
+    return statusDoesNotAllow(c, `The order is ${now.status}: only a paid one is shipped`);
+  }
+  return c.json(shipped, 200);
 });
 // #endregion ship-order
 
@@ -233,9 +262,10 @@ v2.openapi(contract.receivePayment, async (c) => {
   if (!(await recordEvent(event.id))) {
     return c.json({ received: event.id, repeated: true }, 200);
   }
-  // Only a pending order becomes paid: a cancelled one stays cancelled.
-  if (order.status === 'pending') {
-    const paid = await changeStatus(order.id, 'paid');
+  // Only a pending order becomes paid: a cancelled one stays cancelled. The check is in the same
+  // UPDATE (from 'pending'): if a cancellation arrives just before, it isn't paid.
+  const paid = await changeStatus(order.id, 'paid', 'pending');
+  if (paid) {
     // To the queue: one notification for each delivery URL (if one fails, only that one is retried)
     // and the email. Writing them down is quick; doing them isn't, and the worker does it. One id for
     // this payment, the same in all the notifications and on every retry: with it, the company

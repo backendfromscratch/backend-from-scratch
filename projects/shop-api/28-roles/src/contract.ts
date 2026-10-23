@@ -226,7 +226,7 @@ export const changeOrder = createRoute({
     401: noIdentity,
     403: noPermission,
     404: withProblem('No such order, or it is not yours'),
-    409: withProblem('The order is no longer pending'),
+    409: withProblem('The order is no longer pending, or there is not enough stock'),
     422: invalidData,
   },
 });

@@ -116,13 +116,23 @@ export const cambiosDePedidos = new EventEmitter<{ cambio: [Pedido] }>();
 cambiosDePedidos.setMaxListeners(0);
 
 // Cambiar el estado siempre por aquí (o con cancelarPedido, que también avisa), para que nadie se
-// pierda el aviso: primero se guarda en la base de datos y después se avisa.
-export async function cambiarEstado(id: number, estado: EstadoPedido): Promise<Pedido> {
+// pierda el aviso: primero se guarda en la base de datos y después se avisa. Con desde, solo lo
+// cambia si el pedido sigue en ese estado, en el mismo UPDATE (como al quitar el stock): si otra
+// petición lo ha cambiado antes, una cancelación por ejemplo, no cambia nada, no avisa y devuelve
+// undefined.
+export async function cambiarEstado(
+  id: number,
+  estado: EstadoPedido,
+  desde?: EstadoPedido,
+): Promise<Pedido | undefined> {
+  // $3::text IS NULL: sin desde, la condición se cumple siempre.
   const { rows } = await pool.query<FilaPedido>(
-    `UPDATE pedidos SET estado = $2 WHERE id = $1 RETURNING ${PEDIDO}`,
-    [id, estado],
+    `UPDATE pedidos SET estado = $2 WHERE id = $1 AND ($3::text IS NULL OR estado = $3)
+     RETURNING ${PEDIDO}`,
+    [id, estado, desde ?? null],
   );
-  const pedido = aPedido(rows[0]!);
+  if (rows[0] === undefined) return undefined;
+  const pedido = aPedido(rows[0]);
   cambiosDePedidos.emit('cambio', pedido);
   return pedido;
 }
@@ -201,10 +211,52 @@ export async function cancelarPedido(id: number): Promise<Pedido> {
 }
 // #endregion cancelar-pedido
 
-export async function cambiarCantidad(id: number, cantidad: number): Promise<Pedido> {
-  const { rows } = await pool.query<FilaPedido>(
-    `UPDATE pedidos SET cantidad = $2 WHERE id = $1 RETURNING ${PEDIDO}`,
-    [id, cantidad],
-  );
-  return aPedido(rows[0]!);
+// Lo que puede pasar al cambiar la cantidad: sale bien, el pedido ya no está pendiente o no queda
+// bastante stock para las unidades de más (mas: cuántas se piden de más).
+export type ResultadoCambio =
+  | { pedido: Pedido }
+  | { error: 'estado'; estado: EstadoPedido }
+  | { error: 'sin-stock'; mas: number; quedan: number };
+
+// Cambiar la cantidad también cambia el stock, en la misma transacción: si se piden más, se quitan
+// las de más (si quedan); si se piden menos, se devuelven las de menos.
+export async function cambiarCantidad(id: number, cantidad: number): Promise<ResultadoCambio> {
+  return enTransaccion(async (cliente): Promise<ResultadoCambio> => {
+    // FOR UPDATE bloquea la fila del pedido hasta el COMMIT: si a la vez llega un pago o una
+    // cancelación, espera a que esto acabe (o esto espera a que acabe lo otro, y lee lo que ha
+    // dejado). Primero el pedido y después el producto, en el mismo orden que cancelarPedido: si
+    // cada una bloqueara primero una fila distinta, las dos se quedarían esperando a la otra.
+    const { rows } = await cliente.query<FilaPedido>(
+      `SELECT ${PEDIDO} FROM pedidos WHERE id = $1 FOR UPDATE`,
+      [id],
+    );
+    const fila = rows[0]!; // existe: la ruta ya lo ha buscado, y los pedidos no se borran
+    // La ruta ya ha mirado el estado, pero antes del bloqueo: entretanto lo pueden haber pagado.
+    if (fila.estado !== 'pendiente') return { error: 'estado', estado: fila.estado };
+    const diferencia = cantidad - fila.cantidad;
+    if (diferencia > 0) {
+      // Las de más, con el mismo UPDATE condicional que al hacer el pedido.
+      const quitado = await cliente.query(
+        'UPDATE productos SET stock = stock - $2 WHERE id = $1 AND stock >= $2',
+        [fila.productoId, diferencia],
+      );
+      if (quitado.rowCount === 0) {
+        const { rows: producto } = await cliente.query<{ stock: number }>(
+          'SELECT stock FROM productos WHERE id = $1',
+          [fila.productoId],
+        );
+        return { error: 'sin-stock', mas: diferencia, quedan: producto[0]!.stock };
+      }
+    } else if (diferencia < 0) {
+      await cliente.query('UPDATE productos SET stock = stock + $2 WHERE id = $1', [
+        fila.productoId,
+        -diferencia,
+      ]);
+    }
+    const { rows: cambiado } = await cliente.query<FilaPedido>(
+      `UPDATE pedidos SET cantidad = $2 WHERE id = $1 RETURNING ${PEDIDO}`,
+      [id, cantidad],
+    );
+    return { pedido: aPedido(cambiado[0]!) };
+  });
 }

@@ -116,12 +116,22 @@ orderChanges.setMaxListeners(0);
 
 // Always change the status through here (or with cancelOrder, which also notifies), so that nobody
 // misses the notification: first it's saved in the database and then the notification goes out.
-export async function changeStatus(id: number, status: OrderStatus): Promise<Order> {
+// With from, it only changes it if the order is still in that status, in the same UPDATE (like when
+// taking the stock off): if another request changed it first, a cancellation for example, it
+// changes nothing, doesn't notify and returns undefined.
+export async function changeStatus(
+  id: number,
+  status: OrderStatus,
+  from?: OrderStatus,
+): Promise<Order | undefined> {
+  // $3::text IS NULL: without from, the condition is always met.
   const { rows } = await pool.query<OrderRow>(
-    `UPDATE orders SET status = $2 WHERE id = $1 RETURNING ${ORDER}`,
-    [id, status],
+    `UPDATE orders SET status = $2 WHERE id = $1 AND ($3::text IS NULL OR status = $3)
+     RETURNING ${ORDER}`,
+    [id, status, from ?? null],
   );
-  const order = toOrder(rows[0]!);
+  if (rows[0] === undefined) return undefined;
+  const order = toOrder(rows[0]);
   orderChanges.emit('change', order);
   return order;
 }
@@ -199,10 +209,52 @@ export async function cancelOrder(id: number): Promise<Order> {
 }
 // #endregion cancel-order
 
-export async function changeQuantity(id: number, quantity: number): Promise<Order> {
-  const { rows } = await pool.query<OrderRow>(
-    `UPDATE orders SET quantity = $2 WHERE id = $1 RETURNING ${ORDER}`,
-    [id, quantity],
-  );
-  return toOrder(rows[0]!);
+// What can happen when changing the quantity: it goes well, the order is no longer pending or there
+// isn't enough stock for the extra units (more: how many are asked for on top of the current ones).
+export type ChangeResult =
+  | { order: Order }
+  | { error: 'status'; status: OrderStatus }
+  | { error: 'out-of-stock'; more: number; left: number };
+
+// Changing the quantity also changes the stock, in the same transaction: if more are asked for, the
+// extra ones are taken (if there are enough left); if fewer, the difference is given back.
+export async function changeQuantity(id: number, quantity: number): Promise<ChangeResult> {
+  return inTransaction(async (client): Promise<ChangeResult> => {
+    // FOR UPDATE locks the order's row until the COMMIT: if a payment or a cancellation arrives at
+    // the same time, it waits for this to finish (or this waits for the other one, and reads what it
+    // left). The order first and then the product, in the same order as cancelOrder: if each locked
+    // a different row first, the two would end up waiting for each other.
+    const { rows } = await client.query<OrderRow>(
+      `SELECT ${ORDER} FROM orders WHERE id = $1 FOR UPDATE`,
+      [id],
+    );
+    const row = rows[0]!; // it exists: the route already looked it up, and orders are never deleted
+    // The route already looked at the status, but before the lock: meanwhile it may have been paid.
+    if (row.status !== 'pending') return { error: 'status', status: row.status };
+    const difference = quantity - row.quantity;
+    if (difference > 0) {
+      // The extra ones, with the same conditional UPDATE as when placing the order.
+      const taken = await client.query(
+        'UPDATE products SET stock = stock - $2 WHERE id = $1 AND stock >= $2',
+        [row.productId, difference],
+      );
+      if (taken.rowCount === 0) {
+        const { rows: product } = await client.query<{ stock: number }>(
+          'SELECT stock FROM products WHERE id = $1',
+          [row.productId],
+        );
+        return { error: 'out-of-stock', more: difference, left: product[0]!.stock };
+      }
+    } else if (difference < 0) {
+      await client.query('UPDATE products SET stock = stock + $2 WHERE id = $1', [
+        row.productId,
+        -difference,
+      ]);
+    }
+    const { rows: changed } = await client.query<OrderRow>(
+      `UPDATE orders SET quantity = $2 WHERE id = $1 RETURNING ${ORDER}`,
+      [id, quantity],
+    );
+    return { order: toOrder(changed[0]!) };
+  });
 }
