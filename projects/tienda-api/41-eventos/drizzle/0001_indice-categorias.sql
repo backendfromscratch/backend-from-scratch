@@ -1,0 +1,1 @@
+CREATE INDEX "productos_categorias_por_categoria" ON "productos_categorias" USING btree ("categoria_id");

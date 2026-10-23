@@ -101,6 +101,16 @@ jobs:
             exit 1
           fi
 
+      # The replica practice of Phase 9 (web/public/practicas/replicas/, one folder per language) is a
+      # Compose file: `config --quiet` checks that it parses and that its services and networks are
+      # consistent, without pulling images or starting anything.
+      - name: replica practice files (docker compose config)
+        if: ${{ !cancelled() }}
+        run: |
+          for dir in web/public/practicas/replicas/*/; do
+            docker compose -f "$dir"compose.yaml config --quiet
+          done
+
       - name: types (astro check)
         if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm check
@@ -140,8 +150,9 @@ jobs:
     # Every step: from 13 to 21 minutes since Phase 7 (each step also runs the tests of the earlier
     # ones, one file at a time because they share the test database). With Phase 8 a full run took
     # 29m16s (2026-10-17), about 25 minutes of it the install-and-tests step, and each new step adds
-    # its own tests to that: 45 minutes leaves room to grow.
-    timeout-minutes: 45
+    # its own tests to that. Phase 9 adds five steps in each language, with Compose (a worker, Mailpit
+    # and a queue check each): about 41 to 47 minutes estimated for all of them, so 60 leaves room.
+    timeout-minutes: 60
     # From Phase 5 the steps keep their data in PostgreSQL 18, the version the lessons install, and
     # from Phase 7 the rate limiter's Redis store is tested against Redis 8. Pinned by digest, like
     # the Actions. Their ports are published on the runner only.
@@ -238,8 +249,10 @@ jobs:
           fi
 
       # From Phase 7: every step with a Dockerfile builds its image, as the lessons do; and the
-      # Docker Compose step brings up the whole shop (API, PostgreSQL and Redis), answers on its
-      # published port and is removed with its data. Its .env is the step's example (.env.ejemplo or
+      # Docker Compose step brings up the whole shop (API, PostgreSQL and Redis; from Phase 9 also the
+      # worker, Mailpit and the cache), answers on its published port and, where there is a
+      # Mailpit, checks that a queued email survives a Redis restart (queued_email_survives_redis),
+      # and is removed with its data. Its .env is the step's example (.env.ejemplo or
       # .env.example) with new random secrets, as the README asks the reader to do. The two
       # languages' Compose projects publish the same ports, so they run one after the other.
       - name: docker images and docker compose
@@ -252,6 +265,39 @@ jobs:
             docker build "$step" || failed="$failed $step"
             echo "::endgroup::"
           done 3< "$RUNNER_TEMP/steps"
+          # From Phase 9, a paid order queues an email that a worker sends through Mailpit. The
+          # promise of the queue: with the worker stopped the job waits, Redis restarts (its
+          # append-only file brings the queue back; from the outbox step the job is also in
+          # PostgreSQL), the worker comes back and the email still arrives. Order 21 is the first
+          # pending one of the practice data, and the gateway script signs the real webhook.
+          queued_email_survives_redis() {
+            (
+              cd "$1" || exit 1
+              # Mailpit has no healthcheck: up --wait returns when its container runs, so wait for its
+              # port to answer. It must start empty, or the wait below could pass on a message that
+              # is not ours.
+              inbox=""
+              for _ in $(seq 30); do
+                inbox="$(curl --silent --fail --max-time 5 http://127.0.0.1:8025/api/v1/messages)" && break
+                sleep 1
+              done
+              [ -n "$inbox" ] || { echo "Mailpit did not answer on port 8025 after 30 seconds"; exit 1; }
+              printf '%s' "$inbox" | grep -Eq '"total": *0' || {
+                echo "Mailpit was not empty before paying the order"
+                exit 1
+              }
+              docker compose stop "$worker" &&
+                PORT="${2##*:}" npm run --silent "$gateway" -- 21 | tee /dev/stderr | grep -q '← 2' &&
+                docker compose restart redis &&
+                docker compose start "$worker" || exit 1
+              for _ in $(seq 30); do
+                curl --silent --fail --max-time 5 http://127.0.0.1:8025/api/v1/messages | grep -Eq '"total": *[1-9]' && exit 0
+                sleep 1
+              done
+              echo "No email in Mailpit after 30 seconds"
+              exit 1
+            )
+          }
           while IFS= read -r step <&3; do
             [ -f "$step/compose.yaml" ] || continue
             echo "::group::docker compose $step"
@@ -265,13 +311,14 @@ jobs:
               esac
             done < "$example" > "$step/.env"
             case "$step" in
-              projects/tienda-api/*) route=salud ;;
-              *) route=health ;;
+              projects/tienda-api/*) route=salud worker=trabajador gateway=pasarela ;;
+              *) route=health worker=worker gateway=gateway ;;
             esac
             # The API publishes a range of ports (one per copy): ask Compose which one it took.
             if ! (cd "$step" && docker compose up --build --wait --wait-timeout 180) ||
               ! address="$(cd "$step" && docker compose port api 3000)" ||
-              ! curl --fail --silent --show-error "http://$address/$route"; then
+              ! curl --fail --silent --show-error "http://$address/$route" ||
+              { grep -q '^  mailpit:' "$step/compose.yaml" && ! queued_email_survives_redis "$step" "$address"; }; then
               (cd "$step" && docker compose logs)
               failed="$failed $step"
             fi
@@ -283,7 +330,7 @@ jobs:
             exit 1
           fi
 
-      # From Phase 8: the production files of the steps that have them (steps 35 and 36), which no
+      # From Phase 8: the production files of the steps that have them (step 35 onwards), which no
       # test runs because they only work on a server. Each is checked with the tool that would
       # reject it there, in a container pinned by digest (no third-party Action):
       #   - docker compose config: the production Compose file is valid with an .env made from the

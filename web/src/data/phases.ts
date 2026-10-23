@@ -108,7 +108,8 @@ export const phases: Phase[] = [
   },
   {
     number: 9,
-    status: 'coming-soon',
+    status: 'available',
+    lessonCount: 7,
     title: { es: 'Arquitectura y escalado', en: 'Architecture and scaling' },
     summary: {
       es: 'Colas y trabajos en segundo plano, caché, escalado horizontal, monolito frente a microservicios y sistemas distribuidos.',
