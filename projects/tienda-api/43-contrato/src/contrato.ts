@@ -321,6 +321,7 @@ export const recibirPago = createRoute({
   responses: {
     200: enJson(esquemaAcuse, 'Recibido'),
     400: conProblema('La firma no es válida, o el cuerpo no es un JSON bien escrito'),
+    403: deOtraWeb,
     415: cuerpoNoJson,
     422: datosNoValidos,
   },

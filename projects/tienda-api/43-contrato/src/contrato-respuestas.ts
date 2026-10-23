@@ -82,7 +82,12 @@ export function crearValidador(documento: object) {
     return compilados.get(clave)!;
   }
 
-  return (metodo: string, ruta: string, estado: number, cuerpo: unknown): FalloContrato[] => {
+  const validar = (
+    metodo: string,
+    ruta: string,
+    estado: number,
+    cuerpo: unknown,
+  ): FalloContrato[] => {
     metodo = metodo.toLowerCase();
     const respuesta = paths[ruta]?.[metodo]?.responses?.[String(estado)];
     if (!respuesta) {
@@ -117,6 +122,18 @@ export function crearValidador(documento: object) {
       };
     });
   };
+
+  // Las rutas del documento como expresiones regulares, para saber a qué ruta del documento
+  // corresponde un camino de verdad (/pedidos/7 es /pedidos/{id}). Hace falta cuando la respuesta
+  // la hizo un middleware antes de llegar a ninguna ruta, y Hono solo sabe decir «/*».
+  const rutas = Object.keys(paths).map((plantilla) => ({
+    plantilla,
+    expresion: new RegExp(`^${plantilla.replace(/\{[^}]+\}/g, '[^/]+')}/?$`),
+  }));
+  const plantillaDe = (camino: string) =>
+    rutas.find((ruta) => ruta.expresion.test(camino))?.plantilla;
+
+  return Object.assign(validar, { plantillaDe });
 }
 // #endregion validador
 
@@ -147,12 +164,21 @@ export function validarRespuestas(
     // Un método que la ruta no tiene (v2.all, en v2.ts): el contrato describe operaciones, y esa no
     // lo es. Su 405 lo comprueba problemas.test.ts.
     if (res.status === 405) return;
-    // routePath, después de next(), es la ruta que respondió. Lo que no es una ruta del contrato (el
-    // propio documento, un /v2/algo que no existe y cae en el 404) no se valida.
-    const rutaDeHono = c.req.routePath;
-    if (rutaDeHono.includes('*') || rutaDeHono === `${prefijo}/openapi.json`) return;
+    // Un 5xx que ninguna ruta ha previsto: app.onError ya lo ha registrado, y no es que la respuesta
+    // rompa el contrato, es que algo ha fallado. Ni se cuenta aquí ni se sustituye.
+    if (res.status >= 500) return;
     validador ??= crearValidador(documento());
-    const ruta = plantillaDeRuta(rutaDeHono, prefijo);
+    // routePath, después de next(), es la ruta que respondió. Si la respuesta la hizo un middleware
+    // (la comprobación contra CSRF, la sesión), es «/*»: se busca el camino entre las rutas del
+    // documento. Lo que no es una ruta del contrato (el propio documento, un /v2/algo que no
+    // existe y cae en el 404) no se valida.
+    const rutaDeHono = c.req.routePath;
+    if (rutaDeHono === `${prefijo}/openapi.json`) return;
+    const camino = c.req.path.startsWith(prefijo) ? c.req.path.slice(prefijo.length) : c.req.path;
+    const ruta = rutaDeHono.includes('*')
+      ? validador.plantillaDe(camino)
+      : plantillaDeRuta(rutaDeHono, prefijo);
+    if (ruta === undefined) return;
     // Hono atiende un HEAD con la ruta del GET (y luego le quita el cuerpo): el contrato la
     // describe como GET.
     const metodo = c.req.method === 'HEAD' ? 'GET' : c.req.method;
@@ -178,6 +204,11 @@ export function validarRespuestas(
       { requestId, metodo, ruta, estado: res.status, fallos: fallos.slice(0, 10) },
       'respuesta fuera del contrato',
     );
+    // El 500 no hereda lo que la respuesta rota traía: un Location o una cookie de sesión no
+    // tienen sentido en un error. X-Request-Id, sí.
+    for (const cabecera of ['Location', 'Set-Cookie', 'ETag', 'Content-Length']) {
+      c.res.headers.delete(cabecera);
+    }
     c.res = problema(c, {
       type: 'about:blank',
       title: 'La respuesta no cumple el contrato',

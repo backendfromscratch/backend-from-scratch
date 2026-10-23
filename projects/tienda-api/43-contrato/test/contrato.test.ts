@@ -380,12 +380,125 @@ test('fallar: la misma respuesta es un 500 Problem Details «La respuesta no cum
   assert.equal(problema.status, 500);
   assert.ok(!JSON.stringify(problema).includes(SECRETO));
 });
+
+test('un 500 que la ruta no esperaba no es una rotura del contrato: ni aviso, ni se sustituye', async () => {
+  const caida = new OpenAPIHono();
+  caida.use(requestId());
+  const ruta = createRoute({
+    method: 'get',
+    path: '/cosas',
+    responses: {
+      200: {
+        description: 'Las cosas',
+        content: { 'application/json': { schema: z.object({ nombre: z.string() }) } },
+      },
+    },
+  });
+  caida.openapi(ruta, () => {
+    throw new Error('se ha caído algo');
+  });
+  // Como app.onError: un 500 en JSON, que el contrato no describe.
+  caida.onError((_error, c) => c.json({ title: 'Internal Server Error', status: 500 }, 500));
+  for (const modo of ['registrar', 'fallar'] as const) {
+    const montada = new OpenAPIHono();
+    montada.use(requestId());
+    montada.use(
+      validarRespuestas(modo, {
+        prefijo: '',
+        documento: () =>
+          caida.getOpenAPI31Document({ openapi: '3.1.0', info: { title: 'c', version: '1' } }),
+      }),
+    );
+    montada.route('/', caida);
+    montada.onError((_error, c) => c.json({ title: 'Internal Server Error', status: 500 }, 500));
+    const aviso = mock.method(log, 'warn', () => {});
+    const error = mock.method(log, 'error', () => {});
+    try {
+      const res = await montada.request('/cosas');
+      assert.equal(res.status, 500);
+      assert.equal((await res.json()).title, 'Internal Server Error');
+      assert.equal(aviso.mock.callCount(), 0, modo);
+      assert.equal(error.mock.callCount(), 0, modo);
+    } finally {
+      aviso.mock.restore();
+      error.mock.restore();
+    }
+  }
+});
+
+test('fallar: el 500 que sustituye a la respuesta conserva X-Request-Id y no lleva Location ni Set-Cookie', async () => {
+  const rota = apiRota('fallar');
+  rota.use(async (c, next) => {
+    await next();
+    c.res.headers.set('Location', '/cosas/7');
+    c.res.headers.append('Set-Cookie', 'sesion=abc; HttpOnly');
+  });
+  const res = await rota.request('/cosas/7', { headers: { 'X-Request-Id': 'r-2' } });
+  assert.equal(res.status, 500);
+  assert.equal(res.headers.get('x-request-id'), 'r-2');
+  assert.equal(res.headers.get('location'), null);
+  assert.equal(res.headers.get('set-cookie'), null);
+});
 // #endregion respuesta-rota
+
+// #region respuestas-de-middleware
+// Las respuestas que fabrica un middleware antes de llegar a la ruta (la comprobación contra CSRF,
+// que mira la cookie) también pasan por el validador: está montado el primero de todos.
+for (const [metodo, ruta, camino] of [
+  ['post', '/cuentas', '/v2/cuentas'],
+  ['post', '/sesion', '/v2/sesion'],
+  ['delete', '/sesion', '/v2/sesion'],
+  ['post', '/webhooks/pagos', '/v2/webhooks/pagos'],
+  ['post', '/pedidos', '/v2/pedidos'],
+] as const) {
+  test(`${metodo.toUpperCase()} ${ruta} con la cookie y desde otra web: 403 del contrato`, async () => {
+    const res = await app.request(camino, {
+      method: metodo,
+      headers: { 'Content-Type': 'text/plain', Cookie: 'sesion=x', Origin: 'https://otra.example' },
+      body: metodo === 'delete' ? undefined : 'a=b',
+    });
+    assert.equal(res.status, 403);
+    await cumpleContrato(res, metodo, ruta);
+  });
+}
+
+test('el validador ve también lo que responde un middleware sin llegar a la ruta', async () => {
+  // Un middleware que corta con un 403 que el contrato no describe, montado detrás del validador.
+  const api = new OpenAPIHono();
+  api.use(requestId());
+  api.use(
+    validarRespuestas('fallar', {
+      prefijo: '',
+      documento: () =>
+        api.getOpenAPI31Document({ openapi: '3.1.0', info: { title: 'm', version: '1' } }),
+    }),
+  );
+  api.use('*', async (c) => c.json({ title: 'Forbidden', status: 403 }, 403));
+  api.openapi(
+    createRoute({
+      method: 'get',
+      path: '/cosas/{id}',
+      request: { params: z.object({ id: z.string() }) },
+      responses: {
+        200: {
+          description: 'La cosa',
+          content: { 'application/json': { schema: z.object({ nombre: z.string() }) } },
+        },
+      },
+    }),
+    (c) => c.json({ nombre: 'x' }, 200),
+  );
+  const res = await api.request('/cosas/7');
+  assert.equal(res.status, 500);
+  assert.equal((await res.json()).title, 'La respuesta no cumple el contrato');
+});
+// #endregion respuestas-de-middleware
 
 // #region lo-que-no-se-toca
 test('el modo de los tests es fallar, y las respuestas sin cuerpo JSON no se tocan', async () => {
   assert.equal(config.VALIDAR_RESPUESTAS, 'fallar');
   const aviso = mock.method(log, 'warn', () => {});
+  const fallo = mock.method(log, 'error', () => {});
   try {
     // 204: sin cuerpo.
     assert.equal((await pedir('DELETE', '/v2/sesion', ana)).status, 204);
@@ -405,25 +518,34 @@ test('el modo de los tests es fallar, y las respuestas sin cuerpo JSON no se toc
     // Una ruta de /v2 que no existe: el 404 de siempre.
     assert.equal((await pedir('GET', '/v2/no-existe')).status, 404);
     assert.equal(aviso.mock.callCount(), 0);
+    assert.equal(fallo.mock.callCount(), 0);
   } finally {
     aviso.mock.restore();
+    fallo.mock.restore();
   }
 });
 
-test('SSE con el validador puesto: el primer evento llega en menos de un segundo', async () => {
-  // Una sesión nueva: la de ana la cerró el caso de DELETE /sesion.
-  const res = await pedir('GET', '/v2/pedidos/7/eventos', await comoUsuario(ANA));
+test('SSE con el validador puesto: las cabeceras y el primer evento llegan en menos de un segundo', async () => {
+  // Una sesión nueva: la de ana la cerró el caso de DELETE /sesion. Si el validador esperara a que
+  // la respuesta terminara, la petición no volvería nunca: por eso va dentro de la carrera.
+  const cabeceras = await comoUsuario(ANA);
+  const limite = new Promise<never>((_, rechazar) =>
+    setTimeout(() => rechazar(new Error('el primer evento tarda más de 1 s')), 1000),
+  );
+  const { res, primero } = await Promise.race([
+    (async () => {
+      const res = await pedir('GET', '/v2/pedidos/7/eventos', cabeceras);
+      const lector = res.body!.pipeThrough(new TextDecoderStream()).getReader();
+      return { res, lector, primero: await lector.read() };
+    })(),
+    limite,
+  ]).then(async (hecho) => {
+    await hecho.lector.cancel();
+    return hecho;
+  });
   assert.equal(res.status, 200);
   assert.match(res.headers.get('content-type')!, /text\/event-stream/);
-  const lector = res.body!.pipeThrough(new TextDecoderStream()).getReader();
-  const primero = await Promise.race([
-    lector.read(),
-    new Promise<never>((_, rechazar) =>
-      setTimeout(() => rechazar(new Error('el primer evento tarda más de 1 s')), 1000),
-    ),
-  ]);
   assert.match(primero.value!, /^event: estado/);
-  await lector.cancel();
 });
 // #endregion lo-que-no-se-toca
 
@@ -439,10 +561,15 @@ test('contrato.json es el contrato que la API publica ahora', async () => {
   );
 });
 
-test('generar el contrato dos veces da exactamente los mismos bytes', () => {
+// El fichero es, byte a byte, lo que escribe npm run contrato (scripts/contrato.ts): el mismo
+// orden, la misma sangría y el salto de línea final. Y generarlo dos veces da lo mismo.
+test('contrato.json es, byte a byte, lo que escribe npm run contrato', async () => {
+  const texto = `${JSON.stringify(documentoContrato(), null, 2)}\n`;
+  assert.equal(texto, `${JSON.stringify(documentoContrato(), null, 2)}\n`);
   assert.equal(
-    JSON.stringify(documentoContrato(), null, 2),
-    JSON.stringify(documentoContrato(), null, 2),
+    await readFile('contrato.json', 'utf8'),
+    texto,
+    'El contrato ha cambiado: mira el diff de contrato.json y, si el cambio es el que quieres, npm run contrato',
   );
 });
 // #endregion instantanea

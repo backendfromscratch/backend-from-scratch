@@ -31,6 +31,12 @@ export const app = new Hono<Entorno>();
 // requestId da a cada petición un identificador y lo devuelve en la cabecera X-Request-Id.
 app.use(requestId());
 app.use(registro);
+// Con VALIDAR_RESPUESTAS, cada respuesta JSON de v2 se comprueba contra el contrato, después de
+// que se haya hecho (contrato-respuestas.ts, Fase 10, lección 3). Va aquí, la primera después del
+// registro, para ver también lo que responden los middleware de más abajo sin llegar a la ruta
+// (la comprobación contra CSRF, la sesión). Sin la variable, no se añade nada.
+if (config.VALIDAR_RESPUESTAS !== 'no')
+  app.use('/v2/*', validarRespuestas(config.VALIDAR_RESPUESTAS));
 app.use(cors({ origin: 'https://tienda.example' }));
 // #region cabeceras-seguridad
 // Las cabeceras de seguridad, en todas las respuestas: X-Content-Type-Options: nosniff (el navegador
@@ -45,11 +51,6 @@ app.use(comprobarOrigen);
 // todas las rutas.
 app.use(cargarSesion);
 app.use(cargarClave);
-
-// Con VALIDAR_RESPUESTAS, cada respuesta JSON de v2 se comprueba contra el contrato, después de
-// que la ruta responda (contrato-respuestas.ts, Fase 10, lección 3). Sin ella, no se añade nada.
-if (config.VALIDAR_RESPUESTAS !== 'no')
-  app.use('/v2/*', validarRespuestas(config.VALIDAR_RESPUESTAS));
 
 // Cada versión, bajo su prefijo: /v1/productos y /v2/productos.
 app.route('/v1', v1);

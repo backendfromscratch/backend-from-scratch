@@ -95,6 +95,7 @@ test('cada ruta dice qué responde, también sus errores como Problem Details', 
   assert.deepEqual(Object.keys(paths['/webhooks/pagos'].post.responses), [
     '200',
     '400',
+    '403',
     '415',
     '422',
   ]);
