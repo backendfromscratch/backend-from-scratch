@@ -13,11 +13,13 @@ of the alerts, the charts, the traces, the log.
 Delete these comments when you fill it in.
 -->
 
+<!-- #region header -->
 - **Date:** <day of the incident>
 - **Duration:** <from when it started until it was resolved, and how long it took to be detected>
 - **Severity:** <urgent / warning: the one of the alert that fired, or the one that should have fired>
 - **Author:** <who writes it>
 - **Status:** <draft / reviewed / actions finished>
+<!-- #endregion header -->
 
 ## Summary
 
@@ -30,6 +32,7 @@ customers noticed, how it was fixed. -->
 customers couldn't sign in, how many emails arrived late and how late, whether anything was lost.
 And how much of the SLO's error budget was spent ("99% of the requests to /v2 without a 5xx"). -->
 
+<!-- #region timeline -->
 ## Timeline
 
 <!-- Each moment with its time, from the source that says it (the alert's email, the log, a
@@ -38,6 +41,7 @@ chart). From the first symptom, even if nobody saw it then, until everything wen
 | Time | What happened | Source |
 | ---- | ------------- | ------ |
 |      |               |        |
+<!-- #endregion timeline -->
 
 ## Cause
 

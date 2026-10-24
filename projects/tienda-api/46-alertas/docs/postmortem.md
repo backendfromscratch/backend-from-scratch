@@ -13,11 +13,13 @@ horas de las alertas, las gráficas, las trazas, el log.
 Borra estos comentarios al rellenarla.
 -->
 
+<!-- #region cabecera -->
 - **Fecha:** <día del incidente>
 - **Duración:** <desde que empezó hasta que se resolvió, y cuánto tardó en detectarse>
 - **Gravedad:** <urgente / aviso: la de la alerta que saltó, o la que debería haber saltado>
 - **Autoría:** <quién lo escribe>
 - **Estado:** <borrador / revisado / acciones terminadas>
+<!-- #endregion cabecera -->
 
 ## Resumen
 
@@ -30,6 +32,7 @@ cómo se arregló. -->
 clientes no pudieron iniciar sesión, cuántos correos llegaron tarde y cuánto, si se perdió algo.
 Y cuánto del presupuesto de errores del SLO se gastó («99 % de las peticiones a /v2 sin 5xx»). -->
 
+<!-- #region cronologia -->
 ## Cronología
 
 <!-- Cada momento con su hora, de la fuente que lo dice (el correo de la alerta, el log, una
@@ -39,6 +42,7 @@ normalidad. -->
 | Hora | Qué pasó | Fuente |
 | ---- | -------- | ------ |
 |      |          |        |
+<!-- #endregion cronologia -->
 
 ## Causa
 
