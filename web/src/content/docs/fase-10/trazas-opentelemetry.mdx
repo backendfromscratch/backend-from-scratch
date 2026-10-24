@@ -27,15 +27,15 @@ import QuizOption from '~/components/QuizOption.astro';
 
 Imagina que una clienta te escribe: «Para entrar en la tienda he esperado doce segundos». En el log encuentras su petición: `POST /v2/sesion`, `200`, `"ms": 12300`. El log dice **cuánto** tardó, no **dónde**: ¿PostgreSQL, Redis, la contraseña?
 
-Con un pago es peor. La API contesta en 7 ms, y el correo lo manda otro proceso, el trabajador, tras pasar por la tabla de eventos salientes y la cola. El `requestId` de la [Fase 3](/fase-3/errores-y-logs-node/#un-id-para-cada-petición) solo existe en uno de los dos.
+Con un pago es peor: la API contesta en 7 ms, y el correo lo manda otro proceso, el trabajador, tras pasar por el outbox y la cola. El `requestId` de la [Fase 3](/fase-3/errores-y-logs-node/#un-id-para-cada-petición) solo existe en uno de los dos.
 
-En la [Fase 9](/fase-9/monolito-vs-microservicios/#lo-que-cuesta-muchas-piezas-que-desplegar-y-vigilar) quedó escrito que, para seguir una petición por varios servicios, existen las trazas. Aquí la tienda deja una por petición.
+En la [Fase 9](/fase-9/monolito-vs-microservicios/#lo-que-cuesta-muchas-piezas-que-desplegar-y-vigilar) quedó escrito que, para seguir una petición por varios servicios, existen las <Term id="trace">trazas</Term>. Aquí la tienda deja una por petición.
 
 ## La analogía
 
 <Analogy>
 
-Cuando envías un paquete, le pegan una etiqueta con un número de seguimiento. Cada almacén por el que pasa la lee y apunta cuándo llegó y cuándo salió. Con el número ves el viaje entero, y si tarda una semana, en qué almacén se quedó parado cuatro días.
+Cuando envías un paquete, le pegan una etiqueta con un número de seguimiento. Cada almacén por el que pasa la lee y apunta cuándo llegó y cuándo salió. Con el número ves el viaje entero, y en qué almacén se quedó parado.
 
 <div slot="limits">
 
@@ -51,7 +51,7 @@ Cuando envías un paquete, le pegan una etiqueta con un número de seguimiento. 
 
 ### Monitorizar no es lo mismo que observar
 
-Monitorizar es comprobar lo que ya sabes que puede fallar: ¿contesta `/salud`?, ¿hay más de un 5 % de errores? La <Term id="observability">observabilidad</Term> es poder contestar las preguntas que no tenías preparadas, como la de los doce segundos, **con lo que la tienda ya emite**, sin desplegar código nuevo para averiguarlo.
+Monitorizar es comprobar lo que ya sabes que puede fallar: ¿contesta `/salud`? La <Term id="observability">observabilidad</Term> es poder contestar las preguntas que no tenías preparadas, como la de los doce segundos, **con lo que la tienda ya emite**, sin desplegar código nuevo para averiguarlo.
 
 ### Tres señales, tres preguntas
 
@@ -59,7 +59,7 @@ Monitorizar es comprobar lo que ya sabes que puede fallar: ¿contesta `/salud`?,
 |---|---|---|---|
 | Log | Una línea por suceso | ¿Qué pasó exactamente con esta petición? | pino, desde la [Fase 3](/fase-3/errores-y-logs-node/#logs-estructurados-una-línea-json-por-suceso) |
 | <Term id="metric">Métrica</Term> | Un número a lo largo del tiempo | ¿Cuántas llegan, cuántas fallan, cuánto tardan? | Prometheus, en la lección 5 |
-| <Term id="trace">Traza</Term> | El recorrido de una petición, pieza a pieza | ¿Por dónde pasó, y dónde se fue el tiempo? | Jaeger, en esta lección |
+| Traza | El recorrido de una petición, pieza a pieza | ¿Por dónde pasó, y dónde se fue el tiempo? | <Term id="jaeger">Jaeger</Term>, en esta lección |
 
 Se usan en cadena: **la métrica avisa de que algo va mal, la traza dice dónde y el log dice qué**. Los logs y las trazas comparten id: de una línea del log saltas a su traza, y al revés.
 
@@ -89,15 +89,15 @@ POST /v2/webhooks/pagos                                   tienda-api            
         redis-EVALSHA                                     tienda-trabajador     0.46 ms   +155 ms
 ```
 
-Es la de nuestro «Pruébalo», sacada de Jaeger y resumida. Cada pieza es un <Term id="span">*span*</Term> (en español, a veces, «tramo»): algo que pasó, con su inicio, su duración y unos datos. Uno que pasa dentro de otro es su **hijo**; el de fuera, su **padre**. Todos comparten el **id de la traza**.
+La sacamos de Jaeger y la resumimos. Cada pieza es un <Term id="span">*span*</Term> (en español, a veces, «tramo»): algo que pasó, con su inicio, su duración y unos datos. Uno que pasa dentro de otro es su **hijo**; el de fuera, su **padre**. Todos comparten el **id de la traza**.
 
 Jaeger los dibuja como barras sobre una línea de tiempo, una debajo de otra: la **cascada** (*waterfall*). Esta se lee así:
 
-- **La API tardó 7 ms**, casi 4 en PostgreSQL: la <Term id="transaction">transacción</Term> del pago, de `BEGIN` a `COMMIT` ([Fase 9](/fase-9/arquitectura-orientada-a-eventos/#el-outbox-el-aviso-en-la-misma-transacción)).
-- **Durante 133 ms no pasa nada**: el evento espera en la tabla a que el repartidor, que mira cada segundo, lo ponga en la cola (`add`).
-- **El trabajador hace el trabajo en 14 ms**: `process`, con una consulta, y `complete`.
+- La API tardó 7 ms, casi 4 en PostgreSQL, la mayor parte en la <Term id="transaction">transacción</Term> del pago, de `BEGIN` a `COMMIT` ([Fase 9](/fase-9/arquitectura-orientada-a-eventos/#el-outbox-el-aviso-en-la-misma-transacción)).
+- Durante 133 ms no pasa nada: el evento espera en la tabla a que el repartidor, que mira cada segundo, lo ponga en la cola (`add`).
+- El trabajador hace el trabajo en 14 ms: `process`, con una consulta, y `complete`.
 
-**El envío del correo no tiene span**: la tienda no instrumenta nodemailer, la librería que lo manda, así que su tiempo queda dentro de `process`, sin desglosar. Una traza solo enseña lo que alguien decidió medir.
+**El envío del correo no tiene span**: la tienda no instrumenta nodemailer, la librería que lo manda. Una traza solo enseña lo que alguien decidió medir.
 
 ### OpenTelemetry: de la librería a Jaeger
 
@@ -105,30 +105,32 @@ La tienda no crea estos spans a mano: lo hace <Term id="opentelemetry">OpenTelem
 
 ```mermaid
 flowchart TB
-    A["Las instrumentaciones<br/>envuelven Hono, pg, redis, pino y BullMQ"] -->|crean spans con| B["La API de OpenTelemetry<br/>sin SDK, no hace nada"]
+    A["Las instrumentaciones<br/>envuelven pg, redis, pino, node:http y fetch<br/>(Hono y BullMQ traen las suyas)"] -->|crean spans con| B["La API de OpenTelemetry<br/>las funciones para crear spans"]
     B -->|que se los pasa al| C["SDK<br/>los junta en lotes"]
     C -->|que los entrega al| D["Exportador<br/>los manda por OTLP, por HTTP"]
     D -->|a OTEL_EXPORTER_OTLP_TRACES_ENDPOINT| E["Jaeger<br/>los guarda y los enseña"]
 ```
 
-Una <Term id="instrumentation">instrumentación</Term> es el código que hace que una librería emita spans; OTLP, el protocolo de OpenTelemetry. Muchos equipos ponen entre el exportador y el destino un **collector**, un programa que recibe, filtra y reparte; la tienda manda directa a <Term id="jaeger">Jaeger</Term>.
+Ojo: esta «API» no es la de la tienda. **La API de OpenTelemetry son las funciones con las que una librería dice «empieza un span» y «termina»**. Sin SDK no hacen nada, así que una librería puede traerlas sin obligar a nadie a guardar spans. El SDK los recoge, los junta y se los da al exportador.
+
+Una <Term id="instrumentation">instrumentación</Term> es el código que hace que una librería emita spans; OTLP, el protocolo de OpenTelemetry. Muchos equipos ponen entre el exportador y el destino un **collector**, un programa que recibe, filtra y reparte; la tienda manda directa a Jaeger.
 
 La tienda elige sus instrumentaciones una por una, en `src/instrumentacion.ts`:
 
 <ProjectCode file="tienda-api/44-trazas/src/instrumentacion.ts" region="instrumentaciones" />
 
-- **`HttpInstrumentation`, solo para las peticiones que salen**: de las que llegan hace el span `@hono/otel`, con el nombre de la ruta. Una petición, un solo span de servidor.
-- **`requireParentSpan: true`**: PostgreSQL y Redis, solo dentro de una petición o un trabajo. Si no, cada pregunta del repartidor, una por segundo, sería una traza suelta de un span. El precio: esas preguntas no se ven.
+- `HttpInstrumentation`, solo para las peticiones que salen: de las que llegan hace el span `@hono/otel`, con el nombre de la ruta. Una petición, un solo span de servidor.
+- `requireParentSpan: true`: PostgreSQL y Redis, solo dentro de una petición o un trabajo; si no, cada pregunta del repartidor sería una traza suelta. Por eso esas preguntas no se ven.
 
-Antes de nada, `empezarInstrumentacion` mira `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`. **Sin ella, no arranca nada**, y la tienda funciona como en la Fase 9.
+Antes de nada, `empezarInstrumentacion` mira `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`. Sin ella, no arranca nada, y la tienda funciona como en la Fase 9.
 
 ### La instrumentación se carga antes que la tienda
 
 Cada instrumentación cambia su librería en el momento en que alguien la carga con `import`, la orden que trae el código de otro fichero o <Term id="package">paquete</Term>. Si `src/servidor.ts` ya hubiera cargado `pg`, llegaría tarde: **no habría spans de PostgreSQL, y ningún error que lo avise**.
 
-Por eso se carga antes que la tienda, con la opción `--import` de Node: `node --import ./src/instrumentacion.ts src/servidor.ts`. Así lo hacen `npm start`, `npm run dev`, `npm run trabajador`, el `CMD` del `Dockerfile` y el trabajador en `compose.yaml`.
+Por eso va antes, con la opción `--import` de Node: `node --import ./src/instrumentacion.ts src/servidor.ts`, en los scripts de `package.json`, el `CMD` del `Dockerfile` y el trabajador de `compose.yaml`.
 
-Con módulos `import`, además, hace falta un gancho en el cargador de Node: `import-in-the-middle`, con `module.registerHooks` (Node 24.11.1 o posterior). La forma antigua, `module.register`, hace que Node 26 avise de que está obsoleta (`DEP0205`).
+Con `import`, Node necesita además un *hook* (gancho): código que Node ejecuta cada vez que carga un fichero, para dejar que la instrumentación lo cambie. Lo pone `import-in-the-middle`, con `module.registerHooks`.
 
 ### Jaeger, en un fichero de Compose aparte
 
@@ -155,7 +157,7 @@ Se llama como la **plantilla de la ruta**, `GET /v2/pedidos/:id`, nunca con el i
 Para que otro proceso continúe la misma traza, alguien tiene que pasarle el id: es la <Term id="context-propagation">propagación de contexto</Term>. Por HTTP va en una <Term id="header">cabecera</Term> del estándar W3C, `traceparent`. Con los ids de una línea del log del «Pruébalo», sería esta:
 
 ```text
-traceparent: 00-d5fc9555698f8baafaaf66ce60bfe45b-9a4084534364c485-01
+traceparent: 00-891b98c76c5fb8d9988c7a65be9fa91c-91f098957d8f107d-01
 ```
 
 La versión (`00`), **el id de la traza** (32 cifras hexadecimales), **el id del span padre** (16) y unas opciones (`01`: esta traza se guarda). Las instrumentaciones de `node:http` y `fetch` la añaden a cada petición que sale, como el aviso a la empresa de reparto; y si una llega con ella, `@hono/otel` continúa esa traza.
@@ -199,9 +201,9 @@ Por eso, en la cascada, `add` cuelga del span del pago, aunque lo hiciera otro p
 
 ### Del log a la traza, y vuelta
 
-`PinoInstrumentation` añade a cada línea del log `trace_id`, `span_id` y `trace_flags`. Del `trace_id` de una línea llegas a su traza en Jaeger, y del id de una traza, con `docker compose logs api | grep`, a sus líneas. Las del trabajador sobre ese trabajo llevan el mismo.
+`PinoInstrumentation` añade `trace_id`, `span_id` y `trace_flags` a cada línea del log escrita dentro de un span. Del `trace_id` llegas a la traza en Jaeger, y del id de una traza, con `docker compose logs api trabajador --no-log-prefix | grep`, a sus líneas, la del trabajador incluida.
 
-Los logs siguen en <Term id="stdout">stdout</Term>, como siempre: no van a Jaeger, que solo guarda trazas. Para buscarlos desde una web, un equipo añade otra herramienta, como **Loki**, que los enseña en Grafana junto a las métricas. Grafana llega en la lección 5, para las métricas.
+Los logs siguen en <Term id="stdout">stdout</Term>: Jaeger solo guarda trazas. Para buscarlos desde una web, un equipo añade otra herramienta, como **Loki**, que los enseña en Grafana; Grafana llega en la lección 5.
 
 ### Lo que nunca va en un span
 
@@ -216,7 +218,7 @@ Una traza sale de la tienda hacia otro sistema, con otras personas y otro tiempo
 
 ### Guardarlo todo cuesta: el muestreo
 
-En tu ordenador, la tienda guarda la traza de **cada** petición, y lo medirás: en nuestra prueba, un 30 % menos de peticiones por segundo. En producción, con mucho tráfico, se hace <Term id="sampling">muestreo</Term> (*sampling*): se guarda una parte, como una de cada diez, decidido al empezar la traza o al terminarla, para quedarse con las lentas y las que fallan.
+La tienda guarda la traza de **cada** petición, y lo medirás: en nuestra prueba, un 30 % menos de peticiones por segundo. En producción se hace <Term id="sampling">muestreo</Term> (*sampling*): se guarda una parte, al azar al empezar la traza (una de cada diez, por ejemplo), o al terminarla, normalmente en un collector, para quedarse con todas las lentas y las que fallan.
 
 ## Pruébalo
 
@@ -235,11 +237,11 @@ tar -xzf 44-trazas.tar.gz
 cp -R 44-trazas/. tienda-api/
 cd tienda-api
 npm install
-echo 'COMPOSE_FILE=compose.yaml:compose.observabilidad.yaml' >> .env
+printf '\nCOMPOSE_FILE=compose.yaml:compose.observabilidad.yaml\n' >> .env
 docker compose up -d --build --wait
 ```
 
-`migrar` aplica la migración 012, y aparece el servicio `jaeger`. Abre `http://localhost:16686`: es la web de Jaeger. Si `docker compose port api 3000` dice `3001`, usa ese puerto.
+`migrar` aplica la migración 012, y aparece el servicio `jaeger`. Abre `http://localhost:16686`: es la web de Jaeger. Si `docker compose port api 3000` dice `3001`, usa ese puerto (a nosotros nos pasó).
 
 ### Un pago, con su X-Request-Id
 
@@ -250,31 +252,33 @@ curl -s -o /dev/null -c carmen.txt --json '{"email":"carmen@ejemplo.com","contra
 PEDIDO=$(curl -s -b carmen.txt --json '{"productoId":2,"cantidad":1}' localhost:3000/v2/pedidos | jq .id)
 ```
 
-La pasarela eres tú: firmas el aviso con tu `WEBHOOK_SECRET`, como en el reto de la [Fase 4](/fase-4/webhooks-idempotencia/), y lo mandas con `curl -si`:
+Comprueba que `echo $PEDIDO` da un número. Si dice `null`, repite la segunda orden sin `-s` ni `| jq .id` para ver qué contesta la tienda.
+
+La pasarela de mentira (`npm run pasarela`) no enseña las cabeceras, y necesitas `X-Request-Id`: la pasarela eres tú. Firma el aviso con tu `WEBHOOK_SECRET`, como en el reto de la [Fase 4](/fase-4/webhooks-idempotencia/), y mándalo con `curl -si`:
 
 <TryIt
   title="1. Paga el pedido"
   cmd={`SECRETO=$(grep '^WEBHOOK_SECRET=' .env | cut -d= -f2-)
-CUERPO=$(printf '{"id":"evt_%s","tipo":"pago.completado","pedidoId":%s}' "$(uuidgen)" "$PEDIDO")
+CUERPO=$(printf '{"id":"evt_%s","tipo":"pago.completado","pedidoId":%s}' "$(openssl rand -hex 8)" "$PEDIDO")
 FIRMA=$(printf '%s' "$CUERPO" | openssl dgst -sha256 -hmac "$SECRETO" | awk '{print $NF}')
 curl -si -H "X-Firma: sha256=$FIRMA" --json "$CUERPO" localhost:3000/v2/webhooks/pagos | tee pago.txt`}
   output={`HTTP/1.1 200 OK
 …
-x-request-id: 95523221-53d6-4876-842e-93b815cc0820
+x-request-id: babcf644-95be-41d6-94fa-3362bba9e1e5
 …
 
-{"recibido":"evt_569C3F9E-9AC9-49B4-8842-8921C75D74F2","repetido":false}`}
+{"recibido":"evt_4efbf03d45de6daf","repetido":false}`}
 >
 
-`cut -d= -f2-` se queda con lo que va tras el primer `=`; `uuidgen` da un id de evento nuevo; `tee` escribe la respuesta en pantalla y en `pago.txt`. Hemos quitado el resto de cabeceras: fíjate en **`x-request-id`**. Si sale `firma-no-valida`, el secreto no es el de la API; con un `400` o un `422`, mira `echo $PEDIDO`: tiene que ser un número.
+`cut -d= -f2-` se queda con lo que va tras el primer `=`; `openssl rand -hex 8` da un id de evento nuevo; `tee` escribe la respuesta en pantalla y en `pago.txt`. Hemos quitado el resto de cabeceras: fíjate en **`x-request-id`**. Si sale `firma-no-valida`, el secreto no es el de la API.
 
 </TryIt>
 
 ### Encuentra su traza en Jaeger
 
-En la web de Jaeger, en **Search**, elige el servicio `tienda-api`; en **Tags**, escribe `tienda.request_id=` y tu `x-request-id`, y pulsa **Find Traces**. Sale una traza, `POST /v2/webhooks/pagos`, con dos servicios. Ábrela: es la [cascada de arriba](#una-traza-es-un-árbol-de-spans), con tus tiempos. Busca la barra corta de la API, el hueco hasta `add` (hasta un segundo) y `process tienda`.
+En la web de Jaeger, en **Search**, elige el servicio `tienda-api`; en **Attributes**, escribe `tienda.request_id=` y tu `x-request-id`, y pulsa **Find Traces**. Sale una traza, `tienda-api: POST /v2/webhooks/pagos`, con dos servicios: `tienda-api` y `tienda-trabajador`. Ábrela: es la [cascada de arriba](#una-traza-es-un-árbol-de-spans), con tus tiempos. Busca la barra corta de la API, el hueco hasta `add` (hasta un segundo) y `process tienda`.
 
-Si falta la parte del trabajador, espera y recarga: manda sus spans en lotes, cada unos 5 segundos. En nuestra prueba, una traza tenía 11 spans a los 3 segundos y 18 a los 10. Verás también muchas trazas `GET /salud`, la comprobación de salud de Docker: por eso se busca por el id, y no por la hora.
+Si falta la parte del trabajador, espera y recarga: manda sus spans en lotes, cada unos 5 segundos. Habrá también muchas trazas `GET /salud`, la comprobación de salud de Docker: por eso se busca por el id.
 
 ### Del log a la traza
 
@@ -283,33 +287,33 @@ Si falta la parte del trabajador, espera y recarga: manda sus spans en lotes, ca
   cmd={`ID=$(grep -i x-request-id pago.txt | cut -d' ' -f2 | tr -d '\\r')
 echo "X-Request-Id: $ID"
 docker compose logs api --no-log-prefix | grep "$ID" | jq .`}
-  output={`X-Request-Id: e98de522-5ff9-46b0-9660-d59b8e657611
+  output={`X-Request-Id: babcf644-95be-41d6-94fa-3362bba9e1e5
 {
   "level": 30,
-  "time": 1792836195666,
+  "time": 1792848041899,
   "pid": 1,
-  "hostname": "de2d917c9791",
-  "trace_id": "d5fc9555698f8baafaaf66ce60bfe45b",
-  "span_id": "9a4084534364c485",
+  "hostname": "8cc147971c91",
+  "trace_id": "891b98c76c5fb8d9988c7a65be9fa91c",
+  "span_id": "91f098957d8f107d",
   "trace_flags": "01",
-  "requestId": "e98de522-5ff9-46b0-9660-d59b8e657611",
+  "requestId": "babcf644-95be-41d6-94fa-3362bba9e1e5",
   "metodo": "POST",
   "ruta": "/v2/webhooks/pagos",
   "estado": 200,
-  "ms": 4,
+  "ms": 8,
   "msg": "petición"
 }`}
 >
 
-Nuestra salida es de otro pago: el id no es el de arriba. `tr -d '\r'` quita el retorno de carro de la cabecera, como en la [lección 3](/fase-10/tests-de-contrato/#del-id-al-campo-roto). La línea de siempre, con **tres campos nuevos**: `trace_id`, `span_id` y `trace_flags`.
+`tr -d '\r'` quita el retorno de carro de la cabecera, como en la [lección 3](/fase-10/tests-de-contrato/#del-id-al-campo-roto). La línea de siempre, con **tres campos nuevos**: `trace_id`, `span_id` y `trace_flags`.
 
 </TryIt>
 
-Pega tu `trace_id` en el cuadro **Lookup by Trace ID**, arriba en Jaeger: abre la traza del pago. Para este `trace_id`, la nuestra tenía 18 spans.
+Pega tu `trace_id` en el cuadro **Lookup by Trace ID**, arriba en Jaeger: abre la traza del pago. La nuestra, con 21 spans: `tienda-api` (13) y `tienda-trabajador` (8).
 
 ### Congela Redis e inicia sesión
 
-Ahora, los doce segundos. Congela el Redis de la cola, el mismo que guarda los límites de intentos, como en la [Fase 9](/fase-9/arquitectura-orientada-a-eventos/):
+Ahora, los doce segundos. Congela el Redis de la cola, el de los límites de intentos, como en la [Fase 9](/fase-9/arquitectura-orientada-a-eventos/):
 
 <TryIt
   title="3. Congela Redis"
@@ -329,7 +333,7 @@ Carmen intenta entrar, y curl se queda esperando:
   output={`curl: HTTP 200 en 12.299695 s`}
 >
 
-`-o` guarda la respuesta en `sesion.txt`, y `-w` escribe al final el código y el tiempo. Mientras espera, abre otra terminal en la carpeta del proyecto, cuenta unos diez segundos y descongela: `docker compose unpause redis` (dice ` Container tienda-redis-1 Unpaused `). En cuanto Redis vuelve, curl termina: **`200` en 12,3 segundos**. Nada ha fallado; solo ha tardado.
+`-o` guarda la respuesta en `sesion.txt`, y `-w` escribe al final el código y el tiempo. Mientras espera, en otra terminal, en la carpeta del proyecto, cuenta unos diez segundos y descongela: `docker compose unpause redis` (dice ` Container tienda-redis-1 Unpaused `). Entonces curl termina: **`200` en 12,3 segundos**. Nada ha fallado; solo ha tardado.
 
 </TryIt>
 
@@ -358,11 +362,11 @@ POST /v2/sesion                                           tienda-api        1229
   pg.query:INSERT tienda                                  tienda-api            1.37 ms   +12297 ms
 ```
 
-- **Las dos primeras órdenes a Redis, 12 273 ms**: el límite por email, esperando a un Redis congelado. Casi toda la petición.
-- **Las dos siguientes**, el límite por IP, con Redis de vuelta: menos de medio milisegundo.
-- **Después, PostgreSQL**: buscar a Carmen y, tras unos 20 ms sin spans (probablemente, comprobar su contraseña con argon2, sin instrumentar), guardar la sesión.
+- Las dos primeras órdenes a Redis, 12 273 ms: el límite por email, esperando a un Redis congelado. Casi toda la petición.
+- Las dos siguientes, el límite por IP, con Redis de vuelta: menos de medio milisegundo.
+- Después, PostgreSQL: buscar a Carmen y, tras unos 20 ms sin spans (probablemente, comprobar su contraseña con argon2, sin instrumentar), guardar la sesión.
 
-Ningún span lleva error: Redis no falló, tardó. El log decía cuánto; **la traza dice dónde**. Y enseña un fallo del paso 44: la tienda espera a Redis sin límite. En la lección 6, cada límite de intentos esperará 200 ms como mucho.
+En otra ronda lo miramos: ningún span tenía estado de error. Redis no falló, tardó. El log decía cuánto; **la traza dice dónde**. Y enseña un fallo del paso 44: la tienda espera a Redis sin límite; en la lección 6, cada límite esperará 200 ms como mucho.
 
 ### Lo que cuesta trazarlo todo
 
@@ -372,11 +376,6 @@ La <Term id="load-test">prueba de carga</Term> de la [Fase 9](/fase-9/#peticione
   title="6. Con trazas"
   cmd="npm run carga -- -c 10 -d 10 http://localhost:3000/v2/productos"
   output={`…
-┌─────────┬──────┬──────┬───────┬──────┬─────────┬─────────┬────────┐
-│ Stat    │ 2.5% │ 50%  │ 97.5% │ 99%  │ Avg     │ Stdev   │ Max    │
-├─────────┼──────┼──────┼───────┼──────┼─────────┼─────────┼────────┤
-│ Latency │ 0 ms │ 1 ms │ 3 ms  │ 5 ms │ 1.02 ms │ 2.68 ms │ 204 ms │
-└─────────┴──────┴──────┴───────┴──────┴─────────┴─────────┴────────┘
 ┌───────────┬─────────┬─────────┬────────┬─────────┬─────────┬──────────┬─────────┐
 │ Stat      │ 1%      │ 2.5%    │ 50%    │ 97.5%   │ Avg     │ Stdev    │ Min     │
 ├───────────┼─────────┼─────────┼────────┼─────────┼─────────┼──────────┼─────────┤
@@ -391,25 +390,22 @@ Req/Bytes counts sampled once per second.
 69k requests in 10.03s, 65.9 MB read`}
 >
 
-Hemos quitado las primeras líneas. **`Req/Sec`, `Avg`**: 6.885,5 por segundo; en otra pasada, 7.759,8. Latencia media: 1,02 ms.
+Hemos quitado el principio y la tabla de la latencia. Nuestra prueba corrió en un contenedor dentro de la red de Compose (`http://api:3000`), sin pasar por el puerto publicado: desde tu terminal saldrán otros números. **`Req/Sec`, `Avg`**: 6.885,5; en otra pasada, 7.759,8.
 
 </TryIt>
 
-Ahora, la API sin la URL de Jaeger. `-f compose.yaml` manda sobre tu `COMPOSE_FILE`, así que la API se recrea sin `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, y el SDK no arranca:
+Ahora, sin la URL de Jaeger. `-f compose.yaml` manda sobre tu `COMPOSE_FILE`: la API se recrea sin `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`, y el SDK no arranca:
 
 ```sh
 docker compose -f compose.yaml up -d api
 ```
 
+Compose avisa de que `tienda-jaeger-1` es un contenedor huérfano (*orphan*): es lo esperado. Recrear la API puede cambiarle el puerto: vuelve a mirar `docker compose port api 3000`.
+
 <TryIt
   title="7. Sin trazas"
   cmd="npm run carga -- -c 10 -d 10 http://localhost:3000/v2/productos"
   output={`…
-┌─────────┬──────┬──────┬───────┬──────┬─────────┬─────────┬────────┐
-│ Stat    │ 2.5% │ 50%  │ 97.5% │ 99%  │ Avg     │ Stdev   │ Max    │
-├─────────┼──────┼──────┼───────┼──────┼─────────┼─────────┼────────┤
-│ Latency │ 0 ms │ 0 ms │ 1 ms  │ 2 ms │ 0.26 ms │ 1.94 ms │ 198 ms │
-└─────────┴──────┴──────┴───────┴──────┴─────────┴─────────┴────────┘
 ┌───────────┬─────────┬─────────┬─────────┬─────────┬───────────┬──────────┬─────────┐
 │ Stat      │ 1%      │ 2.5%    │ 50%     │ 97.5%   │ Avg       │ Stdev    │ Min     │
 ├───────────┼─────────┼─────────┼─────────┼─────────┼───────────┼──────────┼─────────┤
@@ -424,13 +420,15 @@ Req/Bytes counts sampled once per second.
 115k requests in 11.01s, 110 MB read`}
 >
 
-**10.441,28**, y en otra pasada, 11.029,6; latencia media, 0,26 ms. De media, unas 7.300 con trazas y unas 10.700 sin ellas: **un 30 % menos**.
+**10.441,28**, y en otra pasada, 11.029,6. De media, unas 7.300 con trazas y unas 10.700 sin ellas: **un 30 % menos**.
 
 </TryIt>
 
-Con el proyecto en inglés, otra ronda dio casi lo mismo. **En nuestro MacBook, trazar cada petición costó un 30 % de las peticiones por segundo**, más que validar el contrato en la lección 3 (entre un 5 y un 15 %). No medimos qué parte pesa más: crear los spans, las instrumentaciones (que solo se cargan con la URL) o mandarlos. Depende de la máquina: mídelo en la tuya.
+Otras dos rondas, una con el proyecto en inglés y otra por el puerto publicado (6.797,9 contra 9.519), dieron casi lo mismo. **En nuestro MacBook, trazar cada petición costó un 30 % de las peticiones por segundo**, más que validar el contrato en la lección 3. No medimos qué parte pesa más: crear los spans, las instrumentaciones o mandarlos. Mídelo en tu máquina.
 
-Al terminar, `docker compose up -d --wait api` le devuelve la URL a la API.
+Jaeger guarda en memoria cada traza: en una pasada nuestra, pasó de 34 a 308 MB. Si tu Docker tiene poca memoria y Jaeger se para, `docker compose up -d --wait` lo arranca otra vez, vacío.
+
+Al terminar, `docker compose up -d --wait api` le devuelve la URL a la API. Y borra `carmen.txt`, `sesion.txt` y `pago.txt`: llevan la sesión de Carmen, y no van a Git.
 
 ### En tu servidor
 
@@ -438,23 +436,21 @@ El `.env` de tu servidor no tiene `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`: allí no
 
 ## Ya lo has visto
 
-- **El seguimiento de un paquete**: cada escaneo es un span; el número de seguimiento, el id de la traza.
 - **La columna «Cascada» de la pestaña Red de <Term id="devtools">DevTools</Term>**: cada petición de la página, una barra en el tiempo. Al pasar el ratón ves en qué se le fue: DNS, conexión, esperar al servidor, descargar.
-- **Sentry**, si lo usas en el frontend: su parte de rendimiento también dibuja trazas con spans, y las une con las del backend con su propia cabecera, `sentry-trace`.
+- **Sentry**, si lo usas en el frontend: también dibuja trazas, y las une con las del backend con su cabecera `sentry-trace`.
 
 ## Errores comunes
 
 - **Cargar la instrumentación tarde**, con un `import` en `servidor.ts` detrás de otros, y no con `--import`. Arranca sin errores, y sin los spans de las librerías ya cargadas.
 - **Poner en un span lo que no pondrías en un log**: la query de una URL, una clave con un email, el cuerpo de una petición.
 - **Romper la cadena.** Una cola sin `telemetry` o un outbox sin la traza guardada parten el viaje en dos trazas.
-- **Buscar por la hora entre cientos de `GET /salud`.** Busca por `tienda.request_id` o por el `trace_id` del log.
 - **Creer que trazar es gratis.** Aquí costó un 30 %: en producción, muestreo.
 
 ## Resumen
 
-- La observabilidad deja contestar preguntas nuevas con lo que el sistema emite: logs (qué pasó), métricas (cuánto) y trazas (por dónde y dónde se fue el tiempo).
+- La observabilidad contesta preguntas nuevas con lo que el sistema emite: logs (qué pasó), métricas (cuánto) y trazas (dónde se fue el tiempo).
 - Una traza es un árbol de spans con el mismo id; en la cascada, la sangría dice quién va dentro de quién.
-- OpenTelemetry son instrumentaciones, una API, un SDK y un exportador; se carga con `--import`, antes que la tienda, y sin `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` no exporta nada.
+- OpenTelemetry: instrumentaciones, API, SDK y exportador. Se carga con `--import`, antes que la tienda, y sin `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` no exporta nada.
 - El contexto viaja en la cabecera `traceparent`, en los trabajos de BullMQ y, en la tienda, guardado con cada evento del outbox: un pago es una sola traza.
 - Una traza no lleva lo que el log no lleva. Trazarlo todo costó un 30 %: en producción, muestreo.
 
@@ -475,38 +471,38 @@ El `.env` de tu servidor no tiene `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`: allí no
 
 <QuizOption text="Su traza en Jaeger, buscada por tienda.request_id." correct>
 
-La traza tiene un span por consulta y por orden a Redis, con su duración: la cascada señala la parte larga.
+Un span por consulta y por orden a Redis, cada uno con su duración: la cascada señala la parte larga.
 
 </QuizOption>
 
 <QuizOption text="El p99 de la ruta en el panel de métricas: si sube, sabes qué parte es la lenta.">
 
-Una métrica cuenta todas las peticiones juntas: dice que el inicio de sesión va lento, no dónde se fue el tiempo en esta.
+Una métrica junta todas las peticiones: no dice dónde se fue el tiempo en esta.
 
 </QuizOption>
 
 </QuizQuestion>
 
 <QuizQuestion
-  question="En una traza, el span POST /v2/sesion dura 12 300 ms. Dentro, un span redis-ZRANGE dura 12 273 ms, sin error, y una consulta a PostgreSQL, 1,28 ms. ¿Qué te dice?"
+  question="En la traza de GET /v2/pedidos, el span de la petición dura 5 000 ms. Dentro, pg.query:SELECT tienda dura 4 900 ms, y ningún span está marcado con error. ¿Qué te dice?"
   review="Una traza es un árbol de spans"
 >
 
-<QuizOption text="Que casi todo el tiempo se fue esperando a Redis, que acabó contestando." correct>
+<QuizOption text="Que casi todo el tiempo se fue en esa consulta, que acabó contestando." correct>
 
-El hijo va dentro del padre: sus 12 273 ms son parte de los 12 300. Sin error, Redis no falló: tardó.
+El hijo va dentro del padre: sus 4 900 ms son parte de los 5 000. Sin error, PostgreSQL no falló: tardó.
 
 </QuizOption>
 
-<QuizOption text="Que la petición duró unos 24 segundos: los 12 300 ms de la API más los 12 273 de Redis.">
+<QuizOption text="Que la petición duró casi 10 segundos: los 5 000 ms de la API más los 4 900 de la consulta.">
 
 Un hijo pasa dentro de su padre: su tiempo ya está contado en el del padre.
 
 </QuizOption>
 
-<QuizOption text="Que Redis devolvió un error, porque un span que funciona nunca dura tanto.">
+<QuizOption text="Que PostgreSQL devolvió un error, porque una consulta que funciona nunca dura tanto.">
 
-Un span largo sin error es una espera. En el «Pruébalo», Redis estaba congelado y la respuesta fue un `200`.
+Un span largo sin error es una espera, como la de Redis congelado en el «Pruébalo».
 
 </QuizOption>
 
@@ -525,7 +521,7 @@ La instrumentación cambia cada librería en el momento de cargarla. Si `pg` se 
 
 <QuizOption text="La tienda dejará de arrancar en cuanto llegue la primera consulta a PostgreSQL.">
 
-No hay ningún error, y eso es lo peligroso: funciona igual, sin esos spans.
+No hay ningún error: eso es lo peligroso.
 
 </QuizOption>
 
@@ -544,7 +540,7 @@ Las instrumentaciones cambian `pg` o `redis` al cargarlos. `--import` las pone a
 
 <QuizOption text="Porque el repartidor encola desde otro proceso, sin petición, y no sabía de qué traza venía." correct>
 
-BullMQ lleva la traza desde que se apunta el trabajo; el corte estaba antes. Guardar el `traceparent` con el evento se lo dice al repartidor.
+BullMQ lleva la traza desde que se apunta el trabajo; el corte estaba antes, y el `traceparent` guardado con el evento lo cierra.
 
 </QuizOption>
 
@@ -569,11 +565,11 @@ Con `telemetry`, BullMQ guarda la traza en cada trabajo, en Redis, y el trabajad
 
 <QuizOption text="Que sí: Jaeger solo lo ve el equipo, y el email no es un secreto como la contraseña.">
 
-El email es un dato personal, y la traza sale a otro sistema, con otras personas. El paso 44 lo quita hasta de las claves de Redis.
+El email es un dato personal, y la traza sale a otro sistema. El paso 44 lo quita hasta de las claves de Redis.
 
 </QuizOption>
 
-<QuizOption text="Que no: una traza no debe llevar lo que el log no lleva." correct>
+<QuizOption text="Que no: un email es un dato personal, y en un span vale la regla del log." correct>
 
 La regla es la de los logs. Para encontrar un inicio de sesión ya tienes el `requestId` y el `trace_id`.
 
@@ -581,7 +577,7 @@ La regla es la de los logs. Para encontrar un inicio de sesión ya tienes el `re
 
 <QuizOption text="Que sí, mientras Jaeger guarde las trazas en memoria, porque al pararlo se borran.">
 
-En producción, las trazas van a donde las mandes. La regla no depende de dónde se guarden.
+La regla no depende de dónde se guarden.
 
 </QuizOption>
 
@@ -594,7 +590,7 @@ En producción, las trazas van a donde las mandes. La regla no depende de dónde
 
 <QuizOption text="Exportarlas todas: si no hay errores, mandar spans no cuesta nada.">
 
-Cuesta en cada petición, falle o no: en nuestra prueba, un 30 % de las peticiones por segundo.
+Cuesta en cada petición, falle o no: en nuestra prueba, un 30 %.
 
 </QuizOption>
 
@@ -606,7 +602,7 @@ La petición lenta ya pasó, y su traza solo existe si se estaba trazando entonc
 
 <QuizOption text="Muestrear: guardar solo una parte, y medir antes lo que cuesta." correct>
 
-Tienes trazas de sobra para ver dónde se va el tiempo, pagando una parte del precio.
+Trazas de sobra para ver dónde se va el tiempo, por una parte del precio.
 
 </QuizOption>
 
