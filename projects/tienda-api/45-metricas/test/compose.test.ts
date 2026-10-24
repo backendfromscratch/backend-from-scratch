@@ -169,6 +169,7 @@ test('compose.observabilidad.yaml añade Prometheus y Grafana, y la API y el tra
   // Solo el plugin de Prometheus: sin ello Grafana instala 18 y se queda sin memoria en 2 GiB.
   assert.match(grafana, /GF_PLUGINS_PREINSTALL_SYNC: prometheus$/m);
   assert.match(grafana, /GF_PLUGINS_DISABLE_PLUGINS: elasticsearch,.*,zipkin$/m);
+  assert.match(grafana, /GOMEMLIMIT: 250MiB$/m);
   assert.match(
     grafana,
     /- \.\/observabilidad\/grafana\/provisioning:\/etc\/grafana\/provisioning:ro$/m,
