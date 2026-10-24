@@ -6,6 +6,7 @@
 //   npm run trabajador
 // (que lo arranca con --import ./src/instrumentacion.ts, para las trazas: Fase 10, lección 4).
 // Necesita REDIS_URL (la cola) y DATABASE_URL (los avisos y los emails están en la base de datos).
+import { setTimeout as dormir } from 'node:timers/promises';
 import { pool } from '../src/bd.ts';
 import { cerrarCola, crearTrabajador } from '../src/cola.ts';
 import { config } from '../src/config.ts';
@@ -51,8 +52,12 @@ for (const senal of ['SIGTERM', 'SIGINT'] as const) {
       await trabajador.cerrar();
       await cerrarCola();
       await pool.end();
-      // Y los últimos spans, a Jaeger (Fase 10, lección 4).
-      await instrumentacion.apagar();
+      // Y los últimos spans, a Jaeger (Fase 10, lección 4), si se puede: como mucho 2 segundos, y
+      // si Jaeger no contesta, no pasa nada. Unas trazas perdidas no son un apagado fallido.
+      await Promise.race([
+        instrumentacion.apagar().catch(() => {}),
+        dormir(2000, undefined, { ref: false }),
+      ]);
       process.exit(0);
     } catch (error) {
       log.error({ motivo: (error as Error).message }, 'el trabajador no se ha cerrado bien');

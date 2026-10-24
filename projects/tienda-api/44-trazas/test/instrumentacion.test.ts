@@ -14,17 +14,24 @@ import { after, before, test } from 'node:test';
 import { setTimeout as dormir } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import { SpanKind } from '@opentelemetry/api';
-import { InMemorySpanExporter } from '@opentelemetry/sdk-trace-base';
-import { empezarInstrumentacion } from '../src/instrumentacion.ts';
+import { InMemorySpanExporter, type ReadableSpan } from '@opentelemetry/sdk-trace-base';
+import { empezarInstrumentacion, ordenSinDatos } from '../src/instrumentacion.ts';
 
 const exportador = new InMemorySpanExporter();
 const instrumentacion = empezarInstrumentacion({ exportador });
+
+// Con Redis (REDIS_URL_TESTS), la tienda de este fichero lo usa como en Compose: los límites de
+// intentos van a Redis, y así se ve qué apuntan sus spans. Tiene que estar antes de importar
+// config.ts, que lee las variables al cargarse.
+if (process.env.REDIS_URL_TESTS) process.env.REDIS_URL = process.env.REDIS_URL_TESTS;
 
 // Ahora sí, la tienda.
 const { serve } = await import('@hono/node-server');
 const { app } = await import('../src/app.ts');
 const { conectarRedis } = await import('../src/almacen-redis.ts');
-const { crearCola, crearTrabajador, encolar } = await import('../src/cola.ts');
+const { cerrarCola, crearCola, crearTrabajador, encolar } = await import('../src/cola.ts');
+const { cambiosDePedidos } = await import('../src/eventos-pedidos.ts');
+const { cerrarLimites } = await import('../src/limites.ts');
 const { config } = await import('../src/config.ts');
 const { firmar } = await import('../src/firma.ts');
 const { repartir } = await import('../src/salientes.ts');
@@ -50,6 +57,10 @@ before(async () => {
 
 after(async () => {
   servidor.close();
+  // Las conexiones con Redis que abre la tienda con REDIS_URL, como al apagarse (servidor.ts).
+  await cerrarCola();
+  await cambiosDePedidos.cerrar();
+  await cerrarLimites();
   await instrumentacion.apagar();
 });
 
@@ -178,8 +189,14 @@ test(
         `INSERT INTO eventos_salientes (tipo, datos) VALUES ('correo-de-confirmacion', $1)`,
         [{ tipo: 'correo-de-confirmacion', pedido: { id: 22 } }],
       );
-      assert.equal(await repartir(50, (trabajo) => encolar(trabajo, cola)), 1);
-      assert.equal(await cola.count(), 1);
+      // Y uno con un contexto que no es un traceparent: tampoco falla, empieza su propia traza.
+      await pool.query(
+        `INSERT INTO eventos_salientes (tipo, datos, contexto)
+           VALUES ('correo-de-confirmacion', $1, 'no-es-un-traceparent')`,
+        [{ tipo: 'correo-de-confirmacion', pedido: { id: 24 } }],
+      );
+      assert.equal(await repartir(50, (trabajo) => encolar(trabajo, cola)), 2);
+      assert.equal(await cola.count(), 2);
     } finally {
       await cola.obliterate({ force: true });
       await cola.close();
@@ -187,6 +204,101 @@ test(
     }
   },
 );
+
+// Una traza no debe llevar lo que el log no lleva: lo que apunta un span sale de la tienda.
+
+/**
+ * Todos los valores que apuntan el span de una petición y los que cuelgan de él: sus atributos y
+ * los de sus eventos. Sin el span del fetch de este test, que es el cliente: en la traza está por
+ * encima de la petición, y en producción no es de la tienda.
+ */
+function valoresDe(peticion: ReadableSpan): string[] {
+  const deLaTienda = new Set([peticion.spanContext().spanId]);
+  const todos = deLaTraza(peticion.spanContext().traceId);
+  // Los hijos, los hijos de los hijos…: hasta que no se añade ninguno más.
+  for (let antes = 0; antes !== deLaTienda.size;) {
+    antes = deLaTienda.size;
+    for (const span of todos) {
+      if (deLaTienda.has(span.parentSpanContext?.spanId ?? '')) {
+        deLaTienda.add(span.spanContext().spanId);
+      }
+    }
+  }
+  return todos
+    .filter((span) => deLaTienda.has(span.spanContext().spanId))
+    .flatMap((span) =>
+      [span.attributes, ...span.events.map((evento) => evento.attributes ?? {})].flatMap(
+        (atributos) => Object.values(atributos).map(String),
+      ),
+    );
+}
+
+test('la vuelta del proveedor: ni el código ni el state llegan a la traza', async () => {
+  exportador.reset();
+  const res = await fetch(
+    `${tienda}/v2/sesion/proveedor/vuelta?code=codigo-secreto-123&state=estado-secreto-456`,
+  );
+  await res.arrayBuffer();
+  await esperar(() => deServidor().length > 0, 5000, 'el span de la vuelta');
+  const vuelta = deServidor()[0]!;
+  assert.equal(vuelta.name, 'GET /v2/sesion/proveedor/vuelta');
+  // La URL, sin la query.
+  assert.equal(vuelta.attributes['url.full'], `${tienda}/v2/sesion/proveedor/vuelta`);
+  for (const valor of valoresDe(vuelta)) {
+    assert.doesNotMatch(valor, /codigo-secreto|estado-secreto/);
+  }
+});
+
+test(
+  'un inicio de sesión: ni el email ni la IP llegan a los spans de Redis',
+  { skip: sinRedis },
+  async () => {
+    const cliente = conectarRedis(url!);
+    try {
+      exportador.reset();
+      // Una contraseña mala: los dos límites (por email y por IP) apuntan el fallo en Redis.
+      const res = await fetch(`${tienda}/v2/sesion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'Traza.Secreta@ejemplo.com', contrasena: 'no-es-la-buena' }),
+      });
+      assert.equal(res.status, 400);
+      await res.arrayBuffer();
+      await esperar(() => deServidor().length > 0, 5000, 'el span del inicio de sesión');
+      const peticion = deServidor()[0]!;
+      const traza = peticion.spanContext().traceId;
+      // Hay spans de Redis (si no, el test no probaría nada), y solo dicen la orden y de qué es la
+      // clave: «ZADD limites:?», sin el resto (limites:sesion-email:traza.secreta@ejemplo.com).
+      const deRedis = deLaTraza(traza).filter((s) => s.attributes['db.system.name'] === 'redis');
+      // Dos fallos apuntados: uno por el email y otro por la IP.
+      assert.equal(
+        deRedis.filter((s) => s.attributes['db.query.text'] === 'ZADD limites:?').length,
+        2,
+      );
+      for (const span of deRedis) {
+        assert.match(String(span.attributes['db.query.text']), /^[A-Z]+( [\w-]+:\?)?$/);
+      }
+      for (const valor of valoresDe(peticion)) assert.doesNotMatch(valor, /traza\.secreta/i);
+    } finally {
+      // Los intentos apuntados, fuera: no cuentan para otros tests.
+      const claves = await cliente.keys('sesion-*');
+      if (claves.length > 0) await cliente.del(claves);
+      cliente.destroy();
+    }
+  },
+);
+
+test('ordenSinDatos: la orden y de qué es la clave, sin la clave', () => {
+  assert.equal(
+    ordenSinDatos('ZADD', ['limites:sesion-email:ana@ejemplo.com', '1', '1']),
+    'ZADD limites:?',
+  );
+  assert.equal(ordenSinDatos('GET', ['limites:sesion-ip:2001:db8::1']), 'GET limites:?');
+  assert.equal(ordenSinDatos('PUBLISH', [Buffer.from('tienda:pedidos'), '{}']), 'PUBLISH tienda:?');
+  // Sin dos puntos no se sabe qué es: solo la orden.
+  assert.equal(ordenSinDatos('EVALSHA', ['5f3a9c…', '2']), 'EVALSHA');
+  assert.equal(ordenSinDatos('PING', []), 'PING');
+});
 
 const ejecutar = promisify(execFile);
 

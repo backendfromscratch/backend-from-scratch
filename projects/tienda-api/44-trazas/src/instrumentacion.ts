@@ -29,6 +29,21 @@ export interface Instrumentacion {
   apagar(): Promise<void>;
 }
 
+// #region orden-sin-datos
+// Una traza no debe llevar lo que el log no lleva. Cada span de Redis apunta la orden que se mandó
+// (db.query.text), y la instrumentación, si no se le dice otra cosa, apunta también la clave, y en
+// muchas órdenes todos los valores. Las claves de los límites llevan el email y la IP de quien
+// intenta entrar (limites:sesion-email:ana@ejemplo.com, de limites.ts y almacen-redis.ts), y eso no
+// debe salir de la tienda. Así que solo la orden y la primera parte de la clave, hasta los dos
+// puntos, que dice de qué es: «ZADD limites:?», «PUBLISH tienda:?». Una clave sin dos puntos no se
+// apunta.
+export function ordenSinDatos(orden: string, argumentos: Array<string | Buffer>): string {
+  const clave = argumentos[0] === undefined ? '' : String(argumentos[0]);
+  const dosPuntos = clave.indexOf(':');
+  return dosPuntos > 0 ? `${orden} ${clave.slice(0, dosPuntos)}:?` : orden;
+}
+// #endregion orden-sin-datos
+
 // #region empezar
 // exportador: a dónde van los spans. Sin él, a la URL de OTEL_EXPORTER_OTLP_TRACES_ENDPOINT (Jaeger,
 // en compose.observabilidad.yaml), por OTLP, el protocolo de OpenTelemetry. Los tests le dan uno
@@ -70,7 +85,7 @@ export function empezarInstrumentacion(
       // (requireParentSpan): el repartidor pregunta a PostgreSQL cada segundo, y el trabajador espera
       // trabajos en Redis sin parar, y cada vez sería una traza suelta de un span.
       new PgInstrumentation({ requireParentSpan: true }),
-      new RedisInstrumentation({ requireParentSpan: true }),
+      new RedisInstrumentation({ requireParentSpan: true, dbStatementSerializer: ordenSinDatos }),
       // En cada línea del log, trace_id y span_id: de una línea, a su traza en Jaeger.
       new PinoInstrumentation({ disableLogSending: true }),
     ],

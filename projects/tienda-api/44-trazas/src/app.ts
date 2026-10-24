@@ -39,7 +39,15 @@ app.use(httpInstrumentationMiddleware());
 // en el span, como tienda.request_id: con el id que ve el frontend, se encuentra la traza en Jaeger.
 app.use(requestId());
 app.use(async (c, next) => {
-  trace.getActiveSpan()?.setAttribute('tienda.request_id', c.get('requestId'));
+  const span = trace.getActiveSpan();
+  span?.setAttribute('tienda.request_id', c.get('requestId'));
+  // Una traza no debe llevar lo que el log no lleva: sale de la tienda (a Jaeger o a un servicio de
+  // trazas) y la lee más gente. @hono/otel apunta la URL entera (url.full), con la query, y en la
+  // vuelta del proveedor de identidad (Fase 6) la query lleva el código y el state. Así que se
+  // cambia por la URL sin la query, como el log, que solo apunta la ruta (middleware/registro.ts).
+  const sinQuery = new URL(c.req.url);
+  sinQuery.search = '';
+  span?.setAttribute('url.full', sinQuery.href);
   await next();
 });
 // #endregion traza
