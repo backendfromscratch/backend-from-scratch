@@ -39,8 +39,8 @@ app.use(httpInstrumentationMiddleware());
 // requestId gives each request an identifier and returns it in the X-Request-Id header. It goes in
 // the span too, as shop.request_id: with the id the frontend sees, the trace is found in Jaeger.
 app.use(requestId());
-// The span's URL (url.full) goes without the query: a trace must not carry what the log doesn't
-// (urlWithoutQuery, in instrumentation.ts).
+// This middleware puts it on the span. The URL's query (url.full) is stripped elsewhere, when
+// each span ends: removeQuery, in instrumentation.ts.
 app.use(async (c, next) => {
   trace.getActiveSpan()?.setAttribute('shop.request_id', c.get('requestId'));
   await next();
