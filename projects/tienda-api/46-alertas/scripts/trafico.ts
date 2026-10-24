@@ -5,6 +5,10 @@
 // la paga con la pasarela de mentira (scripts/pasarela.ts, como harías a mano con npm run
 // pasarela) y cancela el pedido, para devolver la taza al stock: si no, en unos minutos la tienda
 // se quedaría sin tazas y todo serían 409. Cada pago deja un correo de confirmación en Mailpit.
+// Compra siempre con la misma sesión, la primera que abre. Inicia sesión en cada vuelta solo para
+// que haya inicios de sesión entre el tráfico (la lección 7 los necesita: son los que fallan con
+// Redis congelado), y cierra al momento cada sesión nueva: sin eso, dejaría unas 3000 filas por
+// hora en la tabla de sesiones.
 // Escribe una línea por vuelta, con la hora y el código de cada respuesta, y al final, cuántas.
 // Lee TIENDA_URL (por defecto http://localhost:3000) y WEBHOOK_SECRET del .env, como la pasarela.
 import { execFile } from 'node:child_process';
@@ -24,7 +28,7 @@ process.once('SIGINT', () => {
   seguir = false;
 });
 
-// La cookie de la última sesión que se abrió: si iniciar sesión falla, se sigue comprando con ella.
+// La cookie de la sesión con la que se compra. Si iniciar sesión falla, se sigue comprando con ella.
 let cookie: string | undefined;
 const respuestas = new Map<string, number>();
 const contar = (codigo: string) => respuestas.set(codigo, (respuestas.get(codigo) ?? 0) + 1);
@@ -52,7 +56,18 @@ async function unaVuelta(): Promise<string[]> {
     body: JSON.stringify(CARMEN),
   });
   apuntar('sesión', sesion?.status ?? '---');
-  if (sesion?.ok) cookie = sesion.headers.getSetCookie()[0]?.split(';')[0];
+  const nueva = sesion?.ok ? sesion.headers.getSetCookie()[0]?.split(';')[0] : undefined;
+  if (nueva && !cookie) {
+    // La primera: con esta se compra, vuelta tras vuelta.
+    cookie = nueva;
+  } else if (nueva) {
+    // Las demás solo eran para probar: se cierran.
+    const salir = await pedir('/v2/sesion', {
+      method: 'DELETE',
+      headers: { Cookie: nueva, Origin: ORIGEN },
+    });
+    apuntar('salir', salir?.status ?? '---');
+  }
   if (!cookie) return linea;
   const conSesion = { ...json, Cookie: cookie, Origin: ORIGEN };
 
@@ -62,6 +77,8 @@ async function unaVuelta(): Promise<string[]> {
     body: JSON.stringify({ productoId: TAZA, cantidad: 1 }),
   });
   apuntar('pedido', pedido?.status ?? '---');
+  // La sesión ha caducado: la siguiente que se abra pasa a ser la de comprar.
+  if (pedido?.status === 401) cookie = undefined;
   if (pedido?.status !== 201) return linea;
   const { id } = (await pedido.json()) as { id: number };
 
