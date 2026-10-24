@@ -144,14 +144,29 @@ jobs:
   # broken lesson. A pull request checks only the steps it changes (each step is a project of its
   # own: no step reads another's files), so a PR that does not touch projects/ passes in seconds;
   # pushes to main, manual runs and the weekly run check every step.
+  #
+  # Since Phase 10 one leg per language runs in parallel (each on its own runner, with its own
+  # PostgreSQL and Redis), because the two languages together no longer fit in one 60-minute job.
+  # The required check "guided projects (node 26)" is the job below, which waits for both legs.
   projects:
-    name: guided projects (node 26)
+    name: guided projects (node 26, ${{ matrix.project }})
     runs-on: ubuntu-24.04
+    strategy:
+      # A failure in one language does not hide the other's result.
+      fail-fast: false
+      matrix:
+        project: [tienda-api, shop-api]
     # Every step: from 13 to 21 minutes since Phase 7 (each step also runs the tests of the earlier
-    # ones, one file at a time because they share the test database). With Phase 8 a full run took
-    # 29m16s (2026-10-17), about 25 minutes of it the install-and-tests step, and each new step adds
-    # its own tests to that. Phase 9 adds five steps in each language, with Compose (a worker, Mailpit
-    # and a queue check each): about 41 to 47 minutes estimated for all of them, so 60 leaves room.
+    # ones, one file at a time because they share the test database). With Phase 8 a full run of
+    # both languages took 29m16s (2026-10-17), about 25 minutes of it the install-and-tests step, and
+    # each new step adds its own tests to that. Phase 9 added five steps per language (a worker,
+    # Mailpit and a queue check each), estimated at 41 to 47 minutes for both languages together;
+    # Phase 10 adds five more (42 to 46), whose tests grow with the contract and the traces.
+    # Those numbers are estimates, not measurements: nothing has been timed since Phase 8. With a
+    # language per leg, each leg should take about half of a combined run (estimated 30 to 40
+    # minutes), so 60 leaves room. The trace check at the end of the Compose step looks at the
+    # clock and skips itself when the leg is already past 40 minutes. Update this with the first
+    # real run of Phase 10.
     timeout-minutes: 60
     # From Phase 5 the steps keep their data in PostgreSQL 18, the version the lessons install, and
     # from Phase 7 the rate limiter's Redis store is tested against Redis 8. Pinned by digest, like
@@ -178,6 +193,10 @@ jobs:
           --health-timeout 5s
           --health-retries 15
     steps:
+      # When the leg started, for the checks that skip themselves late in the run.
+      - name: start time
+        run: date +%s > "$RUNNER_TEMP/start"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -185,13 +204,15 @@ jobs:
           # so the diff against it is exactly what the PR changes.
           fetch-depth: 2
 
-      # The steps to check, one per line, in $RUNNER_TEMP/steps. In a pull request, the step
-      # folders it changes that still exist, or every step if it changes this workflow.
+      # The steps to check, one per line, in $RUNNER_TEMP/steps: only this leg's language. In a
+      # pull request, the step folders it changes that still exist, or every step if it changes
+      # this workflow. A leg whose language the PR does not touch has no steps and passes at once.
       - name: steps to check
         env:
           EVENT: ${{ github.event_name }}
+          PROJECT: ${{ matrix.project }}
         run: |
-          all() { printf '%s\n' projects/*/[0-9][0-9]-*/; }
+          all() { printf '%s\n' "projects/$PROJECT"/[0-9][0-9]-*/; }
           if [ "$EVENT" != pull_request ]; then
             all
           else
@@ -201,7 +222,7 @@ jobs:
               all
             else
               # grep finds nothing in a PR that does not touch projects/: not an error.
-              printf '%s\n' "$changed" | { grep -oE '^projects/[^/]+/[0-9][0-9]-[^/]+/' || true; } |
+              printf '%s\n' "$changed" | { grep -oE "^projects/$PROJECT/[0-9][0-9]-[^/]+/" || true; } |
                 sort -u | while IFS= read -r step; do if [ -d "$step" ]; then echo "$step"; fi; done
             fi
           fi > "$RUNNER_TEMP/steps"
@@ -212,10 +233,11 @@ jobs:
         with:
           node-version: 26
           cache: npm
-          cache-dependency-path: projects/*/*/package-lock.json
+          cache-dependency-path: projects/${{ matrix.project }}/*/package-lock.json
 
       # The role and the test database each project's steps use (test/.env): the same the
-      # lessons ask the reader to create, with a password that is only for tests.
+      # lessons ask the reader to create, with a password that is only for tests. Both languages'
+      # roles are created in every leg: a leg uses only its own, and one script serves both.
       - name: database roles for the tests
         env:
           PGHOST: 127.0.0.1
@@ -253,8 +275,13 @@ jobs:
       # worker, Mailpit and the cache), answers on its published port and, where there is a
       # Mailpit, checks that a queued email survives a Redis restart (queued_email_survives_redis),
       # and is removed with its data. Its .env is the step's example (.env.ejemplo or
-      # .env.example) with new random secrets, as the README asks the reader to do. The two
-      # languages' Compose projects publish the same ports, so they run one after the other.
+      # .env.example) with new random secrets, as the README asks the reader to do. The steps run
+      # one after the other: they publish the same ports (the languages no longer share a runner).
+      # Phase 10: the steps with an observability file (compose.observabilidad.yaml or
+      # compose.observability.yaml, steps 44 to 46) also check that it merges with compose.yaml; and
+      # in one step (tienda-api 46) the whole observability stack comes up, an order is paid and
+      # the trace is looked up in Jaeger. The Mailpit check stays as a shell function: the e2e tests
+      # (npm run e2e, from step 42) do more, but they would run in every step on top of it.
       - name: docker images and docker compose
         if: ${{ !cancelled() }}
         run: |
@@ -298,6 +325,37 @@ jobs:
               exit 1
             )
           }
+          # The promise of the traces (Phase 10, lesson 4): a payment is one trace from the API to
+          # the worker. A fresh stack with the observability file, order 21 paid through the gateway
+          # script, and Jaeger's v3 API polled (at most 60 seconds) until a trace of tienda-api holds
+          # a span of tienda-trabajador. It is skipped when the leg is past 40 minutes. The stack
+          # is removed here, with both files, so Jaeger, Prometheus and Grafana do not stay behind.
+          traces_reach_jaeger() {
+            (
+              cd "$1" || exit 1
+              elapsed=$(($(date +%s) - $(cat "$RUNNER_TEMP/start")))
+              if [ "$elapsed" -gt 2400 ]; then
+                echo "skipped the trace check: the leg has run for $((elapsed / 60)) minutes"
+                exit 0
+              fi
+              export COMPOSE_FILE=compose.yaml:compose.observabilidad.yaml
+              trap 'docker compose down -v' EXIT
+              docker compose -f compose.yaml down -v || exit 1
+              docker compose up --build --wait --wait-timeout 180 || exit 1
+              api="$(docker compose port api 3000)" || exit 1
+              from="$(date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%SZ)"
+              PORT="${api##*:}" npm run --silent pasarela -- 21 | tee /dev/stderr | grep -q '← 2' || exit 1
+              until="$(date -u -d '1 minute' +%Y-%m-%dT%H:%M:%SZ)"
+              for _ in $(seq 30); do
+                curl --silent --max-time 5 \
+                  "http://127.0.0.1:16686/api/v3/traces?query.service_name=tienda-api&query.start_time_min=$from&query.start_time_max=$until" |
+                  grep -q 'tienda-trabajador' && exit 0
+                sleep 2
+              done
+              echo "No trace of tienda-api with a span of tienda-trabajador in Jaeger after 60 seconds"
+              exit 1
+            )
+          }
           while IFS= read -r step <&3; do
             [ -f "$step/compose.yaml" ] || continue
             echo "::group::docker compose $step"
@@ -314,11 +372,17 @@ jobs:
               projects/tienda-api/*) route=salud worker=trabajador gateway=pasarela ;;
               *) route=health worker=worker gateway=gateway ;;
             esac
+            # Phase 10: the observability file merges with compose.yaml (nothing is started).
+            for override in "$step"/compose.observabilidad.yaml "$step"/compose.observability.yaml; do
+              [ -f "$override" ] || continue
+              (cd "$step" && docker compose -f compose.yaml -f "${override##*/}" config -q) || failed="$failed $override"
+            done
             # The API publishes a range of ports (one per copy): ask Compose which one it took.
             if ! (cd "$step" && docker compose up --build --wait --wait-timeout 180) ||
               ! address="$(cd "$step" && docker compose port api 3000)" ||
               ! curl --fail --silent --show-error "http://$address/$route" ||
-              { grep -q '^  mailpit:' "$step/compose.yaml" && ! queued_email_survives_redis "$step" "$address"; }; then
+              { grep -q '^  mailpit:' "$step/compose.yaml" && ! queued_email_survives_redis "$step" "$address"; } ||
+              { [ "$step" = projects/tienda-api/46-alertas/ ] && ! traces_reach_jaeger "$step"; }; then
               (cd "$step" && docker compose logs)
               failed="$failed $step"
             fi
@@ -450,3 +514,24 @@ jobs:
             echo "::error::These steps failed:$failed"
             exit 1
           fi
+
+  # The check branch protection requires, with the name it had when it was a single job. A matrix
+  # leg's name carries its language, so this job gives the pair a name that does not change.
+  # `always()` makes it run even when a leg failed, and it passes only if both legs succeeded.
+  # Legs are never skipped (a pull request that touches no guided project gives a leg an empty
+  # list of steps, and it passes), so "skipped" and "cancelled" count as failures here: a skipped
+  # leg would mean the checks did not run.
+  projects-result:
+    name: guided projects (node 26)
+    needs: projects
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: both legs passed
+        env:
+          RESULT: ${{ needs.projects.result }}
+        run: |
+          echo "Guided projects: $RESULT"
+          [ "$RESULT" = success ]
