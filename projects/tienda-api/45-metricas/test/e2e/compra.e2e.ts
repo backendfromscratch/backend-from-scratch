@@ -58,6 +58,14 @@ test('una compra de principio a fin: sesión, pedido, pago y correo', async () =
     return suyos.length > 0 ? suyos : undefined;
   });
   assert.equal(mensajes.length, 1);
+
+  // Al final, se cancela el pedido, como hace npm run trafico: la camiseta vuelve al stock. Si no,
+  // quien repite este test iría vaciando la tienda, y hacia la ejecución 40 el pedido sería un 409.
+  const cancelacion = await fetch(`${BASE_URL}/v2/pedidos/${id}/cancelacion`, {
+    method: 'POST',
+    headers: { ...json, Cookie: cookie, Origin: ORIGEN },
+  });
+  assert.equal(cancelacion.status, 200);
 });
 
 test('la tienda responde en /salud, y lo que no existe es un 404 en formato Problem Details', async () => {

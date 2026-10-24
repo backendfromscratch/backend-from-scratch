@@ -59,6 +59,15 @@ test('a purchase from start to finish: session, order, payment and email', async
     return ours.length > 0 ? ours : undefined;
   });
   assert.equal(messages.length, 1);
+
+  // At the end, the order is cancelled, as npm run traffic does: the T-shirt goes back to the
+  // stock. Otherwise, a reader who repeats this test would slowly empty the shop, and around the
+  // 40th run the order would be a 409.
+  const cancellation = await fetch(`${BASE_URL}/v2/orders/${id}/cancellation`, {
+    method: 'POST',
+    headers: { ...json, Cookie: cookie, Origin: ORIGIN },
+  });
+  assert.equal(cancellation.status, 200);
 });
 
 test('the shop answers on /health, and what does not exist is a 404 in Problem Details format', async () => {
