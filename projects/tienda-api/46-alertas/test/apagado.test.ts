@@ -54,7 +54,8 @@ test('al apagarse, /salud contesta 503', { timeout: 15_000 }, async () => {
   assert.equal((await app.request('/salud/viva')).status, 503);
   const lista = await app.request('/salud/lista');
   assert.equal(lista.status, 503);
-  assert.equal((await lista.json()).estado, 'apagando');
+  // Sin comprobaciones: ni pregunta a nadie.
+  assert.deepEqual(await lista.json(), { estado: 'apagando' });
 });
 
 test('deja de aceptar conexiones nuevas', { timeout: 15_000 }, async () => {

@@ -146,9 +146,11 @@ app.get('/salud/viva', (c) => {
 // la caché, cada uno con 500 ms como mucho (salud.ts), y dice qué ha visto de cada uno. Quien la usa
 // (un balanceador, un orquestador) deja de mandar peticiones a la copia que dice 503, sin
 // reiniciarla, hasta que vuelva a decir 200. La caché no la hace fallar: sin ella, la tienda funciona.
+// Mientras se apaga, 503 al momento, sin preguntar a nadie: esta copia se va, conteste quien
+// conteste, y el pool de PostgreSQL puede estar cerrándose.
 app.get('/salud/lista', async (c) => {
+  if (apagando()) return c.json({ estado: 'apagando' }, 503);
   const { lista, comprobaciones } = await comprobarTodo();
-  if (apagando()) return c.json({ estado: 'apagando', comprobaciones }, 503);
   return c.json({ estado: lista ? 'ok' : 'falla', comprobaciones }, lista ? 200 : 503);
 });
 // #endregion lista
