@@ -64,6 +64,8 @@ export function languageOf(file: string): string {
     sql: 'sql',
     yaml: 'yaml',
     yml: 'yaml',
+    // Documents of a step, like the postmortem template (docs/postmortem.md).
+    md: 'md',
     // systemd units: sections and key=value lines, like an ini file.
     service: 'ini',
     timer: 'ini',
