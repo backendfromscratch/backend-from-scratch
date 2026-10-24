@@ -83,7 +83,7 @@ export function crearLimitador(
   // dejaba la petición esperando sin fin: la conexión sigue abierta, la orden sale y la respuesta
   // no llega nunca. Redis contesta en menos de un milisegundo; 200 ms ya es que algo va mal. Si no
   // contesta a tiempo, o da un error, el límite hace lo que diga siFalla. La orden sigue esperando
-  // dentro del cliente de Redis, pero la petición ya no la espera.
+  // dentro del cliente de Redis, pero la petición ya no la espera (por eso, preguntar, más abajo).
   async function aTiempo<T>(pregunta: () => Promise<T>): Promise<T> {
     let temporizador: NodeJS.Timeout | undefined;
     const tarde = new Promise<never>((_, rechazar) => {
@@ -96,6 +96,29 @@ export function crearLimitador(
       return await Promise.race([respuesta, tarde]);
     } finally {
       clearTimeout(temporizador);
+    }
+  }
+
+  // Cada orden que no contesta a tiempo se queda esperando en el cliente de Redis hasta que Redis
+  // vuelva. Con una por petición, mil inicios de sesión durante un corte serían mil órdenes
+  // pendientes en la memoria de la API. Así que, como la caché (cache.ts), en cuanto una falla el
+  // almacén se da por caído y ni se le pregunta: falla al momento. Como mucho una vez por segundo,
+  // una petición hace de prueba y le pregunta de verdad; si contesta, el almacén vuelve.
+  let caido = false;
+  let ultimaPrueba = -Infinity;
+  async function preguntar<T>(pregunta: () => Promise<T>): Promise<T> {
+    if (caido) {
+      if (reloj() - ultimaPrueba < 1000) throw new Error('no contesta: se probará otra vez');
+      ultimaPrueba = reloj();
+    }
+    try {
+      const respuesta = await aTiempo(pregunta);
+      caido = false;
+      return respuesta;
+    } catch (error) {
+      caido = true;
+      ultimaPrueba = reloj();
+      throw error;
     }
   }
 
@@ -124,7 +147,7 @@ export function crearLimitador(
       const ahora = reloj();
       let intentos: number[];
       try {
-        intentos = await aTiempo(() => almacen.intentos(clave(de), ahora - ventana));
+        intentos = await preguntar(() => almacen.intentos(clave(de), ahora - ventana));
       } catch (error) {
         fallo(error);
         // Abierto: como si no hubiera ningún intento.
@@ -143,7 +166,7 @@ export function crearLimitador(
     // Apunta un intento ahora. Abierto, si no se puede apuntar, no se apunta.
     async apuntar(de: string): Promise<void> {
       try {
-        await aTiempo(() => almacen.apuntar(clave(de), reloj()));
+        await preguntar(() => almacen.apuntar(clave(de), reloj()));
       } catch (error) {
         fallo(error);
       }

@@ -11,6 +11,7 @@ import { log } from '../src/log.ts';
 import {
   type AlmacenLimites,
   almacen,
+  crearAlmacenEnMemoria,
   crearLimitador,
   type Limite,
   LimitesSinAlmacen,
@@ -71,6 +72,65 @@ for (const [caso, almacenQueFalla] of [
     assert.equal(aviso.mock.callCount(), 2);
   });
 }
+
+test('con el almacén congelado, las órdenes pendientes no se acumulan: una prueba por segundo', async (t) => {
+  t.mock.method(log, 'warn', () => {});
+  // Cuántas veces se le ha preguntado: cada una es una orden que espera en el cliente de Redis.
+  let pendientes = 0;
+  const contado: AlmacenLimites = {
+    intentos: () => {
+      pendientes++;
+      return nunca();
+    },
+    apuntar: () => {
+      pendientes++;
+      return nunca();
+    },
+  };
+  let ahora = 0;
+  const limitador = crearLimitador(limite('cerrar'), contado, () => ahora, 20);
+  // 200 inicios de sesión en 2 segundos: comprobar y, después, apuntar el fallo.
+  const antes = performance.now();
+  for (let vez = 0; vez < 200; vez++) {
+    await assert.rejects(limitador.comprobar('ana'), LimitesSinAlmacen);
+    await assert.rejects(limitador.apuntar('ana'), LimitesSinAlmacen);
+    ahora += 10;
+  }
+  // La primera y una prueba al segundo: dos, no 400. Y casi todas, al momento.
+  assert.equal(pendientes, 2);
+  assert.ok(performance.now() - antes < 500, `${performance.now() - antes} ms`);
+});
+
+test('cuando el almacén vuelve, la prueba lo nota y se le vuelve a preguntar', async (t) => {
+  t.mock.method(log, 'warn', () => {});
+  let congelado = true;
+  let preguntas = 0;
+  const memoria = crearAlmacenEnMemoria();
+  const aVeces: AlmacenLimites = {
+    intentos: (clave, desde) => {
+      preguntas++;
+      return congelado ? nunca() : memoria.intentos(clave, desde);
+    },
+    apuntar: (clave, instante) => {
+      preguntas++;
+      return congelado ? nunca() : memoria.apuntar(clave, instante);
+    },
+  };
+  let ahora = 0;
+  const limitador = crearLimitador(limite('cerrar'), aVeces, () => ahora, 20);
+  await assert.rejects(limitador.comprobar('ana'), LimitesSinAlmacen);
+  congelado = false;
+  // Antes del segundo, ni se le pregunta, aunque ya conteste.
+  ahora = 500;
+  await assert.rejects(limitador.comprobar('ana'), LimitesSinAlmacen);
+  assert.equal(preguntas, 1);
+  // Al segundo, la prueba contesta: vuelve, y todo sigue como siempre.
+  ahora = 1000;
+  assert.equal((await limitador.comprobar('ana')).quedan, 3);
+  await limitador.apuntar('ana');
+  assert.equal((await limitador.comprobar('ana')).quedan, 2);
+  assert.equal(preguntas, 4);
+});
 
 test('con un almacén que contesta, nada cambia: cuenta y no avisa', async (t) => {
   const aviso = t.mock.method(log, 'warn', () => {});
