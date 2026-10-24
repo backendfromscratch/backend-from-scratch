@@ -18,7 +18,7 @@ test('a signature made with another secret is not valid', () => {
   assert.equal(validSignature(BODY, sign(BODY, 'another-secret'), SECRET), false);
 });
 
-test('a body changed in a single byte is not valid, even with the original is signature', () => {
+test('a body changed in a single byte is not valid, even with the original signature', () => {
   const tampered = BODY.replace('"orderId":7', '"orderId":8');
   assert.equal(validSignature(tampered, sign(BODY, SECRET), SECRET), false);
 });
