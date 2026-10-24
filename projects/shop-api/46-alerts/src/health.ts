@@ -7,20 +7,34 @@ import { pingRedis } from './rate-limits.ts';
 
 export type Result = 'ok' | 'failing' | 'not-configured';
 
+// One PING at a time. With Redis frozen, each PING stays waiting in its connection's command queue
+// until Redis comes back: a new one on every call to /health/ready would pile up, one for each time
+// the probe asks. So, while one is still unanswered, the next call waits on that same one (with
+// check's limit). Like the gauges in metrics.ts.
+function oneAtATime(ask: () => Promise<unknown>): () => Promise<unknown> {
+  let inFlight: Promise<unknown> | undefined;
+  return () =>
+    (inFlight ??= ask().finally(() => {
+      inFlight = undefined;
+    }));
+}
+const pingQueue = oneAtATime(() => pingRedis());
+const pingCache = oneAtATime(() => cache.ping());
+
 // #region checks
 // One per dependency. Each one returns a promise that is fulfilled if it answers, or
 // 'not-configured' if the shop works without it (without REDIS_URL, the limits go in memory and the
 // jobs are done in the API; without CACHE_URL, there is no cache). In an object, so the tests can
 // change one.
 //   db: SELECT 1, through the same pool as the requests.
-//   queue: a PING to the queue's Redis (REDIS_URL), through the limits' connection.
-//   cache: a PING to the cache's Redis (CACHE_URL).
+//   queue: a PING to the queue's Redis (REDIS_URL), through the limits' connection, one at a time.
+//   cache: a PING to the cache's Redis (CACHE_URL), one at a time.
 export const checks = {
   db: (): Promise<unknown> | 'not-configured' => pool.query('SELECT 1'),
   queue: (): Promise<unknown> | 'not-configured' =>
-    config.REDIS_URL ? pingRedis() : 'not-configured',
+    config.REDIS_URL ? pingQueue() : 'not-configured',
   cache: (): Promise<unknown> | 'not-configured' =>
-    config.CACHE_URL ? cache.ping() : 'not-configured',
+    config.CACHE_URL ? pingCache() : 'not-configured',
 };
 // #endregion checks
 

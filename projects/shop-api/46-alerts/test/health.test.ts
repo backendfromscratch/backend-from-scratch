@@ -7,6 +7,8 @@
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { app } from '../src/app.ts';
+import { cache } from '../src/cache.ts';
+import { config } from '../src/config.ts';
 import { pool } from '../src/db.ts';
 import { checks } from '../src/health.ts';
 import { useDb } from './db.ts';
@@ -65,12 +67,24 @@ test("GET /health/ready: 503 if the queue's Redis fails", async (t) => {
 });
 
 test('GET /health/ready: a failing cache is reported, but does not make it fail (200)', async (t) => {
-  t.mock.method(checks, 'cache', never);
-  const res = await app.request('/health/ready');
-  assert.equal(res.status, 200);
-  const body = await res.json();
-  assert.equal(body.status, 'ok');
-  assert.equal(body.checks.cache, 'failing');
+  // A cache that is configured and frozen: its PING doesn't answer until it's released, at the end.
+  const noCache = config.CACHE_URL;
+  config.CACHE_URL = 'redis://cache:6379';
+  t.after(() => {
+    config.CACHE_URL = noCache;
+  });
+  const { promise: frozen, resolve: release } = Promise.withResolvers<string>();
+  const ping = t.mock.method(cache, 'ping', () => frozen);
+  for (let time = 0; time < 3; time++) {
+    const res = await app.request('/health/ready');
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.status, 'ok');
+    assert.equal(body.checks.cache, 'failing');
+  }
+  // Three questions, a single PING: the other two waited on the one that was still unanswered.
+  assert.equal(ping.mock.callCount(), 1);
+  release('PONG');
 });
 
 test('GET /health does not change: 200 {"status":"ok"} when PostgreSQL answers', async () => {

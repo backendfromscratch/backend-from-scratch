@@ -7,6 +7,8 @@ import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
 import { app } from '../src/app.ts';
 import { pool } from '../src/bd.ts';
+import { cache } from '../src/cache.ts';
+import { config } from '../src/config.ts';
 import { comprobaciones } from '../src/salud.ts';
 import { usarBd } from './bd.ts';
 
@@ -64,12 +66,24 @@ test('GET /salud/lista: 503 si el Redis de la cola falla', async (t) => {
 });
 
 test('GET /salud/lista: la caché que falla se dice, pero no la hace fallar (200)', async (t) => {
-  t.mock.method(comprobaciones, 'cache', nunca);
-  const res = await app.request('/salud/lista');
-  assert.equal(res.status, 200);
-  const cuerpo = await res.json();
-  assert.equal(cuerpo.estado, 'ok');
-  assert.equal(cuerpo.comprobaciones.cache, 'falla');
+  // Una caché configurada y congelada: su PING no contesta hasta que se suelta, al final.
+  const sinCache = config.CACHE_URL;
+  config.CACHE_URL = 'redis://cache:6379';
+  t.after(() => {
+    config.CACHE_URL = sinCache;
+  });
+  const { promise: congelada, resolve: soltar } = Promise.withResolvers<string>();
+  const ping = t.mock.method(cache, 'ping', () => congelada);
+  for (let vez = 0; vez < 3; vez++) {
+    const res = await app.request('/salud/lista');
+    assert.equal(res.status, 200);
+    const cuerpo = await res.json();
+    assert.equal(cuerpo.estado, 'ok');
+    assert.equal(cuerpo.comprobaciones.cache, 'falla');
+  }
+  // Tres preguntas, un solo PING: las otras dos esperaron al que seguía sin contestar.
+  assert.equal(ping.mock.callCount(), 1);
+  soltar('PONG');
 });
 
 test('GET /salud no cambia: 200 {"estado":"ok"} cuando PostgreSQL contesta', async () => {
