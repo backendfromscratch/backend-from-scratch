@@ -33,10 +33,11 @@ export const metricas = {
 // Un indicador (gauge) no suma: dice cuánto vale algo ahora, y puede subir y bajar. Los trabajos
 // que esperan en la cola son uno: si crecen, el trabajador no da abasto. No se guarda nada: cada
 // vez que se recogen las métricas, se le pregunta a la cola. Y se le pregunta con prisa: si Redis
-// no contesta en esperaMs, no se informa ningún valor nuevo (mejor eso que un cero falso, o una
-// recogida que no acaba). Ojo: el SDK sigue mandando el último valor que vio, porque manda los
-// totales desde el arranque (temporalidad acumulada), y para un indicador eso es «el último».
-// Devuelve la función que deja de observar.
+// no contesta en esperaMs, esta vez no se observa nada (mejor eso que un cero falso, o una recogida
+// que no acaba). Ojo: eso no deja un hueco en la gráfica. El SDK manda los valores acumulados desde
+// que arrancó (temporalidad acumulada), y para un indicador eso es el último que se observó: con
+// Redis congelado, Prometheus sigue recibiendo el número de antes, como si nada. Devuelve la
+// función que deja de observar.
 export function observarCola(
   cola: { getWaitingCount(): Promise<number> },
   { esperaMs = 2000 }: { esperaMs?: number } = {},
@@ -50,7 +51,8 @@ export function observarCola(
 // Lo que comparten los indicadores que preguntan a otro servidor (este y el de la antigüedad de
 // los eventos salientes, más abajo). Una lectura a la vez: con Redis congelado, getWaitingCount se
 // queda esperando en la cola de órdenes de la conexión hasta que vuelva, y una por recogida se
-// acumularían. Mientras haya una sin acabar, no se empieza otra y no se informa ningún valor.
+// acumularían. Mientras haya una sin acabar, no se empieza otra y no se observa nada (el SDK
+// repite el último valor).
 function observarConPrisa(
   indicador: ObservableGauge,
   leerValor: () => Promise<number>,
@@ -89,8 +91,10 @@ function observarConPrisa(
 // no llega. Si el repartidor funciona, nunca pasa de unos pocos segundos; si crece, algo lo para.
 // Se lee de PostgreSQL, no de Redis: así sigue diciendo la verdad cuando lo que ha fallado es el
 // Redis de la cola. La lee la API (servidor.ts), con prisa, como la de la cola: una lectura a la
-// vez y, si PostgreSQL no contesta en esperaMs, ningún valor nuevo. unit: 's', y Prometheus lo
-// añade al nombre: tienda_salientes_antiguedad_seconds.
+// vez y, si PostgreSQL no contesta en esperaMs, nada nuevo. Como en la de la cola, el SDK repite
+// entonces el último valor: con PostgreSQL congelado, la antigüedad se queda quieta en vez de
+// crecer, y esta alerta no salta (de eso avisan las otras: la lentitud y los errores). unit: 's', y
+// Prometheus lo añade al nombre: tienda_salientes_antiguedad_seconds.
 export const antiguedadSalientes = medidor.createObservableGauge('tienda.salientes.antiguedad', {
   description: 'Segundos que lleva esperando el evento saliente más antiguo sin enviar',
   unit: 's',
