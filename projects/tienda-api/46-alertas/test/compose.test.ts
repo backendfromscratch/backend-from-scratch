@@ -166,6 +166,9 @@ test('compose.observabilidad.yaml añade Prometheus y Grafana, y la API y el tra
   // En el 3100: el 3000 es de la API. Solo en 127.0.0.1, que es lo que permite entrar sin contraseña.
   assert.match(grafana, /ports:\n\s+- '127\.0\.0\.1:3100:3000'$/m);
   assert.match(grafana, /GF_AUTH_ANONYMOUS_ENABLED: 'true'/);
+  // Solo el plugin de Prometheus: sin ello Grafana instala 18 y se queda sin memoria en 2 GiB.
+  assert.match(grafana, /GF_PLUGINS_PREINSTALL_SYNC: prometheus$/m);
+  assert.match(grafana, /GF_PLUGINS_DISABLE_PLUGINS: elasticsearch,.*,zipkin$/m);
   assert.match(
     grafana,
     /- \.\/observabilidad\/grafana\/provisioning:\/etc\/grafana\/provisioning:ro$/m,
