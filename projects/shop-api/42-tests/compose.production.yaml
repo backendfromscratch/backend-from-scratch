@@ -1,0 +1,209 @@
+# The shop on a server (Phase 8, lesson 3): the same one as compose.yaml, with what changes when
+# you publish it. compose.yaml stays the one for your computer.
+#   docker compose -f compose.production.yaml up -d --build    starts everything, in the background
+#   docker compose -f compose.production.yaml down             stops it (the data stays)
+#
+# What changes compared to compose.yaml:
+#   - restart: unless-stopped: Docker starts db, redis, the cache, the API and the worker again if
+#     they fall over or if the server restarts (not if you stopped them with docker compose stop).
+#   - Two copies of the API, api-a and api-b (Phase 9, lesson 4), each on its own port: deploy.sh
+#     changes them one at a time, and while one is being changed, the other one answers.
+#   - No Mailpit (Phase 9): the emails go out through the mail server in SMTP_URL, in .env. Without
+#     SMTP_URL, the shop sends no emails and the log says which one it would have sent.
+#   - No practice accounts: their passwords are public (they're in the README). The first account,
+#     yours, is created with create-admin.
+#   - nginx goes in front, on the server itself, and it is the only thing the internet sees. The
+#     API is still published only on 127.0.0.1, as on your computer.
+#
+# The secrets come from .env, which Compose reads on its own (copy it from
+# .env.production.example). It goes on the server, never in Git.
+
+name: shop
+
+# #region api
+# The API, with the same image as migrate. Since Phase 9 (lesson 4) it runs in two copies, api-a and
+# api-b (below), equal except for the port. What they share is written here once: &api gives it a
+# name (a YAML anchor), and each copy takes it with <<: *api. Compose doesn't read as a service what
+# starts with x-: it's there for this.
+x-api: &api
+  build: .
+  image: ${IMAGE:-shop-api}
+  restart: unless-stopped
+  # Your configuration, from .env. What changes inside Compose goes in environment, which wins over
+  # env_file: the database, Redis and the cache, by their name.
+  env_file: .env
+  environment:
+    DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD}@db:5432/shop
+    REDIS_URL: redis://redis:6379
+    CACHE_URL: redis://cache:6379
+  # What docker stop (and deploy.sh, when it changes a copy) waits between SIGTERM and SIGKILL: 10
+  # seconds, the default value, written so it can be seen. The API shuts down in 8 at most
+  # (src/server.ts): it finishes before they kill it.
+  stop_grace_period: 10s
+  depends_on:
+    db:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    cache:
+      condition: service_healthy
+    migrate:
+      condition: service_completed_successfully
+# #endregion api
+
+services:
+  # #region db
+  # PostgreSQL 18, pinned by its digest. No published port: only the shop's containers see it. The
+  # internet doesn't reach it.
+  db:
+    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_DB: shop
+      # Without a value, Compose doesn't start and says so: a database on the internet without a
+      # password is an open door.
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is missing in .env (see .env.production.example)}
+    # The data, in a named volume: it survives down and restarts (not down -v).
+    volumes:
+      - data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'shop', '-d', 'shop']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+  # #endregion db
+
+  # Redis 8, pinned by its digest: the rate-limit counters, shared by every copy of the API, and the
+  # job queue (Phase 9). No published port. The queue can't be lost: Redis writes every change to
+  # disk (--appendonly yes), in a volume, and never deletes keys to make room
+  # (--maxmemory-policy noeviction), as in compose.yaml.
+  redis:
+    image: redis:8@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+    restart: unless-stopped
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # #region cache
+  # The cache (Phase 9, lesson 2): another Redis, as in compose.yaml. At most 64 MB, it deletes the
+  # least-read keys to make room (allkeys-lru) and keeps nothing on disk: it is a copy of
+  # PostgreSQL, and if it is lost it fills again. No published port and no volume.
+  cache:
+    image: redis:8@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+    restart: unless-stopped
+    command:
+      [
+        'redis-server',
+        '--maxmemory',
+        '64mb',
+        '--maxmemory-policy',
+        'allkeys-lru',
+        '--save',
+        '',
+        '--appendonly',
+        'no',
+      ]
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+  # #endregion cache
+
+  # #region migrate
+  # A task, not a server: it applies the migrations, loads the sample products (if there are none)
+  # and ends. --no-accounts: the practice accounts are not loaded.
+  migrate:
+    # build and image together: "up --build" builds the image and gives it this name; if you set
+    # IMAGE in .env (lesson 6), Compose uses that published image instead of yours.
+    build: .
+    image: ${IMAGE:-shop-api}
+    command: ['sh', '-c', 'node scripts/migrate.ts && node scripts/seed.ts --no-accounts']
+    environment:
+      DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD}@db:5432/shop
+    depends_on:
+      db:
+        condition: service_healthy
+    # The image's HEALTHCHECK asks the API, and there's no API here.
+    healthcheck:
+      disable: true
+  # #endregion migrate
+
+  # #region copies
+  # The two copies of the API, each on its own port, only on the server itself (127.0.0.1): nginx
+  # talks to them from there (they are the two server lines of its upstream), and the internet
+  # doesn't reach them. A fixed port for each one, and not a range with --scale: this way deploy.sh
+  # knows which copy it is changing.
+  api-a:
+    <<: *api
+    ports:
+      - '127.0.0.1:3000:3000'
+  api-b:
+    <<: *api
+    ports:
+      - '127.0.0.1:3001:3000'
+  # #endregion copies
+
+  # #region worker
+  # The worker (Phase 9): the API's image, with another command, and the same configuration. No
+  # port: it doesn't receive requests. deploy.sh updates it after the API, to the same image.
+  worker:
+    build: .
+    image: ${IMAGE:-shop-api}
+    restart: unless-stopped
+    command: ['node', 'scripts/worker.ts']
+    # SMTP_URL, if there is one, comes from here: from .env.
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD}@db:5432/shop
+      REDIS_URL: redis://redis:6379
+      CACHE_URL: redis://cache:6379
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # The image's HEALTHCHECK asks /health, and the worker is not a server: its own looks at its
+    # heartbeat, as in compose.yaml. deploy.sh waits for it to be healthy. In its first 10 seconds,
+    # Docker asks every second: it doesn't hold the deployment back.
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "process.exit(Date.now() - require('node:fs').statSync('/tmp/heartbeat').mtimeMs < 30000 ? 0 : 1)",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s
+  # #endregion worker
+
+volumes:
+  data:
+  # The Redis queue: it survives down and restarts (not down -v).
+  redis:
+
+# #region network
+# The shop's network, with the subnet pinned. What reaches the API through a published port seems to
+# it to come from this network's gateway (the first address: 172.18.0.1), and not from the visitor
+# or from nginx. That's the address the API believes to be trustworthy (TRUSTED_PROXY in
+# .env.production.example), and pinning the subnet keeps it from changing. If another Docker network
+# on the server already uses 172.18.0.0/16, docker compose up fails with "Pool overlaps with other
+# one on this address space": change the subnet here and TRUSTED_PROXY's address in .env.
+networks:
+  default:
+    ipam:
+      config:
+        - subnet: 172.18.0.0/16
+# #endregion network
