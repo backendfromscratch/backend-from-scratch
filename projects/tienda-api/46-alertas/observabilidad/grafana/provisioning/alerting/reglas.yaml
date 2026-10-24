@@ -1,0 +1,145 @@
+# Las reglas de alerta de la tienda (Fase 10, lección 6). Grafana evalúa cada una cada 10 segundos
+# contra Prometheus y, cuando se cumple el tiempo que pide (for), avisa a «guardia» (contacto.yaml)
+# según la política (politica.yaml). Las tres miran síntomas, lo que nota quien usa la tienda
+# (errores, lentitud, un correo que no llega), no causas (la CPU, un Redis caído): un síntoma
+# avisa de cualquier causa, también de las que nadie había pensado.
+# Cada regla tiene tres pasos: A, la consulta a Prometheus (instant: solo el valor de ahora); B, el
+# último valor de A (reduce); C, la condición (threshold): si B pasa del umbral, la regla se cumple.
+# Sin datos (noDataState: OK), no avisa: sin tráfico no hay errores que contar.
+# Los umbrales se midieron con npm run trafico y la tienda sana, en un portátil, 5 minutos (el
+# razonamiento, en cada regla). Mídelos en tu máquina: un umbral copiado de otro sitio avisa de más
+# o de menos.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: tienda
+    folder: Tienda
+    interval: 10s
+    rules:
+      # #region errores
+      # Errores: la parte de las respuestas de /v2 que son 5xx, en el último minuto. Es el SLI del
+      # SLO de la lección: «el 99 % de las peticiones a /v2 responden sin 5xx».
+      # Umbral, 5 %: con npm run trafico (unas 3,5 peticiones por segundo), la tienda sana no dio
+      # ni un 5xx en 5 minutos. Un 5xx suelto en un minuto (de unas 210) es un 0,5 %, y no avisa. Un
+      # 5 % gasta el presupuesto de errores del SLO (el 1 %) cinco veces más deprisa de lo que se
+      # puede, y durante 2 minutos ya no es mala suerte. Con poco tráfico, un solo error pesa más:
+      # por eso los 2 minutos (for), para no despertar a nadie por una petición.
+      - uid: tienda-errores-5xx
+        title: Errores 5xx en /v2
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: 'Más del 5 % de las respuestas de /v2 son errores 5xx desde hace 2 minutos'
+          description: 'Mira el panel «La tienda» (errores 5xx por ruta) y el log de la API.'
+        labels:
+          gravedad: urgente
+        data:
+          - refId: A
+            datasourceUid: prom
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                sum(rate(http_server_request_duration_seconds_count{job="tienda-api",
+                http_route=~"/v2/.*", http_response_status_code=~"5.."}[1m]))
+                / sum(rate(http_server_request_duration_seconds_count{job="tienda-api",
+                http_route=~"/v2/.*"}[1m]))
+          - refId: B
+            datasourceUid: __expr__
+            model: { refId: B, type: reduce, expression: A, reducer: last }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: gt, params: [0.05] } }]
+      # #endregion errores
+
+      # #region lentitud
+      # Lentitud: el p99 de la duración de /v2 en el último minuto, en segundos: el 99 % de las
+      # peticiones tarda menos. Sin /v2/pedidos/:id/eventos: es un flujo que dura lo que el cliente
+      # quiera mirar, y no es lentitud.
+      # Umbral, 0,5 s: con npm run trafico, la tienda sana tuvo un p99 de unos 72 ms (el más alto en
+      # 5 minutos, 72 ms; la ruta más lenta, iniciar sesión, por el hash de la contraseña, 88 ms).
+      # 0,5 s es unas siete veces eso, con sitio para un portátil más lento, y es un límite de los
+      # cubos del histograma (0,25, 0,5, 0,75…): Prometheus calcula el p99 por dentro de un cubo,
+      # y en el borde se equivoca menos. Si tu tienda sana pasa de ahí, sube el umbral.
+      - uid: tienda-lentitud-p99
+        title: p99 de /v2 alto
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: 'El p99 de /v2 pasa de 0,5 segundos desde hace 2 minutos'
+          description: 'Mira el panel «La tienda» (duración p99 por ruta) y una traza lenta en Jaeger.'
+        labels:
+          gravedad: aviso
+        data:
+          - refId: A
+            datasourceUid: prom
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                histogram_quantile(0.99, sum by (le)
+                (rate(http_server_request_duration_seconds_bucket{job="tienda-api",
+                http_route=~"/v2/.*", http_route!="/v2/pedidos/:id/eventos"}[1m])))
+          - refId: B
+            datasourceUid: __expr__
+            model: { refId: B, type: reduce, expression: A, reducer: last }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: gt, params: [0.5] } }]
+      # #endregion lentitud
+
+      # #region salientes
+      # Correos que no salen: la antigüedad del evento saliente más viejo sin enviar
+      # (tienda.salientes.antiguedad, src/metricas.ts), en segundos. Con el repartidor funcionando,
+      # unos pocos segundos como mucho; si pasa de 2 minutos, algo lo tiene parado (el Redis de la
+      # cola, el trabajador), y los clientes pagan sin recibir su correo. Es la única de las tres
+      # que avisa de un fallo que no da ningún error. max: con varias copias de la API, todas dicen
+      # lo mismo (lo leen de la misma tabla). Sin for: la antigüedad ya es un tiempo.
+      # Umbral, 120 s: con npm run trafico, el evento más antiguo nunca pasó de 0,6 s. Dos minutos
+      # dejan sitio a lo normal (un despliegue que reinicia el trabajador, un reintento de BullMQ)
+      # y avisan antes de que el cliente empiece a preguntar por su correo.
+      - uid: tienda-salientes-parados
+        title: Eventos salientes parados
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: 'Hay un evento saliente sin enviar desde hace más de 2 minutos'
+          description: 'Los correos y los avisos no salen. Mira el trabajador y el Redis de la cola.'
+        labels:
+          gravedad: urgente
+        data:
+          - refId: A
+            datasourceUid: prom
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              instant: true
+              expr: max(tienda_salientes_antiguedad_seconds{job="tienda-api"})
+          - refId: B
+            datasourceUid: __expr__
+            model: { refId: B, type: reduce, expression: A, reducer: last }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: gt, params: [120] } }]
+      # #endregion salientes

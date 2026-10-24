@@ -1,0 +1,1 @@
+ALTER TABLE "eventos_salientes" ADD COLUMN "contexto" text;
