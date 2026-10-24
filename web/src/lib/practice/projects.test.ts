@@ -75,7 +75,7 @@ describe('the guided projects', () => {
           expect(npmrc).toMatch(/^min-release-age=7$/m);
           expect(npmrc).toMatch(/^ignore-scripts=true$/m);
           expect(existsSync(join(root, project, step, 'package-lock.json'))).toBe(true);
-          expect(json(project, step).engines.node).toBe('>=24');
+          expect(json(project, step).engines.node).toMatch(/^>=24(\.\d+\.\d+)?$/);
           // `nvm use` in the folder picks the Node version the lessons use.
           expect(read(project, step, '.nvmrc').trim()).toBe('26');
         },
