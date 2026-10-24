@@ -119,6 +119,7 @@ export const phases: Phase[] = [
   {
     number: 10,
     status: 'available',
+    lessonCount: 7,
     title: { es: 'Calidad y observabilidad', en: 'Quality and observability' },
     summary: {
       es: 'Tests unitarios, de integración y end-to-end; logs, métricas y trazas; health checks y gestión de incidentes.',
