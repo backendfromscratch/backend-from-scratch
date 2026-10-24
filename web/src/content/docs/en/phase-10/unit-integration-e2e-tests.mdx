@@ -1,0 +1,523 @@
+---
+translationKey: test-types
+title: "Unit, integration and end-to-end tests"
+description: "What a unit test, an integration test and an end-to-end test are, which one suits each case, what code coverage is for and how to fix a flaky test."
+sidebar:
+  label: Types of tests
+  order: 2
+lesson:
+  oneLiner: "A unit test tests a piece on its own; an integration test makes it work with the real thing, like PostgreSQL; and an end-to-end test uses the whole application from the outside, over HTTP, like a customer. The more a test covers, the more bugs it catches and the more it costs. The shop bets on integration tests because its bugs live in the database."
+  objectives:
+    - "Tell a unit test, an integration test and an end-to-end test apart, and classify the shop’s."
+    - "Choose the type of test that pays off in each case, by what it costs and what it catches."
+    - "Run an end-to-end test against the Compose shop and read a coverage report without chasing 100%."
+    - "Recognize a flaky test and look for its cause instead of rerunning it until it passes."
+  prerequisites: [writing-tests, compose, cache]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+Imagine you touch Mailpit’s settings in `compose.yaml` and, by accident, change the port it receives email on. We tried it: `npm test` comes out with 325 green tests, the shop starts healthy and answers everything, and no email arrives. The worker tries five times, writes `ECONNREFUSED` in its log and gives up.
+
+No test noticed because **none of the 325 starts Docker**. Almost all of them call the shop inside their own Node process. Whether the pieces fit together in Compose, with their worker and their Mailpit, nobody checks.
+
+Each type of test catches different bugs at a different price. Here you classify the shop’s tests, run the type it was missing, read which lines nobody runs and meet the test that sometimes fails without anyone touching the code.
+
+## The analogy
+
+<Analogy>
+
+A theater company is putting on a play. Each actor goes over their lines at home, in ten minutes. Then they rehearse scene by scene, and that’s where you see whether the lines fit together. Before opening night, the dress rehearsal: costumes, lights and the whole play.
+
+The dress rehearsal is the one most like the real show, and the most expensive to set up. If something goes wrong, you don’t know right away whether it was the lights, the curtain or the actor. Each kind of rehearsal catches what the others don’t see.
+
+<div slot="limits">
+
+- The dress rehearsal happens once. The shop runs its start-to-finish test before every deployment, and a machine runs it.
+- Every night, the actors do it a little differently. Your code, with the same things around it, does the same thing every time: if a test sometimes passes and sometimes doesn’t, something around it has changed, like time, load or order.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### Three types of test, by how far they reach
+
+They differ in how much of the application each test starts. The shop has one of each:
+
+- **A <Term id="unit-test">unit test</Term>** tests a piece on its own, with no database or network: the five in `test/signature.test.ts`, from [lesson 1](/en/phase-10/writing-tests-node/), call `validSignature` and look at what it returns.
+- **An <Term id="integration-test">integration test</Term>** makes several real pieces work together: the ones in `test/transactions.test.ts` send requests with `app.request`, with no network, and the shop handles them with a real PostgreSQL, `shop_test`.
+- **An <Term id="end-to-end-test">end-to-end test</Term>** uses the whole application from the outside, like a customer: the Compose shop, over HTTP. The first one arrives in this step: `test/e2e/purchase.e2e.ts`.
+
+### What the shop has: almost all integration
+
+In the 39 files in `test/` of step 42:
+
+- **31 talk to a real PostgreSQL**: 28 start with `useDb()` ([lesson 1](/en/phase-10/writing-tests-node/#before-and-after-the-tests-before-after-and-describe)) and another 3 use it directly.
+- **27 call the shop with `app.request`**, inside the same process. A few start the server separately, because what they test, like shutting the shop down, can’t be seen any other way.
+- **4 check configuration files**, like `compose.yaml` or the `Dockerfile`, almost always by reading their lines.
+- **There are few unit tests**: the five for the signature and an occasional standalone test, like the one that checks that the cache’s TTL varies a little.
+
+**The shop is, above all, a shop of integration tests.**
+
+### What each type costs
+
+Each type pays for its reach. The times are from our machine:
+
+| | Unit | Integration | End-to-end |
+|---|---|---|---|
+| In the shop | `signature.test.ts` | `transactions.test.ts` | `purchase.e2e.ts` |
+| What it needs | Node | Node and PostgreSQL with `shop_test` | The whole shop in Compose |
+| How long one takes | Under 2 ms | From 1 to about 120 ms, and one over half a second | 1.4 s the purchase, with the wait for the email |
+| When it fails, it tells you | The exact function and case | The route and what it left in the database | That something in the chain failed, not what |
+| What breaks it without the code being wrong | Almost nothing | A stopped PostgreSQL | A stopped shop, another port, an email that takes a while |
+
+**The more a test covers, the more things outside your code can turn it red.**
+
+### The pyramid and the trophy
+
+There are two famous ways of saying how many tests of each type you should have. **The pyramid**, by Mike Cohn, puts lots of unit tests at the base, because they’re cheap. **The trophy**, by Kent C. Dodds, puts static checks at the base (in the shop, `npm run check`, from [Phase 3](/en/phase-3/typescript-with-node/#tsc-noemit-the-checker-separately)) and **leaves the widest part for integration**:
+
+| Type | Pyramid | Trophy | The shop |
+|---|---|---|---|
+| Static (types) | Doesn’t count them | The base | `npm run check`, in every step |
+| Unit | Most | A few | Few |
+| Integration | Some | Most | Almost all |
+| End-to-end | Very few | Few | 2, since step 42 |
+
+They agree on few end-to-end tests; they disagree in the middle.
+
+### Why the shop looks like the trophy
+
+**A test is useful where the bug it has to catch lives.** The shop’s live in the database: the quantity one ([introduction](/en/phase-10/)) was in which `UPDATE` was run and in which transaction, and a fake PostgreSQL would never have caught it ([lesson 1](/en/phase-10/writing-tests-node/#the-database-isnt-faked)).
+
+Almost all of the shop’s code receives a request, talks to PostgreSQL and answers: it has little logic that works on its own. A program that calculates taxes or discounts, with lots of rules and no database, would have many more unit tests.
+
+The shop uses the PostgreSQL on your computer and, in <Term id="github-actions">GitHub Actions</Term>, one in a container ([Phase 8](/en/phase-8/ci-cd-github-actions/#check-the-tests-with-their-postgresql)). [Testcontainers](https://testcontainers.com/), another widely used way, starts it from the tests’ own code.
+
+### End-to-end: the whole shop, over HTTP only
+
+`test/e2e/purchase.e2e.ts` imports nothing from `src/`: it talks to the shop with `fetch`, like any customer. Its first test makes a whole purchase:
+
+1. **It signs in as Carmen**, one of the practice accounts in the development data, and keeps the <Term id="cookie">cookie</Term>.
+2. **It places an order** and **pays for it** with the fake gateway, `npm run gateway` ([Phase 4](/en/phase-4/webhooks-idempotency/)).
+3. **It waits for the confirmation email** in Mailpit, asking every second, for 30 at most, and keeps the one for its order by the subject: “Your order … is paid.”
+
+It doesn’t create accounts on purpose: the shop allows creating 5 per hour from the same IP ([Phase 6](/en/phase-6/rate-limiting-secrets/#by-email-and-by-ip-the-shops-limits)), and the sixth run would fail. **An end-to-end test runs into all of the real shop’s rules.**
+
+The second one checks `/health` and the `404` of a route that doesn’t exist.
+
+The purchase goes through the Docker image, the API, PostgreSQL, the queue, the worker and Mailpit. **If this test fails and the others don’t, the bug is in how the pieces fit together.**
+
+They end in `.e2e.ts`, so `npm test`, which only takes `test/*.test.ts`, doesn’t run them: without the shop running they’d always fail. You run them with **`npm run e2e`**, which looks for the shop at `BASE_URL` (by default, `http://127.0.0.1:3000`) and for Mailpit at `MAILPIT_URL` (`http://127.0.0.1:8025`).
+
+### Coverage: the lines no test runs
+
+<Term id="code-coverage">Code coverage</Term> counts which lines of your code run while the tests pass. Node measures it with the `--experimental-test-coverage` option, and step 42 brings a script with it, **`npm run coverage`**: it runs the tests of `npm test` and ends with a table, one row per file:
+
+- **`line %`**: the percentage of its lines that some test has run.
+- **`branch %`**: that of its branches. An `if` has two paths, the yes one and the no one.
+- **`funcs %`**: that of its functions someone has called.
+- **`uncovered lines`**: the lines nobody has run. It’s the useful column.
+
+The files in `test/` don’t show up (`--test-coverage-exclude='test/**'`): what matters is how much of the shop they run.
+
+### Why 100% isn’t the goal
+
+A high percentage says less than it seems:
+
+- **Running isn’t checking.** A test with no assertions that calls `validSignature` also covers its lines.
+- **What’s missing doesn’t show up.** The quantity bug was an `UPDATE` that didn’t exist, and a line that doesn’t exist can’t show up as “not run.”
+- **The last lines are the most expensive.** They tend to be the ones for rare errors, like a dropped connection, and causing them in a test costs more than all the rest.
+
+**Coverage is a map of where nobody has looked, not a grade.** You read the uncovered lines, one by one, and decide which ones deserve a test.
+
+### Flaky tests: green, red, green, without touching anything
+
+A <Term id="flaky-test">flaky test</Term> sometimes passes and sometimes fails, with the same code. The shop had one.
+
+On October 22, 2026, while Phase 9 was being prepared, GitHub Actions ran the cache tests in their eight copies (steps 38 to 41, in both languages). In seven, “buying checks the stock in the database even if the cache says otherwise” passed in about 12 milliseconds. In the English copy of step 38, it failed: **two seconds later, product 4’s key still wasn’t in the cache.**
+
+If a command to the cache takes longer than 200 milliseconds, the shop [takes it as down](/en/phase-9/redis-cache/#if-the-cache-fails-the-shop-keeps-going) and reads from PostgreSQL without storing anything. The explanation the fix gave, the most likely one: GitHub’s machine, under load, took too long once. The test read the product only once and expected a key that read wasn’t going to store.
+
+**The shop did the right thing; the test assumed something false:** that a read always stores. The fix, in `test/cache.test.ts`, is `readUntilKeysAre`: it repeats the reads until the keys appear, for 5 seconds at most.
+
+### What a flaky test depends on
+
+Almost always, on something the test doesn’t control:
+
+- **Time.** Sleeping a fixed two seconds and assuming it’s enough. Better to wait for a condition with a maximum, like the end-to-end test with the email, or the fake clock from [lesson 1](/en/phase-10/writing-tests-node/#mocks-and-a-fake-clock).
+- **What another test leaves behind.** If they share data, the result depends on the order: Carmen’s inbox keeps the emails of other runs, and that’s why the end-to-end test looks for the one for its order.
+- **A real race.** In lesson 1, “paying and changing the quantity at the same time,” with the stock broken, failed or not depending on who got there first: that occasional red was a real bug.
+
+**What you don’t do is run it again until it comes out green.** A test that sometimes fails teaches the team not to trust red, and the day the red is real, nobody looks at it.
+
+### Where each test runs
+
+- **`npm test`**, with every change, and in your workflow ([Phase 8](/en/phase-8/ci-cd-github-actions/)) before publishing the image.
+- **`npm run e2e`**, before deploying, with the Compose shop running. Your workflow doesn’t run it: it would have to bring up the whole of Compose.
+- **`npm run coverage`**, now and then, to look for gaps: it isn’t a gate for deploying.
+
+## Try it
+
+The goal: check that the Compose shop sells from start to finish and find a line no test runs, to decide whether it deserves one.
+
+The outputs are from Node 26, on Linux, on October 24, 2026; your times will be different. You use step `42-tests` from [lesson 1](/en/phase-10/writing-tests-node/#get-the-step-ready).
+
+### Start the shop
+
+From your project, with your usual `.env`:
+
+```sh
+cd ~/backend-course/phase-3/shop-api
+docker compose up -d --build --wait
+docker compose port api 3000
+```
+
+`--wait` returns when everything is healthy. The last command says the API’s port: if it’s `3001`, type `BASE_URL=http://127.0.0.1:3001 npm run e2e` instead of `npm run e2e`.
+
+### A purchase from start to finish
+
+<TryIt
+  title="1. The end-to-end tests"
+  cmd="npm run e2e"
+  output={`> shop-api@1.0.0 e2e
+> node --env-file-if-exists=.env --test --test-concurrency=1 'test/e2e/*.e2e.ts'
+
+✔ a purchase from start to finish: session, order, payment and email (1400.160664ms)
+✔ the shop answers on /health, and what does not exist is a 404 in Problem Details format (6.49227ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1474.560372`}
+>
+
+The first two lines are npm’s: the command behind the script. Look at **`pass 2`**: Carmen has bought, paid and received her email. The purchase takes 1.4 seconds, with the wait for the email: the test asks Mailpit every second, until it arrives. We ran it seven times in a row: all seven green. Once, the purchase took a quarter of a second: the email was already there the first time the test asked.
+
+If it fails:
+
+- **Both, with `fetch failed` and `ECONNREFUSED`**: nobody is listening at that address. The shop isn’t running, or it’s on `3001`.
+- **The first one, because the email didn’t arrive**: check whether the worker is running, with `docker compose ps`.
+
+</TryIt>
+
+<SelfCheck question="Challenge: stop only the API, with docker compose stop api, and run npm run e2e again. How many fail, and what does the error say? Has anything changed in the code?">
+
+Both fail, in milliseconds, with `fetch failed` and `ECONNREFUSED`, and the code is the same as a minute ago. **An end-to-end test turns red for things that aren’t your code**: that’s part of its price. `npm test` would stay green. Start it again with `docker compose start api`, and check its port with `docker compose port api 3000`: ours came back on `3001`.
+
+</SelfCheck>
+
+### The lines no test runs
+
+You need the same as for `npm test`: PostgreSQL with `shop_test` and the tests’ Redis ([“Before you start”](/en/phase-10/#before-you-start)).
+
+<TryIt
+  title="2. The coverage report"
+  cmd="npm run coverage"
+  output={`ℹ tests 325
+ℹ suites 0
+ℹ pass 325
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 146993.660283
+ℹ start of coverage report
+ℹ ----------------------------------------------------------------------
+ℹ file                  | line % | branch % | funcs % | uncovered lines
+ℹ ----------------------------------------------------------------------
+ℹ drizzle.config.ts     | 100.00 |    87.50 |  100.00 | 
+ℹ examples              |        |          |         | 
+ℹ  fast-hash.ts         | 100.00 |   100.00 |  100.00 | 
+ℹ  injection.ts         | 100.00 |   100.00 |  100.00 | 
+ℹ  jwt.ts               | 100.00 |    91.67 |  100.00 | 
+ℹ  money.ts             | 100.00 |   100.00 |  100.00 | 
+ℹ  n-plus-one.ts        | 100.00 |   100.00 |  100.00 | 
+ℹ  protobuf.ts          | 100.00 |   100.00 |  100.00 | 
+ℹ  race.ts              | 100.00 |    87.50 |  100.00 | 
+ℹ  unsafe-page.ts       | 100.00 |   100.00 |  100.00 | 
+ℹ scripts               |        |          |         | 
+ℹ  create-admin.ts      | 100.00 |   100.00 |  100.00 | 
+ℹ  create-key.ts        |  84.21 |    50.00 |  100.00 | 8-10
+ℹ  many-orders.ts       | 100.00 |   100.00 |  100.00 | 
+ℹ  migrate.ts           | 100.00 |   100.00 |  100.00 | 
+ℹ  other-site.ts        |  88.33 |    66.67 |   33.33 | 54-60
+ℹ  payment-gateway.ts   |  93.62 |    50.00 |  100.00 | 18-20
+ℹ  provider.ts          |  86.89 |    75.00 |  100.00 | 46 55-61
+ℹ  seed.ts              | 100.00 |   100.00 |  100.00 | 
+ℹ  worker.ts            |  90.00 |    66.67 |   66.67 | 16-18 55-57
+ℹ src                   |        |          |         | 
+ℹ  api-keys.ts          | 100.00 |   100.00 |  100.00 | 
+ℹ  app.ts               | 100.00 |   100.00 |  100.00 | 
+ℹ  cache.ts             |  99.15 |    96.61 |   93.75 | 160-161
+ℹ  config.ts            | 100.00 |   100.00 |  100.00 | 
+ℹ  contract.ts          | 100.00 |   100.00 |  100.00 | 
+ℹ  data.ts              | 100.00 |   100.00 |  100.00 | 
+ℹ  db.ts                |  97.44 |   100.00 |    0.00 | 22
+ℹ  echo.ts              | 100.00 |    87.50 |   85.71 | 
+ℹ  email.ts             | 100.00 |    83.33 |  100.00 | 
+ℹ  heartbeat.ts         |  87.18 |    85.71 |  100.00 | 28-32
+ℹ  log.ts               | 100.00 |   100.00 |  100.00 | 
+ℹ  middleware           |        |          |         | 
+ℹ   api-key.ts          | 100.00 |   100.00 |  100.00 | 
+ℹ   idempotency.ts      | 100.00 |    92.86 |  100.00 | 
+ℹ   request-log.ts      | 100.00 |   100.00 |  100.00 | 
+ℹ   session.ts          | 100.00 |   100.00 |  100.00 | 
+ℹ   validate.ts         | 100.00 |   100.00 |  100.00 | 
+ℹ   verify-signature.ts | 100.00 |   100.00 |  100.00 | 
+ℹ  notifications.ts     | 100.00 |   100.00 |  100.00 | 
+ℹ  order-events.ts      |  98.38 |    95.12 |   95.65 | 182-185
+ℹ  outbox.ts            | 100.00 |    96.15 |  100.00 | 
+ℹ  pagination.ts        | 100.00 |    88.89 |  100.00 | 
+ℹ  passwords.ts         | 100.00 |   100.00 |  100.00 | 
+ℹ  permissions.ts       | 100.00 |   100.00 |  100.00 | 
+ℹ  problems.ts          | 100.00 |    80.00 |  100.00 | 
+ℹ  provider.ts          |  98.61 |    58.82 |   87.50 | 41-42
+ℹ  queue.ts             | 100.00 |    80.95 |   78.57 | 
+ℹ  rate-limits.ts       | 100.00 |    97.06 |  100.00 | 
+ℹ  redis-store.ts       | 100.00 |   100.00 |   85.71 | 
+ℹ  safe-url.ts          |  96.64 |    94.59 |   75.00 | 135-139
+ℹ  schema.ts            |  95.22 |    95.74 |   84.00 | 182-185 187-192
+ℹ  schemas.ts           | 100.00 |   100.00 |  100.00 | 
+ℹ  server.ts            | 100.00 |    85.71 |  100.00 | 
+ℹ  sessions.ts          | 100.00 |   100.00 |  100.00 | 
+ℹ  shop.ts              | 100.00 |   100.00 |  100.00 | 
+ℹ  shutdown.ts          | 100.00 |   100.00 |  100.00 | 
+ℹ  signature.ts         | 100.00 |   100.00 |  100.00 | 
+ℹ  users.ts             | 100.00 |    94.74 |  100.00 | 
+ℹ  v1.ts                | 100.00 |    77.78 |   75.00 | 
+ℹ  v2.ts                |  99.62 |    96.83 |   76.00 | 452-453
+ℹ ----------------------------------------------------------------------
+ℹ all files             |  98.97 |    94.07 |   90.64 | 
+ℹ ----------------------------------------------------------------------
+ℹ end of coverage report`}
+>
+
+Before this, the 325 tests come out, one per line; here it starts from the summary. **325** are the 320 you counted in the [introduction](/en/phase-10/#file-by-file) plus the 5 for the signature: the two helpers in `test/` no longer count. It takes about two and a half minutes.
+
+The last row: **98.97% of the lines, 94.07% of the branches and 90.64% of the functions**. `scripts/` and `examples/` show up too, because some tests run them. If a few `npm notice` lines come out at the end, they’re npm’s: you don’t have to do anything.
+
+</TryIt>
+
+Now, one row: **`db.ts`, line 22**, the file that opens the connections to PostgreSQL ([Phase 5](/en/phase-5/node-postgres/#a-pool-open-connections-that-are-lent-out)). Line 22 is the highlighted one:
+
+<ProjectCode file="shop-api/42-tests/src/db.ts" region="pool" mark={16} />
+
+It only runs if PostgreSQL drops a connection waiting in the pool, for example when it restarts, and no test restarts it. That’s why `funcs %` says `0.00`: the file’s only function is that `(error) => { … }`.
+
+Does it deserve a test? It would have to drop a pool connection from PostgreSQL’s side and check that the process is still alive. It can be done, and it costs. The line only writes a message; what matters is that, with someone listening to the `'error'`, Node doesn’t stop the process.
+
+And here is coverage’s limit. **Phase 9’s final review found the same bug in a borrowed connection**, one that’s in use: nobody was listening to its `'error'`, and if PostgreSQL dropped it, the whole process stopped. The report couldn’t warn about it, because that line didn’t exist. The shop gets it in lesson 6.
+
+<SelfCheck question="Challenge: in heartbeat.ts, Phase 9’s worker heartbeat, lines 28 to 32 don’t run: what it does if it can’t write its file. How would you cover them? Is it worth it?">
+
+This one comes cheap. `startHeartbeat` receives the file to write to: a test can give it one inside a folder that doesn’t exist and, with `mock.method(log, 'warn')` ([lesson 1](/en/phase-10/writing-tests-node/#mocks-and-a-fake-clock)), check that it warns only once even if it beats several times.
+
+It’s worth it: it’s a unit test of milliseconds. Line 22 of `db.ts` costs much more: that’s why you decide row by row, not by the percentage.
+
+</SelfCheck>
+
+### On your server
+
+This lesson doesn’t change `src/`: there’s nothing to copy to your server. **Don’t point `BASE_URL` at your server:** production doesn’t load the practice accounts, and every run would leave a real order there.
+
+## You have already seen it
+
+- **A school fire drill**: it doesn’t check an extinguisher, but that the whole building gets out in time. That’s why it’s done only now and then.
+- **GitHub Actions’ “Re-run failed jobs” button**: the temptation with a flaky test.
+- **The “coverage 95%” badges** on many projects on GitHub: now you know what they measure, and what they don’t.
+
+## Common mistakes
+
+- **Chasing 100% coverage**: you end up with tests that run lines without checking anything.
+- **Testing everything end-to-end** because “it’s the most real”: they take longer, fail for things outside your code and don’t say where.
+- **Unit tests with a fake database** for bugs that live in the database: they pass green with the bug inside.
+- **Rerunning a flaky test until it passes**, or skipping it: the bug is still there.
+- **Sleeping a fixed time** instead of waiting for a condition with a maximum: on a slower machine, it isn’t enough.
+- **Running the end-to-end tests against production**: they leave real orders, and they need an account with a known password.
+
+## Summary
+
+- Unit, one piece on its own; integration, several real ones together; end-to-end, the whole application from the outside. The more it covers, the more it catches and the more it costs.
+- The pyramid asks for lots of unit tests; the trophy, mostly integration. The shop looks like the trophy because its bugs live in PostgreSQL.
+- `npm run e2e` buys from the Compose shop over HTTP: it catches how the pieces fit together, and it needs them all running.
+- Coverage points to what nobody has run; it doesn’t say whether it’s checked, and it doesn’t see missing code.
+- A flaky test depends on something it doesn’t control. You look for the cause; you don’t rerun it until it’s green.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="You’re going to add to the shop a function that calculates shipping costs from the weight and the country, without querying anything. Which test do you write for it first?"
+  review="Three types of test, by how far they reach"
+>
+
+<QuizOption text="An integration test with PostgreSQL, because that’s how everything is tested in the shop.">
+
+This function doesn’t touch the database: starting PostgreSQL doesn’t test it better, only more slowly.
+
+</QuizOption>
+
+<QuizOption text="A few unit tests: a weight and a country in each one." correct>
+
+With the same data it always returns the same thing and talks to nothing: a unit test takes milliseconds and, if it fails, it says the exact case.
+
+</QuizOption>
+
+<QuizOption text="An end-to-end test that buys and looks at the total, because it’s the closest to a customer.">
+
+It would catch an error, but without saying where: a wrong total could be the shipping, the price or the order. For a calculation rule, it’s paying a lot for little.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Changing an order’s quantity just as another request cancels it leaves the stock wrong. Which type of test catches it?"
+  review="Why the shop looks like the trophy"
+>
+
+<QuizOption text="An integration test, with both requests at once against PostgreSQL." correct>
+
+The bug lives in how PostgreSQL orders the two transactions: only a test that fires them against a real one sees it, like “changing the quantity and cancelling at the same time,” in `transactions.test.ts`.
+
+</QuizOption>
+
+<QuizOption text="A unit test, with a fake database that returns the stock.">
+
+A double has no transactions or locks: the two requests would never clash, and it would pass green with the bug inside.
+
+</QuizOption>
+
+<QuizOption text="An end-to-end test, because bugs with two requests only show up with the Compose shop.">
+
+A real PostgreSQL is enough, without the whole of Compose. An integration test catches it faster and says which route and which stock.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A pull request raises coverage from 98.9% to 100% with a test that calls a function and has no assertion. What has the shop gained?"
+  review="Why 100% isn’t the goal"
+>
+
+<QuizOption text="That function is now tested: no line is left unrun.">
+
+Run, yes; tested, no: if it returned anything at all, the test would stay green.
+
+</QuizOption>
+
+<QuizOption text="No bug can be left uncaught in the shop’s code anymore.">
+
+Coverage doesn’t see missing code, like the quantity bug’s `UPDATE`, and doesn’t check what runs.
+
+</QuizOption>
+
+<QuizOption text="A higher number, and no test that warns if that function breaks." correct>
+
+Without an assertion, the test only fails if the function throws an error. The percentage goes up, and nothing is checked.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A cache test fails in GitHub Actions once in ten runs, and never on your computer. What do you do?"
+  review="What a flaky test depends on"
+>
+
+<QuizOption text="You press “Re-run failed jobs”: if it passes the second time, it was GitHub’s fault.">
+
+The second time it’ll pass almost always, and the bug will still be there. And the team learns that a red means nothing.
+
+</QuizOption>
+
+<QuizOption text="You look for what the test takes for granted that doesn’t always hold." correct>
+
+In the shop, the test took for granted that a read always stores in the cache, and that doesn’t hold if the cache is slow and the shop takes it as down. The fix was to repeat the reads with a maximum.
+
+</QuizOption>
+
+<QuizOption text="You mark it to be skipped in GitHub Actions, since it does pass on your computer.">
+
+Skipping it is no longer checking what it promised. And sometimes the flaky one is the code: what fails on a slow machine can fail in production under load.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="npm run e2e: the purchase fails because the email doesn’t arrive, and docker compose ps says every service is healthy, the worker too. What do you do?"
+  review="The problem"
+>
+
+<QuizOption text="You run npm test, to see which piece of the shop fails.">
+
+`npm test` doesn’t start Compose: it can come out all green with this bug, as in “The problem.”
+
+</QuizOption>
+
+<QuizOption text="You delete everything with docker compose down -v and bring it up again.">
+
+If the bug is in the configuration, it comes back the same when it starts, and you’ve lost your practice data without knowing the cause.
+
+</QuizOption>
+
+<QuizOption text="You read the worker’s log: it’s the one that sends the email." correct>
+
+Healthy only says the worker is still alive. Its log says what happens to each job, like an `ECONNREFUSED` when connecting to the mail server.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="The shop grows and you add a module that calculates discounts with 40 rules, without touching the database. How does the mix of its tests change?"
+  review="Why the shop looks like the trophy"
+>
+
+<QuizOption text="That module calls for lots of unit tests; the rest of the shop still calls for integration." correct>
+
+Forty rules with no database are logic that works on its own: with a unit test per case, each failure says which rule broke. The rest still lives in PostgreSQL.
+
+</QuizOption>
+
+<QuizOption text="It doesn’t change: in this shop everything is tested against PostgreSQL, discounts too.">
+
+The rule isn’t “everything against PostgreSQL,” but testing where the bug lives. Starting the database for rules that don’t touch it only makes the tests slower.
+
+</QuizOption>
+
+<QuizOption text="The whole shop moves to the pyramid: more unit tests everywhere, with doubles for the database.">
+
+The rest of the shop’s bugs are still in PostgreSQL, and a double wouldn’t see them, just as it wouldn’t have seen the quantity one.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [The Practical Test Pyramid](https://martinfowler.com/articles/practical-test-pyramid.html), by Ham Vocke: the pyramid, with examples.
+- [The Testing Trophy and Testing Classifications](https://kentcdodds.com/blog/the-testing-trophy-and-testing-classifications), by Kent C. Dodds: the trophy.
+- [Collecting code coverage](https://nodejs.org/api/test.html#collecting-code-coverage), in Node’s documentation.
+- [Test Coverage](https://martinfowler.com/bliki/TestCoverage.html), by Martin Fowler: why a high number isn’t enough.
+- [Eradicating Non-Determinism in Tests](https://martinfowler.com/articles/nonDeterminism.html), by Martin Fowler: flaky tests and how to get rid of them.
