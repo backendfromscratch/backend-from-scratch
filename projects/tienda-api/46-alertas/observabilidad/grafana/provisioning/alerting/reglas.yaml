@@ -1,11 +1,14 @@
 # Las reglas de alerta de la tienda (Fase 10, lección 6). Grafana evalúa cada una cada 10 segundos
 # contra Prometheus y, cuando se cumple el tiempo que pide (for), avisa a «guardia» (contacto.yaml)
-# según la política (politica.yaml). Las tres miran síntomas, lo que nota quien usa la tienda
-# (errores, lentitud, un correo que no llega), no causas (la CPU, un Redis caído): un síntoma
-# avisa de cualquier causa, también de las que nadie había pensado.
+# según la política (politica.yaml). Las tres primeras miran síntomas, lo que nota quien usa la
+# tienda (errores, lentitud, un correo que no llega), no causas (la CPU, un Redis caído): un síntoma
+# avisa de cualquier causa, también de las que nadie había pensado. La cuarta vigila a las otras:
+# si la API deja de mandar métricas, las tres se quedan sin datos y callan.
 # Cada regla tiene tres pasos: A, la consulta a Prometheus (instant: solo el valor de ahora); B, el
 # último valor de A (reduce); C, la condición (threshold): si B pasa del umbral, la regla se cumple.
-# Sin datos (noDataState: OK), no avisa: sin tráfico no hay errores que contar.
+# Sin datos (noDataState: OK), las tres primeras no avisan: sin tráfico no hay errores que contar.
+# Pero sin datos también puede ser que la API esté caída: de eso avisa la cuarta, que con sin datos
+# sí avisa (noDataState: Alerting).
 # Los umbrales se midieron con npm run trafico y la tienda sana, en un portátil, 5 minutos (el
 # razonamiento, en cada regla). Mídelos en tu máquina: un umbral copiado de otro sitio avisa de más
 # o de menos.
@@ -20,8 +23,8 @@ groups:
       # #region errores
       # Errores: la parte de las respuestas de /v2 que son 5xx, en el último minuto. Es el SLI del
       # SLO de la lección: «el 99 % de las peticiones a /v2 responden sin 5xx».
-      # Umbral, 5 %: con npm run trafico (unas 3,5 peticiones por segundo), la tienda sana no dio
-      # ni un 5xx en 5 minutos. Un 5xx suelto en un minuto (de unas 210) es un 0,5 %, y no avisa. Un
+      # Umbral, 5 %: con npm run trafico (unas 4 peticiones por segundo), la tienda sana no dio ni
+      # un 5xx en 5 minutos. Un 5xx suelto en un minuto (de unas 250) es un 0,4 %, y no avisa. Un
       # 5 % gasta el presupuesto de errores del SLO (el 1 %) cinco veces más deprisa de lo que se
       # puede, y durante 2 minutos ya no es mala suerte. Con poco tráfico, un solo error pesa más:
       # por eso los 2 minutos (for), para no despertar a nadie por una petición.
@@ -109,7 +112,9 @@ groups:
       # unos pocos segundos como mucho; si pasa de 2 minutos, algo lo tiene parado (el Redis de la
       # cola, el trabajador), y los clientes pagan sin recibir su correo. Es la única de las tres
       # que avisa de un fallo que no da ningún error. max: con varias copias de la API, todas dicen
-      # lo mismo (lo leen de la misma tabla). Sin for: la antigüedad ya es un tiempo.
+      # lo mismo (lo leen de la misma tabla). Sin for: la antigüedad ya es un tiempo. Sin datos,
+      # no avisa: esta métrica se manda cada 5 segundos, haya tráfico o no, así que sin datos es
+      # que la API no informa, y de eso avisa la regla siguiente, con un título que lo dice.
       # Umbral, 120 s: con npm run trafico, el evento más antiguo nunca pasó de 0,6 s. Dos minutos
       # dejan sitio a lo normal (un despliegue que reinicia el trabajador, un reintento de BullMQ)
       # y avisan antes de que el cliente empiece a preguntar por su correo.
@@ -143,3 +148,46 @@ groups:
               expression: B
               conditions: [{ evaluator: { type: gt, params: [120] } }]
       # #endregion salientes
+
+      # #region sin-datos
+      # La API no manda métricas: los segundos desde la última muestra de tienda.salientes.antiguedad,
+      # que la API manda cada 5 segundos mientras vive, haya tráfico o no (timestamp() da la hora de
+      # la muestra). Si la API se cae, o deja de poder mandar, esa hora se queda quieta y los
+      # segundos crecen. Pasados 5 minutos, Prometheus ya ni la encuentra y la consulta se queda sin
+      # datos: por eso esta regla, al revés que las otras, avisa también sin datos (Alerting). max:
+      # con varias copias, la que lleva más tiempo callada; pero una que calla del todo desaparece
+      # de la consulta a los 5 minutos y deja de contar. Este Grafana es el de tu ordenador, con una.
+      # Umbral, 60 s: la muestra nunca tiene más de 5 s si la API funciona; 60 s son doce envíos
+      # perdidos seguidos. for: 1m, para no avisar al arrancar, antes del primer envío de la API.
+      # En total, avisa unos 2 minutos después de que la API calle. Si se cae todo el ordenador, esta
+      # regla cae con él: para eso está mirar la tienda desde fuera (lección 6).
+      - uid: tienda-api-sin-datos
+        title: La API no manda métricas
+        condition: C
+        for: 1m
+        noDataState: Alerting
+        execErrState: Error
+        annotations:
+          summary: 'La API no manda métricas desde hace más de un minuto: las otras alertas no ven nada'
+          description: 'Mira si la API está viva (docker compose ps, /salud/viva) y su log.'
+        labels:
+          gravedad: urgente
+        data:
+          - refId: A
+            datasourceUid: prom
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              instant: true
+              expr: max(time() - timestamp(tienda_salientes_antiguedad_seconds{job="tienda-api"}))
+          - refId: B
+            datasourceUid: __expr__
+            model: { refId: B, type: reduce, expression: A, reducer: last }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: gt, params: [60] } }]
+      # #endregion sin-datos

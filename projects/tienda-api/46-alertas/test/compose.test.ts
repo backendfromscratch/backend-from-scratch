@@ -189,17 +189,28 @@ test('compose.observabilidad.yaml añade Prometheus y Grafana, y la API y el tra
   assert.match(grafana, /mailpit:\n\s+condition: service_started/);
 });
 
-test('Grafana nace con las tres alertas, y avisa por correo a guardia', async () => {
+test('Grafana nace con las cuatro alertas, y avisa por correo a guardia', async () => {
   // Fase 10, lección 6: en provisioning/alerting, que Grafana lee al arrancar.
   const carpeta = 'observabilidad/grafana/provisioning/alerting';
   const reglas = await readFile(`${carpeta}/reglas.yaml`, 'utf8');
-  for (const uid of ['tienda-errores-5xx', 'tienda-lentitud-p99', 'tienda-salientes-parados']) {
-    assert.match(reglas, new RegExp(`- uid: ${uid}$`, 'm'));
-  }
-  // Los umbrales, medidos (el razonamiento, en el fichero): 5 %, 0,5 s y 120 s.
+  const uids = [
+    'tienda-errores-5xx',
+    'tienda-lentitud-p99',
+    'tienda-salientes-parados',
+    'tienda-api-sin-datos',
+  ];
+  assert.deepEqual(
+    [...reglas.matchAll(/- uid: (\S+)$/gm)].map((m) => m[1]),
+    uids,
+  );
+  // Los umbrales, medidos (el razonamiento, en el fichero): 5 %, 0,5 s, 120 s y 60 s.
   const umbrales = [...reglas.matchAll(/type: gt, params: \[([\d.]+)\]/g)].map((m) => m[1]);
-  assert.deepEqual(umbrales, ['0.05', '0.5', '120']);
+  assert.deepEqual(umbrales, ['0.05', '0.5', '120', '60']);
   assert.equal([...reglas.matchAll(/^\s+for: 2m$/gm)].length, 2);
+  // Sin datos, solo avisa la que vigila que la API siga mandando métricas.
+  const sinDatos = [...reglas.matchAll(/noDataState: (\w+)$/gm)].map((m) => m[1]);
+  assert.deepEqual(sinDatos, ['OK', 'OK', 'OK', 'Alerting']);
+  assert.match(reglas, /time\(\) - timestamp\(tienda_salientes_antiguedad_seconds/);
   // Lo que miran: el job de la API en Prometheus, /v2 y la antigüedad de los eventos salientes.
   assert.match(reglas, /http_response_status_code=~"5\.\."/);
   assert.match(reglas, /http_route!="\/v2\/pedidos\/:id\/eventos"/);
@@ -210,6 +221,8 @@ test('Grafana nace con las tres alertas, y avisa por correo a guardia', async ()
   const politica = await readFile(`${carpeta}/politica.yaml`, 'utf8');
   assert.match(politica, /receiver: guardia$/m);
   assert.match(politica, /group_by: \['alertname'\]/);
+  // Mailpit guarda hasta 5000 correos: con npm run trafico, los de las alertas no se borran.
+  assert.match((await servicio('mailpit')).join('\n'), /MP_MAX_MESSAGES: '5000'$/m);
 });
 
 test('Grafana nace provisionada: Prometheus y el panel de la tienda, desde ficheros', async () => {
