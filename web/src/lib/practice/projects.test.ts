@@ -67,6 +67,8 @@ describe('the guided projects', () => {
         const spanish = versions(languages.es, es);
         expect(versions(languages.en, en)).toEqual(spanish);
         for (const version of Object.values(spanish)) expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+        // The same Node floor too: engines differs from step to step, so each pair is compared.
+        expect(json(languages.en, en).engines.node).toBe(json(languages.es, es).engines.node);
       });
 
       it.each(Object.values(languages))(
