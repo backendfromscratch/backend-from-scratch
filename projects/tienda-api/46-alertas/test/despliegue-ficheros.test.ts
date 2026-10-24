@@ -437,6 +437,19 @@ test('una copia que se reinicia entre las dos miradas no está sana: vuelve atr�
   assert.equal(d.contenedor('api-b')?.imagen, VIEJA);
   assert.deepEqual(d.contenedor('api-a'), { id: 'viejo-api-a', imagen: VIEJA });
   assert.equal(d.fallida, NUEVA);
+  // Se rinde a los 60 segundos de esperar, aunque cada mirada la vea sana (doce de 5 s).
+  const nueva = d.ordenes.findIndex((o) =>
+    o.endsWith(
+      `IMAGEN=${IMAGEN} docker compose -f compose.produccion.yaml up -d --no-build --no-deps api-b`,
+    ),
+  );
+  const vuelta = d.ordenes.findIndex((o) => o.includes(':anterior docker compose'));
+  const dormido = d.ordenes
+    .slice(nueva, vuelta)
+    .filter((o) => o.startsWith('sleep '))
+    .reduce((suma, o) => suma + Number(o.slice(6)), 0);
+  assert.ok(nueva >= 0 && vuelta > nueva, d.ordenes.join('\n'));
+  assert.equal(dormido, 60);
 });
 
 test('deja de esperar en cuanto el contenedor está unhealthy', async () => {

@@ -231,7 +231,7 @@ fi
 
 # #region esperar-salud
 # Espera a que Docker dé por sana la copia (el HEALTHCHECK del Dockerfile pregunta a /salud cada 10
-# segundos): unos 60 segundos, pero se rinde en cuanto Docker la da por mala (unhealthy: /salud ha
+# segundos): hasta 60 segundos, pero se rinde en cuanto Docker la da por mala (unhealthy: /salud ha
 # fallado tres veces seguidas) o el contenedor ya no corre (el proceso ha terminado, por ejemplo por
 # un error al arrancar). La salud del trabajador es su latido (compose.produccion.yaml): uno que se
 # reinicia en bucle nunca se pone sano. Con un segundo argumento, «corriendo», basta con que el
@@ -242,9 +242,11 @@ fi
 # segundos entre una y otra, y con el mismo número de reinicios. Un proceso que arranca, contesta un
 # momento y se cae (y Docker lo vuelve a arrancar, con restart: unless-stopped) podía pillarse sano
 # justo en una mirada; si entre las dos se ha reiniciado, RestartCount ha subido, y no cuenta.
+# Los 60 segundos se cuentan sumando lo que se duerme (2 o 5 cada vez), no las vueltas: con vueltas
+# de 5 s, 30 vueltas serían dos minutos y medio.
 esperar_salud() {
-  local estado reinicios vista='' plantilla='{{.RestartCount}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}'
-  for _ in $(seq 30); do
+  local estado reinicios vista='' esperado=0 plantilla='{{.RestartCount}} {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}'
+  while [ "$esperado" -lt 60 ]; do
     estado="$(docker inspect --format "$plantilla" "$(contenedor_de "$1")" 2> /dev/null || true)"
     reinicios="${estado%% *}"
     estado="${estado#* }"
@@ -258,12 +260,14 @@ esperar_salud() {
       # Todavía no: otra mirada dentro de 2 segundos, y la cuenta de las dos vistas, desde cero.
       vista=''
       sleep 2
+      esperado=$((esperado + 2))
       continue
     fi
     # Sana. La segunda vez seguida, con los mismos reinicios que la primera: de verdad.
     if [ "$vista" = "$reinicios" ]; then return 0; fi
     vista="$reinicios"
     sleep 5
+    esperado=$((esperado + 5))
   done
   return 1
 }
