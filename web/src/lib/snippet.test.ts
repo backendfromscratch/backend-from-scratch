@@ -38,6 +38,14 @@ describe('extractRegion', () => {
     expect(extractRegion(yaml)).toBe('services:\n  db:\n    image: postgres\n  api:');
   });
 
+  it('reads Markdown regions, marked with HTML comments', () => {
+    const md =
+      '# Título\n\n<!-- #region cabecera -->\n- **Fecha:** <día>\n<!-- #endregion cabecera -->\n\n## Resumen\n';
+    expect(extractRegion(md, 'cabecera')).toBe('- **Fecha:** <día>');
+    expect(extractRegion(md)).toBe('# Título\n\n- **Fecha:** <día>\n\n## Resumen');
+    expect(() => extractRegion('<!-- a comment -->\n', 'a')).toThrow('There is no region «a»');
+  });
+
   it('a # marker is only a whole comment line, and #regional is not one', () => {
     const yaml = 'a: 1\nkey: "# #region x"\n# #regional\nb: 2\n';
     expect(extractRegion(yaml)).toBe('a: 1\nkey: "# #region x"\n# #regional\nb: 2');
