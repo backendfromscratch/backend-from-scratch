@@ -72,17 +72,17 @@ En los 39 ficheros de `test/` del paso 42:
 
 ### Lo que cuesta cada tipo
 
-Cada tipo paga su alcance con tiempo, preparación y errores más vagos. Los tiempos son de nuestra máquina:
+Cada tipo paga su alcance. Los tiempos son de nuestra máquina:
 
 | | Unitario | Integración | End-to-end |
 |---|---|---|---|
 | En la tienda | `firma.test.ts` | `transacciones.test.ts` | `compra.e2e.ts` |
 | Qué necesita | Node | Node y PostgreSQL con `tienda_test` | La tienda entera en Compose |
-| Lo que tarda uno | Menos de 2 ms | De 1 a 100 ms, y alguno medio segundo | 308 ms la compra |
+| Lo que tarda uno | Menos de 2 ms | De 1 a 100 ms, y alguno medio segundo | 1,3 s la compra, casi todo esperando el correo |
 | Cuando falla, te dice | La función y el caso exactos | La ruta y lo que dejó en la base de datos | Que algo de la cadena falló, no qué |
 | Lo que lo rompe sin que el código esté mal | Casi nada | Un PostgreSQL parado | La tienda parada, otro puerto, un correo que tarda |
 
-La última fila es la que más pesa con el tiempo. **Cuanto más abarca un test, más cosas ajenas a tu código pueden ponerlo en rojo.**
+**Cuanto más abarca un test, más cosas ajenas a tu código pueden ponerlo en rojo.**
 
 ### La pirámide y el trofeo
 
@@ -98,7 +98,7 @@ Hay dos formas famosas de decir cuántos tests de cada tipo conviene tener:
 | Integración | Algunos | La mayoría | Casi todos |
 | End-to-end | Muy pocos | Pocos | 2, desde el paso 42 |
 
-Las dos coinciden en pocos end-to-end, los más caros. Discrepan en el medio.
+Coinciden en pocos end-to-end; discrepan en el medio.
 
 ### Por qué la tienda se parece al trofeo
 
@@ -112,14 +112,15 @@ La tienda usa el PostgreSQL de tu ordenador y, en GitHub Actions, uno en un cont
 
 `test/e2e/compra.e2e.ts` no importa nada de `src/`: habla con la tienda con `fetch`, como cualquier cliente. Su primer test hace una compra entera:
 
-1. **Crea una cuenta**, con un email nuevo en cada ejecución, para no depender de la anterior.
-2. **Inicia sesión** y se queda con la <Term id="cookie">cookie</Term>.
-3. **Hace un pedido** y **lo paga** con la pasarela de mentira, `npm run pasarela` ([Fase 4](/fase-4/webhooks-idempotencia/)).
-4. **Espera el correo de confirmación** en Mailpit, preguntando cada segundo, con un máximo de 30.
+1. **Inicia sesión con Carmen**, una de las cuentas de práctica de los datos de desarrollo, y se queda con la <Term id="cookie">cookie</Term>.
+2. **Hace un pedido** y **lo paga** con la pasarela de mentira, `npm run pasarela` ([Fase 4](/fase-4/webhooks-idempotencia/)).
+3. **Espera el correo de confirmación** en Mailpit, preguntando cada segundo, con un máximo de 30, y se queda con el de su pedido por el asunto: «Tu pedido … está pagado».
+
+No crea cuentas a propósito: la tienda deja crear 5 por hora desde la misma IP ([Fase 6](/fase-6/rate-limiting-secretos/#por-email-y-por-ip-los-límites-de-la-tienda)), y a la sexta ejecución fallaría. **Un end-to-end se topa con todas las reglas de la tienda de verdad.**
 
 El segundo comprueba `/salud` y el `404` de una ruta que no existe.
 
-Para llegar al correo, la compra pasa por la imagen de Docker, la API, PostgreSQL, la cola, el trabajador y Mailpit. **Si este test falla y los demás no, el fallo está en cómo encajan las piezas.**
+La compra pasa por la imagen de Docker, la API, PostgreSQL, la cola, el trabajador y Mailpit. **Si este test falla y los demás no, el fallo está en cómo encajan las piezas.**
 
 Terminan en `.e2e.ts`, así que `npm test`, que solo coge `test/*.test.ts`, no los ejecuta: sin la tienda arrancada fallarían siempre. Se pasan con **`npm run e2e`**, que busca la tienda en `BASE_URL` (por defecto, `http://127.0.0.1:3000`) y Mailpit en `MAILPIT_URL` (`http://127.0.0.1:8025`).
 
@@ -136,7 +137,7 @@ Los ficheros de `test/` no salen (`--test-coverage-exclude='test/**'`): interesa
 
 ### Por qué el 100 % no es la meta
 
-Un porcentaje alto tranquiliza, pero dice menos de lo que parece:
+Un porcentaje alto dice menos de lo que parece:
 
 - **Ejecutar no es comprobar.** Un test sin aserciones que llame a `firmaValida` también cubre sus líneas.
 - **Lo que falta no sale.** El fallo de la cantidad era un `UPDATE` que no existía, y una línea que no existe no puede salir como «no ejecutada».
@@ -158,8 +159,8 @@ La causa: si una orden a la caché tarda más de 200 milisegundos, la tienda la 
 
 Casi siempre, de algo que el test no controla:
 
-- **El tiempo.** Dormir dos segundos fijos y dar por hecho que basta. Mejor esperar a una condición con un máximo, como el end-to-end con el correo, o el reloj de mentira de la [lección 1](/fase-10/escribir-tests-node/#mocks-y-un-reloj-de-mentira).
-- **Lo que deja otro test.** Si comparten datos, el resultado depende del orden: por eso el end-to-end se inventa un email cada vez.
+- **El tiempo.** Dormir dos segundos fijos y suponer que basta. Mejor esperar a una condición con un máximo, como el end-to-end con el correo, o el reloj de mentira de la [lección 1](/fase-10/escribir-tests-node/#mocks-y-un-reloj-de-mentira).
+- **Lo que deja otro test.** Si comparten datos, el resultado depende del orden: la bandeja de Carmen guarda los correos de otras ejecuciones, y por eso el end-to-end busca el de su pedido.
 - **Una carrera de verdad.** En la lección 1, «pagar y cambiar la cantidad a la vez», con el stock roto, fallaba o no según quién llegara antes: ese rojo de vez en cuando era un fallo real.
 
 **Lo que no se hace es volver a ejecutarlo hasta que salga verde.** Un test que falla a veces enseña al equipo a no fiarse del rojo, y el día que el rojo es de verdad, nadie lo mira.
@@ -168,7 +169,7 @@ Casi siempre, de algo que el test no controla:
 
 - **`npm test`**, con cada cambio, en tu ordenador (unos dos minutos), y en tu workflow de GitHub Actions ([Fase 8](/fase-8/ci-cd-github-actions/)) antes de publicar la imagen.
 - **`npm run e2e`**, antes de desplegar, con la tienda de Compose arrancada. Tu workflow no lo pasa: tendría que levantar Compose entero.
-- **`npm run cobertura`**, de vez en cuando, para buscar huecos. No es una barrera: un 0,1 % menos no debería parar un despliegue.
+- **`npm run cobertura`**, de vez en cuando, para buscar huecos: no es una barrera para desplegar.
 
 ## Pruébalo
 
@@ -196,8 +197,8 @@ docker compose port api 3000
   output={`> tienda-api@1.0.0 e2e
 > node --env-file-if-exists=.env --test --test-concurrency=1 'test/e2e/*.e2e.ts'
 
-✔ una compra de principio a fin: cuenta, sesión, pedido, pago y correo (308.176798ms)
-✔ la tienda responde en /salud, y lo que no existe es un 404 en formato Problem Details (4.456497ms)
+✔ una compra de principio a fin: sesión, pedido, pago y correo (1279.128976ms)
+✔ la tienda responde en /salud, y lo que no existe es un 404 en formato Problem Details (12.939363ms)
 ℹ tests 2
 ℹ suites 0
 ℹ pass 2
@@ -205,15 +206,14 @@ docker compose port api 3000
 ℹ cancelled 0
 ℹ skipped 0
 ℹ todo 0
-ℹ duration_ms 393.706547`}
+ℹ duration_ms 1367.938498`}
 >
 
-Las dos primeras líneas son de npm: la orden detrás del script. Fíjate en **`pass 2`**: una cuenta nueva ha comprado, pagado y recibido su correo, pasando por todos los contenedores, en unos 300 milisegundos.
+Las dos primeras líneas son de npm: la orden detrás del script. Fíjate en **`pass 2`**: Carmen ha comprado, pagado y recibido su correo. La compra tarda 1,3 segundos, casi todos de espera: el test mira Mailpit cada segundo, y a la primera el correo aún no ha llegado. Lo pasamos siete veces seguidas: las siete, en verde.
 
 Si falla:
 
 - **Los dos, con `fetch failed` y `ECONNREFUSED`**: nadie escucha en esa dirección. La tienda no está arrancada, o está en el `3001`.
-- **El primero, con un `429` en lugar del `201`**: la tienda deja crear 5 cuentas por hora desde la misma IP ([Fase 6](/fase-6/rate-limiting-secretos/#por-email-y-por-ip-los-límites-de-la-tienda)), y cada ejecución crea una. Espera una hora, o empieza de cero con `docker compose down -v` y otra vez el `up` (borra tus datos de práctica).
 - **El primero, porque no llegó el correo**: mira si el trabajador está en marcha, con `docker compose ps`.
 
 </TryIt>
@@ -336,7 +336,7 @@ Merece la pena: es un unitario de milisegundos. La línea 22 de `bd.ts` cuesta m
 
 ### En tu servidor
 
-Esta lección no cambia `src/`: en tu servidor no hay nada que copiar. **No apuntes `BASE_URL` a tu servidor:** cada `npm run e2e` crearía allí una cuenta y un pedido de verdad.
+Esta lección no cambia `src/`: en tu servidor no hay nada que copiar. **No apuntes `BASE_URL` a tu servidor:** producción no carga las cuentas de práctica, y cada ejecución dejaría allí un pedido de verdad.
 
 ## Ya lo has visto
 
@@ -352,7 +352,7 @@ Esta lección no cambia `src/`: en tu servidor no hay nada que copiar. **No apun
 - **Unitarios con una base de datos de mentira** para fallos que viven en la base de datos: pasan en verde con el fallo dentro.
 - **Repetir un test intermitente hasta que pase**, o saltárselo: el fallo sigue ahí.
 - **Dormir un tiempo fijo** en vez de esperar a una condición con un máximo: en una máquina más lenta, no basta.
-- **Pasar los end-to-end contra producción**: crean cuentas y pedidos de verdad.
+- **Pasar los end-to-end contra producción**: dejan pedidos de verdad, y necesitan una cuenta con una contraseña conocida.
 
 ## Resumen
 
