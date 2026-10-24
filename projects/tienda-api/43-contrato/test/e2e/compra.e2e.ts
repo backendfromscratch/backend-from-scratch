@@ -4,7 +4,6 @@
 // en cómo encajan las piezas, no en una de ellas.
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { BASE_URL, esperar, MAILPIT_URL, ORIGEN } from './ayuda.ts';
@@ -12,18 +11,12 @@ import { BASE_URL, esperar, MAILPIT_URL, ORIGEN } from './ayuda.ts';
 const ejecutar = promisify(execFile);
 const json = { 'Content-Type': 'application/json' };
 
-test('una compra de principio a fin: cuenta, sesión, pedido, pago y correo', async () => {
-  // Un email nuevo en cada ejecución: así el test no depende de lo que dejó la anterior, y el
-  // correo que buscamos en Mailpit solo puede ser el de esta compra.
-  const email = `e2e-${randomUUID()}@ejemplo.com`;
-  const contrasena = 'una frase larga para el test e2e';
-
-  const alta = await fetch(`${BASE_URL}/v2/cuentas`, {
-    method: 'POST',
-    headers: json,
-    body: JSON.stringify({ email, contrasena }),
-  });
-  assert.equal(alta.status, 201);
+test('una compra de principio a fin: sesión, pedido, pago y correo', async () => {
+  // La cuenta de práctica de Carmen, la que cargan los datos de desarrollo (bd/cuentas.sql), y no
+  // una nueva: la tienda deja crear 5 cuentas por IP y hora, y quien repite este test mientras
+  // aprende llegaría al límite. Dar de alta una cuenta ya lo cubren los tests de integración.
+  const email = 'carmen@ejemplo.com';
+  const contrasena = 'carmen-practica-2026';
 
   const sesion = await fetch(`${BASE_URL}/v2/sesion`, {
     method: 'POST',
@@ -52,12 +45,17 @@ test('una compra de principio a fin: cuenta, sesión, pedido, pago y correo', as
 
   // El correo no sale al instante: pasa por la cola y lo manda el trabajador. Se espera, con un
   // máximo, en vez de dormir un número fijo de segundos (un test así falla a veces, y nadie sabe por qué).
+  // La bandeja de Carmen guarda los correos de ejecuciones anteriores: se busca el del pedido que
+  // acabamos de pagar, por el número que lleva en el asunto.
   const mensajes = await esperar('el correo de confirmación', async () => {
     const res = await fetch(
       `${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:${email}`)}`,
     );
     const { messages } = await res.json();
-    return messages.length > 0 ? messages : undefined;
+    const suyos = messages.filter(
+      (m: { Subject: string }) => m.Subject === `Tu pedido ${id} está pagado`,
+    );
+    return suyos.length > 0 ? suyos : undefined;
   });
   assert.equal(mensajes.length, 1);
 });

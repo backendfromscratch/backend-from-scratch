@@ -4,7 +4,6 @@
 // problem is in how the pieces fit together, not in one of them.
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
 import { test } from 'node:test';
 import { promisify } from 'node:util';
 import { BASE_URL, MAILPIT_URL, ORIGIN, waitFor } from './helpers.ts';
@@ -12,18 +11,13 @@ import { BASE_URL, MAILPIT_URL, ORIGIN, waitFor } from './helpers.ts';
 const run = promisify(execFile);
 const json = { 'Content-Type': 'application/json' };
 
-test('a purchase from start to finish: account, session, order, payment and email', async () => {
-  // A new email on every run: that way the test doesn't depend on what the previous one left
-  // behind, and the email we look for in Mailpit can only be this purchase's.
-  const email = `e2e-${randomUUID()}@example.com`;
-  const password = 'a long phrase for the e2e test';
-
-  const signUp = await fetch(`${BASE_URL}/v2/accounts`, {
-    method: 'POST',
-    headers: json,
-    body: JSON.stringify({ email, password }),
-  });
-  assert.equal(signUp.status, 201);
+test('a purchase from start to finish: session, order, payment and email', async () => {
+  // Carmen's practice account, the one the development data loads (db/accounts.sql), and not a
+  // new one: the shop allows 5 new accounts per IP per hour, and a reader who repeats this test
+  // while learning would hit the limit. Creating an account is already covered by the
+  // integration tests.
+  const email = 'carmen@example.com';
+  const password = 'carmen-practice-2026';
 
   const session = await fetch(`${BASE_URL}/v2/session`, {
     method: 'POST',
@@ -52,13 +46,17 @@ test('a purchase from start to finish: account, session, order, payment and emai
 
   // The email doesn't leave at once: it goes through the queue and the worker sends it. We wait,
   // with a limit, instead of sleeping a fixed number of seconds (a test like that fails
-  // sometimes, and nobody knows why).
+  // sometimes, and nobody knows why). Carmen's inbox keeps the emails of earlier runs, so we look
+  // for the one of the order we just paid, by the number in its subject.
   const messages = await waitFor('the confirmation email', async () => {
     const res = await fetch(
       `${MAILPIT_URL}/api/v1/search?query=${encodeURIComponent(`to:${email}`)}`,
     );
     const { messages } = await res.json();
-    return messages.length > 0 ? messages : undefined;
+    const ours = messages.filter(
+      (m: { Subject: string }) => m.Subject === `Your order ${id} is paid`,
+    );
+    return ours.length > 0 ? ours : undefined;
   });
   assert.equal(messages.length, 1);
 });
