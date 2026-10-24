@@ -6,13 +6,14 @@
 # Three stages, each from its own FROM: the first two install and check, and only the last one
 # becomes the image. What the first ones need (TypeScript, npm's cache, the tests) stays in them.
 #
-# Sizes, measured on 2026-10-14 with docker image ls (CONTENT SIZE: what's downloaded, compressed;
-# in parentheses, what it takes up uncompressed, the sum of docker history):
+# Sizes, measured on 2026-10-14 in Phase 7, before the traces and the metrics, with docker image ls
+# (CONTENT SIZE: what's downloaded, compressed; in parentheses, what it takes up uncompressed, the
+# sum of docker history):
 #   the image from lesson 3, with a single stage:              145 MB (451 MB)
 #   the one from lesson 4, on node:26-slim:                     92 MB (343 MB)
 #   the same final stage on node:26-alpine:                     74 MB (243 MB)
 #   and on distroless (gcr.io/distroless/nodejs26-debian13):    66 MB (244 MB)
-#   this one, with Redis and the migrations (on node:26-slim):  93 MB (359 MB)
+#   step 34's, with Redis and the migrations (node:26-slim):    93 MB (359 MB)
 # slim, and not alpine or distroless: alpine uses another C library (musl) that some package with
 # native code fails with, and distroless doesn't even bring a shell to look inside the container.
 

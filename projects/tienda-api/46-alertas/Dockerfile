@@ -7,13 +7,14 @@
 # convierte en la imagen. Lo que necesitan las primeras (TypeScript, la caché de npm, los tests) se
 # queda en ellas.
 #
-# Tamaños, medidos el 2026-10-14 con docker image ls (CONTENT SIZE: lo que se descarga, comprimido;
-# entre paréntesis, lo que ocupa descomprimida, la suma de docker history):
+# Tamaños, medidos el 2026-10-14 en la Fase 7, antes de las trazas y las métricas, con docker image
+# ls (CONTENT SIZE: lo que se descarga, comprimido; entre paréntesis, lo que ocupa descomprimida, la
+# suma de docker history):
 #   la imagen de la lección 3, de una sola etapa:              145 MB (451 MB)
 #   la de la lección 4, sobre node:26-slim:                     92 MB (343 MB)
 #   la misma etapa final sobre node:26-alpine:                  74 MB (243 MB)
 #   y sobre distroless (gcr.io/distroless/nodejs26-debian13):   66 MB (244 MB)
-#   esta, con Redis y las migraciones (sobre node:26-slim):     93 MB (359 MB)
+#   la del paso 34, con Redis y migraciones (node:26-slim):     93 MB (359 MB)
 # slim, y no alpine ni distroless: alpine usa otra biblioteca de C (musl) con la que algún paquete
 # con código nativo falla, y distroless no trae ni una shell para mirar dentro del contenedor.
 
