@@ -283,10 +283,11 @@ v2.openapi(contrato.recibirPago, async (c) => {
   if (resultado === 'repetido') return c.json({ recibido: evento.id, repetido: true }, 200);
   // Después del COMMIT, a quien sigue el pedido (como hace cambiarEstado).
   if (resultado !== 'sin-cambios') {
-    cambiosDePedidos.emitir(resultado);
     // Un pedido pagado de verdad (lección 5): ni un evento repetido ni uno de un pedido cancelado
-    // llegan hasta aquí.
+    // llegan hasta aquí. Se cuenta antes de avisar a quien sigue el pedido: si un oyente fallara, un
+    // pago real no se quedaría sin contar.
     metricas.pedidosPagados.add(1);
+    cambiosDePedidos.emitir(resultado);
   }
   return c.json({ recibido: evento.id, repetido: false }, 200);
 });

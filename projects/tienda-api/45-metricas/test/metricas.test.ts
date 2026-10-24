@@ -122,6 +122,12 @@ test('una petición queda medida por la plantilla de la ruta, no por la URL', as
   );
   assert.ok(rutas.includes('/v2/productos/:id'), `rutas medidas: ${rutas.join(', ')}`);
   assert.ok(!rutas.includes('/v2/productos/1'));
+  // El panel de errores 5xx filtra por este atributo: si @hono/otel lo renombrara, el panel se
+  // quedaría vacío sin avisar, y aquí falla.
+  const estados = (await puntos('http.server.request.duration')).map(
+    (p) => p.atributos['http.response.status_code'],
+  );
+  assert.ok(estados.includes(200), `estados medidos: ${estados.join(', ')}`);
 });
 
 // Una API con una ruta que rompe su contrato a propósito (como en contrato.test.ts).
@@ -196,6 +202,23 @@ test('tienda.cola.esperando: sin Redis que conteste a tiempo, tampoco', async ()
   const dejarDeObservar = observarCola(lenta, { esperaMs: 100 });
   try {
     assert.deepEqual(await puntos('tienda.cola.esperando'), []);
+  } finally {
+    dejarDeObservar();
+  }
+});
+
+test('tienda.cola.esperando: con una lectura sin acabar, no empieza otra', async () => {
+  let lecturas = 0;
+  const congelada = {
+    getWaitingCount: () => {
+      lecturas++;
+      return new Promise<number>(() => {});
+    },
+  };
+  const dejarDeObservar = observarCola(congelada, { esperaMs: 50 });
+  try {
+    for (let i = 0; i < 3; i++) await puntos('tienda.cola.esperando');
+    assert.equal(lecturas, 1);
   } finally {
     dejarDeObservar();
   }

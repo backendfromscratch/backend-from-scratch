@@ -42,14 +42,27 @@ export function observarCola(
   const esperando = medidor.createObservableGauge('tienda.cola.esperando', {
     description: 'Trabajos esperando en la cola',
   });
+  // Una lectura a la vez: con Redis congelado, getWaitingCount se queda esperando en la cola de
+  // órdenes de la conexión hasta que vuelva, y una por recogida se acumularían. Mientras haya una
+  // sin acabar, no se empieza otra y no se informa ningún valor.
+  let leyendo = false;
   const leer = async (resultado: ObservableResult) => {
+    if (leyendo) return;
+    leyendo = true;
     const parar = new AbortController();
     const limite = dormir(esperaMs, undefined, { signal: parar.signal }).catch(() => undefined);
     try {
-      const cuenta = await Promise.race([cola.getWaitingCount(), limite]);
+      const lectura = cola.getWaitingCount().finally(() => {
+        leyendo = false;
+      });
+      // Si el tiempo se acaba antes, la lectura sigue en marcha (y leyendo, en true) hasta que Redis
+      // conteste; su resultado, o su error, ya no le importa a nadie.
+      lectura.catch(() => {});
+      const cuenta = await Promise.race([lectura, limite]);
       if (cuenta !== undefined) resultado.observe(cuenta);
     } catch {
       // Redis no contesta: sin valor.
+      leyendo = false;
     } finally {
       parar.abort();
     }

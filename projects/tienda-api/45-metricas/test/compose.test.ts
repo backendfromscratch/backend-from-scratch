@@ -134,6 +134,9 @@ test('compose.observabilidad.yaml añade Jaeger, y la API y el trabajador le man
   assert.match(jaeger, /ports:\n\s+- '127\.0\.0\.1:16686:16686'$/m);
   assert.doesNotMatch(jaeger, /4317|4318/);
   assert.match(jaeger, /healthcheck:\n\s+test: \['CMD', 'wget', .*13133\/status'\]/);
+  // Con el tope de trazas en memoria, no la configuración de la imagen.
+  assert.match(jaeger, /command: \['--config', '\/etc\/jaeger\/config\.yaml'\]/);
+  assert.match(await readFile('observabilidad/jaeger.yaml', 'utf8'), /max_traces: \d+/);
   for (const [nombre, servicioOtel] of [
     ['api', 'tienda-api'],
     ['trabajador', 'tienda-trabajador'],
@@ -183,7 +186,7 @@ test('compose.observabilidad.yaml añade Prometheus y Grafana, y la API y el tra
   assert.ok(!(await lineas(fichero)).some((l) => /alert/i.test(l)));
 });
 
-test('Grafana nace provisionada: Prometheus, Jaeger y el panel de la tienda, desde ficheros', async () => {
+test('Grafana nace provisionada: Prometheus y el panel de la tienda, desde ficheros', async () => {
   const fuentes = await readFile(
     'observabilidad/grafana/provisioning/datasources/fuentes.yaml',
     'utf8',
@@ -192,10 +195,8 @@ test('Grafana nace provisionada: Prometheus, Jaeger y el panel de la tienda, des
     fuentes,
     /uid: prom\n\s+type: prometheus\n\s+access: proxy\n\s+url: http:\/\/prometheus:9090/,
   );
-  assert.match(
-    fuentes,
-    /uid: jaeger\n\s+type: jaeger\n\s+access: proxy\n\s+url: http:\/\/jaeger:16686/,
-  );
+  // Sin Jaeger: su conector no habla con Jaeger 2.22. Las trazas, en la web de Jaeger.
+  assert.doesNotMatch(fuentes, /^\s+type: jaeger$/m);
   const panel = JSON.parse(await readFile('observabilidad/grafana/paneles/tienda.json', 'utf8'));
   assert.equal(panel.uid, 'tienda');
   const consultas: string[] = panel.panels.flatMap((p: { targets: { expr: string }[] }) =>
