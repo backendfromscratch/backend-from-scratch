@@ -8,14 +8,13 @@
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { once } from 'node:events';
-import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { after, before, test } from 'node:test';
 import { setTimeout as dormir } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { SpanKind } from '@opentelemetry/api';
+import { SpanKind, trace } from '@opentelemetry/api';
 import { InMemorySpanExporter, type ReadableSpan } from '@opentelemetry/sdk-trace-base';
-import { empezarInstrumentacion, ordenSinDatos } from '../src/instrumentacion.ts';
+import { empezarInstrumentacion, ordenSinDatos, urlSinQuery } from '../src/instrumentacion.ts';
 
 const exportador = new InMemorySpanExporter();
 const instrumentacion = empezarInstrumentacion({ exportador });
@@ -25,11 +24,16 @@ const instrumentacion = empezarInstrumentacion({ exportador });
 // config.ts, que lee las variables al cargarse.
 if (process.env.REDIS_URL_TESTS) process.env.REDIS_URL = process.env.REDIS_URL_TESTS;
 
-// Ahora sí, la tienda.
+// Ahora sí, la tienda. También node:http: url-segura.ts lo importa para mandar los avisos, y la
+// instrumentación de http solo ve los import que llegan después de empezar.
+const { createServer } = await import('node:http');
 const { serve } = await import('@hono/node-server');
 const { app } = await import('../src/app.ts');
 const { conectarRedis } = await import('../src/almacen-redis.ts');
-const { cerrarCola, crearCola, crearTrabajador, encolar } = await import('../src/cola.ts');
+const { cerrarCola, crearCola, crearTrabajador, encolar, procesar } =
+  await import('../src/cola.ts');
+const { crearClave } = await import('../src/claves.ts');
+const { buscarPedido } = await import('../src/datos.ts');
 const { cambiosDePedidos } = await import('../src/eventos-pedidos.ts');
 const { cerrarLimites } = await import('../src/limites.ts');
 const { config } = await import('../src/config.ts');
@@ -247,6 +251,45 @@ test('la vuelta del proveedor: ni el código ni el state llegan a la traza', asy
   for (const valor of valoresDe(vuelta)) {
     assert.doesNotMatch(valor, /codigo-secreto|estado-secreto/);
   }
+  // Y el span del fetch de este test, el cliente (instrumentación de undici): también sin la query.
+  const cliente = deLaTraza(vuelta.spanContext().traceId).find(
+    (s) => s.instrumentationScope.name === '@opentelemetry/instrumentation-undici',
+  );
+  assert.equal(cliente?.attributes['url.full'], `${tienda}/v2/sesion/proveedor/vuelta`);
+});
+
+test('un aviso a la empresa de reparto: su span (node:http) lleva la URL sin la query', async () => {
+  // Un receptor de avisos en 127.0.0.1, con un token en la query de su URL, como el que podría dar
+  // una empresa de reparto.
+  const receptor = createServer((_peticion, respuesta) => void respuesta.writeHead(204).end());
+  receptor.listen(0, '127.0.0.1');
+  await once(receptor, 'listening');
+  const urlAvisos = `http://127.0.0.1:${(receptor.address() as AddressInfo).port}/avisos`;
+  const { id } = await crearClave('Reparto de prueba');
+  await pool.query(`INSERT INTO avisos (clave_id, url, secreto) VALUES ($1, $2, 'secreto')`, [
+    id,
+    `${urlAvisos}?token=token-del-reparto`,
+  ]);
+  try {
+    exportador.reset();
+    // El trabajo del aviso, como lo hace el trabajador, dentro de un span que hace de su traza.
+    await trace.getTracer('prueba').startActiveSpan('aviso de prueba', async (span) => {
+      await procesar(
+        { tipo: 'aviso-de-pago', avisoId: id, pedido: (await buscarPedido(13))!, idEvento: 'e1' },
+        { hostsDeDesarrollo: ['127.0.0.1'] },
+      );
+      span.end();
+    });
+    const aviso = spans().find(
+      (s) => s.instrumentationScope.name === '@opentelemetry/instrumentation-http',
+    );
+    assert.equal(aviso?.kind, SpanKind.CLIENT);
+    assert.equal(aviso?.attributes['url.full'], urlAvisos);
+    for (const valor of valoresDe(aviso!)) assert.doesNotMatch(valor, /token-del-reparto/);
+  } finally {
+    receptor.close();
+    await pool.query('DELETE FROM avisos');
+  }
 });
 
 test(
@@ -281,12 +324,22 @@ test(
       for (const valor of valoresDe(peticion)) assert.doesNotMatch(valor, /traza\.secreta/i);
     } finally {
       // Los intentos apuntados, fuera: no cuentan para otros tests.
-      const claves = await cliente.keys('sesion-*');
+      const claves = await cliente.keys('limites:sesion-*');
       if (claves.length > 0) await cliente.del(claves);
       cliente.destroy();
     }
   },
 );
+
+test('urlSinQuery: la URL sin la query ni el fragmento', () => {
+  assert.equal(
+    urlSinQuery('https://tienda.example/v2/x?code=1&state=2#a'),
+    'https://tienda.example/v2/x',
+  );
+  assert.equal(urlSinQuery('http://127.0.0.1:3000/salud'), 'http://127.0.0.1:3000/salud');
+  // Una que no es una URL entera: lo de antes del ?, al menos.
+  assert.equal(urlSinQuery('/v2/x?code=1'), '/v2/x');
+});
 
 test('ordenSinDatos: la orden y de qué es la clave, sin la clave', () => {
   assert.equal(

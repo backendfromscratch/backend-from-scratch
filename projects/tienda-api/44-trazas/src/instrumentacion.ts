@@ -15,6 +15,7 @@ import {
   BatchSpanProcessor,
   SimpleSpanProcessor,
   type SpanExporter,
+  type SpanProcessor,
 } from '@opentelemetry/sdk-trace-base';
 import { HttpInstrumentation } from '@opentelemetry/instrumentation-http';
 import { PgInstrumentation } from '@opentelemetry/instrumentation-pg';
@@ -44,6 +45,35 @@ export function ordenSinDatos(orden: string, argumentos: Array<string | Buffer>)
 }
 // #endregion orden-sin-datos
 
+// #region sin-query
+// Lo mismo con las URL: cada span de HTTP apunta la URL entera (url.full), con la query. El de cada
+// petición que llega (app.ts), y en la vuelta del proveedor de identidad (Fase 6) la query lleva el
+// código y el state; los de las que salen: los avisos a la empresa de reparto, a una URL que da ella
+// y que puede llevar un token en la query, y las de fetch (openid-client). El log solo apunta la
+// ruta (middleware/registro.ts), así que la traza también: la URL, sin la query.
+export function urlSinQuery(url: string): string {
+  const sinQuery = URL.parse(url);
+  if (!sinQuery) return url.split(/[?#]/)[0]!;
+  sinQuery.search = '';
+  sinQuery.hash = '';
+  return sinQuery.href;
+}
+
+// Un procesador de spans es lo que el SDK llama con cada span. Este, cuando un span está a punto de
+// terminar (y todavía se puede cambiar), le quita la query a url.full, venga de la instrumentación
+// que venga. Va antes del que los manda a Jaeger.
+const quitarQuery: SpanProcessor = {
+  onStart() {},
+  onEnding(span) {
+    const url = span.attributes['url.full'];
+    if (typeof url === 'string') span.setAttribute('url.full', urlSinQuery(url));
+  },
+  onEnd() {},
+  forceFlush: async () => {},
+  shutdown: async () => {},
+};
+// #endregion sin-query
+
 // #region empezar
 // exportador: a dónde van los spans. Sin él, a la URL de OTEL_EXPORTER_OTLP_TRACES_ENDPOINT (Jaeger,
 // en compose.observabilidad.yaml), por OTLP, el protocolo de OpenTelemetry. Los tests le dan uno
@@ -64,11 +94,14 @@ export function empezarInstrumentacion(
   const sdk = new NodeSDK({
     // Los spans, en lotes: cada pocos segundos, todos los terminados en una sola petición a Jaeger
     // (BatchSpanProcessor). Uno a uno (SimpleSpanProcessor) solo en los tests, para verlos enseguida.
-    spanProcessors: opciones.exportador
-      ? [new SimpleSpanProcessor(opciones.exportador)]
-      : urlTrazas
-        ? [new BatchSpanProcessor(new OTLPTraceExporter())]
-        : [],
+    spanProcessors: [
+      quitarQuery,
+      ...(opciones.exportador
+        ? [new SimpleSpanProcessor(opciones.exportador)]
+        : urlTrazas
+          ? [new BatchSpanProcessor(new OTLPTraceExporter())]
+          : []),
+    ],
     metricReaders: opciones.lectorMetricas ? [opciones.lectorMetricas] : [],
     // Los logs siguen en la salida, como siempre (pino): no se mandan a ningún sitio. Sin esto, el
     // SDK intentaría mandarlos por OTLP a localhost.
