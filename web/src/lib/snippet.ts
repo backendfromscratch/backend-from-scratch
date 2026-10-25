@@ -1,14 +1,24 @@
 /**
  * The code the lessons show comes from the guided projects (projects/), which CI runs and tests:
  * a lesson never copies code by hand. A file is shown whole or one region of it, marked with
- * `// #region name` and `// #endregion name` (`-- #region name` in SQL files, and `# #region name` in
- * files whose comments start with `#`: YAML, shell, env files and systemd units). Only a whole line
- * is a marker. A region that does not exist fails the build.
+ * `// #region name` and `// #endregion name` (`-- #region name` in SQL files, `# #region name` in
+ * files whose comments start with `#`: YAML, shell, env files and systemd units, and
+ * `<!-- #region name -->` in Markdown, where `#` starts a heading). Only a whole line is a marker. A
+ * region that does not exist fails the build.
  */
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
 
-const marker = /^\s*(?:\/\/|--|#) #(end)?region\b.*$/;
+const marker = /^\s*(?:(?:\/\/|--|#) #(?:end)?region\b.*|<!-- #(?:end)?region\b.*-->\s*)$/;
+
+/** The name a line opens or closes (`kind` is `region` or `endregion`), if it is that marker. */
+function markerName(line: string, kind: 'region' | 'endregion'): string | undefined {
+  const text = line.trim();
+  return (
+    new RegExp(`^(?:\\/\\/|--|#) #${kind} (.*)$`).exec(text)?.[1] ??
+    new RegExp(`^<!-- #${kind} (.*?) -->$`).exec(text)?.[1]
+  );
+}
 
 /** The common indentation of the non-empty lines, removed. */
 function dedent(lines: string[]): string[] {
@@ -32,9 +42,8 @@ export function extractRegion(source: string, region?: string): string {
   if (region === undefined) {
     return trimBlank(lines.filter((line) => !marker.test(line))).join('\n');
   }
-  const opens = (line: string) => /^(?:\/\/|--|#) #region (.*)$/.exec(line.trim())?.[1] === region;
-  const closes = (line: string) =>
-    /^(?:\/\/|--|#) #endregion (.*)$/.exec(line.trim())?.[1] === region;
+  const opens = (line: string) => markerName(line, 'region') === region;
+  const closes = (line: string) => markerName(line, 'endregion') === region;
   const start = lines.findIndex(opens);
   if (start === -1) throw new Error(`There is no region «${region}»`);
   if (lines.findIndex((line, i) => i > start && opens(line)) !== -1) {
@@ -64,6 +73,8 @@ export function languageOf(file: string): string {
     sql: 'sql',
     yaml: 'yaml',
     yml: 'yaml',
+    // Documents of a step, like the postmortem template (docs/postmortem.md).
+    md: 'md',
     // systemd units: sections and key=value lines, like an ini file.
     service: 'ini',
     timer: 'ini',

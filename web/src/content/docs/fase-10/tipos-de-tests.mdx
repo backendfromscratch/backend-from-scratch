@@ -1,0 +1,524 @@
+---
+translationKey: test-types
+title: "Tests unitarios, de integración y end-to-end"
+description: "Qué es un test unitario, uno de integración y uno end-to-end, cuál conviene en cada caso, para qué sirve la cobertura y cómo arreglar un test intermitente."
+sidebar:
+  label: Tipos de tests
+  order: 2
+lesson:
+  oneLiner: "Un test unitario prueba una pieza sola; uno de integración la hace trabajar con lo de verdad, como PostgreSQL; y uno end-to-end usa la aplicación entera desde fuera, por HTTP, como un cliente. Cuanto más abarca un test, más fallos caza y más cuesta. La tienda apuesta por los de integración porque sus fallos viven en la base de datos."
+  objectives:
+    - "Distinguir un test unitario, uno de integración y uno end-to-end, y clasificar los de la tienda."
+    - "Elegir el tipo de test que compensa en cada caso, por lo que cuesta y por lo que caza."
+    - "Ejecutar un test end-to-end contra la tienda de Compose y leer un informe de cobertura sin perseguir el 100 %."
+    - "Reconocer un test intermitente y buscar su causa en lugar de repetirlo hasta que pase."
+  prerequisites: [writing-tests, compose, cache]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import SelfCheck from '~/components/SelfCheck.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Imagina que tocas la configuración de Mailpit en `compose.yaml` y, sin querer, le cambias el puerto por el que recibe el correo. Lo hemos probado: `npm test` sale con 325 tests en verde, la tienda arranca sana y contesta a todo, y ningún correo llega. El trabajador lo intenta cinco veces, apunta `ECONNREFUSED` en su log y se rinde.
+
+Ningún test se ha enterado porque **ninguno de los 325 arranca Docker**. Casi todos llaman a la tienda dentro de su propio proceso de Node. Que las piezas encajen en Compose, con su trabajador y su Mailpit, no lo mira nadie.
+
+Cada tipo de test caza fallos distintos a un precio distinto. Aquí clasificas los de la tienda, ejecutas el tipo que le faltaba, lees qué líneas no ejecuta nadie y conoces el test que a veces falla sin que nadie toque el código.
+
+## La analogía
+
+<Analogy>
+
+Una compañía de teatro prepara una obra. Cada actor repasa su texto en casa, en diez minutos. Después ensayan por escenas, y ahí se ve si las réplicas encajan. Antes del estreno, el ensayo general: vestuario, luces y la obra entera.
+
+El ensayo general es el que más se parece a la función, y el que más cuesta montar. Si algo sale mal, no sabes a la primera si fue la luz, el telón o el actor. Cada tipo de ensayo caza lo que los otros no ven.
+
+<div slot="limits">
+
+- El ensayo general se hace una vez. La tienda pasa su prueba de punta a punta antes de cada despliegue, y la pasa una máquina.
+- Cada noche, los actores lo hacen un poco distinto. Tu código, con lo mismo alrededor, hace lo mismo cada vez: si un test unas veces pasa y otras no, algo de alrededor ha cambiado, como el tiempo, la carga o el orden.
+
+</div>
+
+</Analogy>
+
+## Cómo funciona de verdad
+
+### Tres tipos de test, según hasta dónde llega
+
+Se distinguen por cuánto de la aplicación pone en marcha cada test. En la tienda hay uno de cada:
+
+- **Un <Term id="unit-test">test unitario</Term>** prueba una pieza sola, sin base de datos ni red: los cinco de `test/firma.test.ts`, de la [lección 1](/fase-10/escribir-tests-node/), llaman a `firmaValida` y miran lo que devuelve.
+- **Un <Term id="integration-test">test de integración</Term>** hace trabajar juntas varias piezas de verdad: los de `test/transacciones.test.ts` mandan peticiones con `app.request`, sin red, y la tienda las atiende con un PostgreSQL real, `tienda_test`.
+- **Un <Term id="end-to-end-test">test end-to-end</Term>** (de punta a punta) usa la aplicación entera desde fuera, como un cliente: la tienda de Compose, por HTTP. El primero llega en este paso: `test/e2e/compra.e2e.ts`.
+
+### Lo que tiene la tienda: casi todo, integración
+
+En los 39 ficheros de `test/` del paso 42:
+
+- **31 hablan con un PostgreSQL de verdad**: 28 empiezan con `usarBd()` ([lección 1](/fase-10/escribir-tests-node/#antes-y-después-de-los-tests-before-after-y-describe)) y otros 3 lo usan directamente.
+- **27 llaman a la tienda con `app.request`**, dentro del mismo proceso. Unos pocos arrancan el servidor aparte, porque lo que prueban, como apagar la tienda, no se ve de otra forma.
+- **4 comprueban ficheros de configuración**, como `compose.yaml` o el `Dockerfile`, casi siempre leyendo sus líneas.
+- **Unitarios hay pocos**: los cinco de la firma y algún test suelto, como el que comprueba que el TTL de la caché varía un poco.
+
+**La tienda es, sobre todo, una tienda de tests de integración.**
+
+### Lo que cuesta cada tipo
+
+Cada tipo paga su alcance. Los tiempos son de nuestra máquina:
+
+| | Unitario | Integración | End-to-end |
+|---|---|---|---|
+| En la tienda | `firma.test.ts` | `transacciones.test.ts` | `compra.e2e.ts` |
+| Qué necesita | Node | Node y PostgreSQL con `tienda_test` | La tienda entera en Compose |
+| Lo que tarda uno | Menos de 2 ms | De 1 a 100 ms, y alguno medio segundo | 1,3 s la compra, con la espera del correo |
+| Cuando falla, te dice | La función y el caso exactos | La ruta y lo que dejó en la base de datos | Que algo de la cadena falló, no qué |
+| Lo que lo rompe sin que el código esté mal | Casi nada | Un PostgreSQL parado | La tienda parada, otro puerto, un correo que tarda |
+
+**Cuanto más abarca un test, más cosas ajenas a tu código pueden ponerlo en rojo.**
+
+### La pirámide y el trofeo
+
+Hay dos formas famosas de decir cuántos tests de cada tipo conviene tener. **La pirámide**, de Mike Cohn, pone muchos unitarios en la base, porque son baratos. **El trofeo**, de Kent C. Dodds, pone en la base las comprobaciones estáticas (en la tienda, `npm run check`, de la [Fase 3](/fase-3/typescript-con-node/#tsc-noemit-el-comprobador-aparte)) y **deja la parte más ancha para la integración**:
+
+| Tipo | Pirámide | Trofeo | La tienda |
+|---|---|---|---|
+| Estáticos (tipos) | No los cuenta | La base | `npm run check`, en cada paso |
+| Unitarios | La mayoría | Unos cuantos | Pocos |
+| Integración | Algunos | La mayoría | Casi todos |
+| End-to-end | Muy pocos | Pocos | 2, desde el paso 42 |
+
+Coinciden en pocos end-to-end; discrepan en el medio.
+
+### Por qué la tienda se parece al trofeo
+
+**Un test sirve donde vive el fallo que tiene que cazar.** Los de la tienda viven en la base de datos: el de la cantidad ([introducción](/fase-10/)) estaba en qué `UPDATE` se hacía y en qué transacción, y un PostgreSQL de mentira no lo habría cazado nunca ([lección 1](/fase-10/escribir-tests-node/#la-base-de-datos-no-se-simula)).
+
+Casi todo el código de la tienda recibe una petición, habla con PostgreSQL y contesta: tiene poca lógica que funcione sola. Un programa que calcula impuestos o descuentos, con muchas reglas sin base de datos, tendría muchos más unitarios.
+
+La tienda usa el PostgreSQL de tu ordenador y, en <Term id="github-actions">GitHub Actions</Term>, uno en un contenedor ([Fase 8](/fase-8/ci-cd-github-actions/#comprobar-los-tests-con-su-postgresql)). [Testcontainers](https://testcontainers.com/), otra forma muy usada, lo arranca desde el propio código de los tests.
+
+### End-to-end: la tienda entera, solo por HTTP
+
+`test/e2e/compra.e2e.ts` no importa nada de `src/`: habla con la tienda con `fetch`, como cualquier cliente. Su primer test hace una compra entera:
+
+1. **Inicia sesión con Carmen**, una de las cuentas de práctica de los datos de desarrollo, y se queda con la <Term id="cookie">cookie</Term>.
+2. **Hace un pedido** y **lo paga** con la pasarela de mentira, `npm run pasarela` ([Fase 4](/fase-4/webhooks-idempotencia/)).
+3. **Espera el correo de confirmación** en Mailpit, preguntando cada segundo, con un máximo de 30, y se queda con el de su pedido por el asunto: «Tu pedido … está pagado».
+4. **Cancela el pedido**, para devolver lo comprado al stock: si no, quien repite el test iría vaciando la tienda, y hacia la ejecución 40 el pedido sería un `409`.
+
+No crea cuentas a propósito: la tienda deja crear 5 por hora desde la misma IP ([Fase 6](/fase-6/rate-limiting-secretos/#por-email-y-por-ip-los-límites-de-la-tienda)), y a la sexta ejecución fallaría. **Un end-to-end se topa con todas las reglas de la tienda de verdad.**
+
+El segundo comprueba `/salud` y el `404` de una ruta que no existe.
+
+La compra pasa por la imagen de Docker, la API, PostgreSQL, la cola, el trabajador y Mailpit. **Si este test falla y los demás no, el fallo está en cómo encajan las piezas.**
+
+Terminan en `.e2e.ts`, así que `npm test`, que solo coge `test/*.test.ts`, no los ejecuta: sin la tienda arrancada fallarían siempre. Se pasan con **`npm run e2e`**, que busca la tienda en `BASE_URL` (por defecto, `http://127.0.0.1:3000`) y Mailpit en `MAILPIT_URL` (`http://127.0.0.1:8025`).
+
+### Cobertura: las líneas que no ejecuta ningún test
+
+La <Term id="code-coverage">cobertura</Term> cuenta qué líneas de tu código se ejecutan mientras pasan los tests. Node la mide con la opción `--experimental-test-coverage`, y el paso 42 trae un script con ella, **`npm run cobertura`**: pasa los tests de `npm test` y termina con una tabla, una fila por fichero:
+
+- **`line %`**: el porcentaje de sus líneas que ha ejecutado algún test.
+- **`branch %`**: el de sus ramas. Un `if` tiene dos caminos, el del sí y el del no.
+- **`funcs %`**: el de sus funciones que alguien ha llamado.
+- **`uncovered lines`**: las líneas que no ha ejecutado nadie. Es la columna útil.
+
+Los ficheros de `test/` no salen (`--test-coverage-exclude='test/**'`): interesa cuánto de la tienda ejecutan.
+
+### Por qué el 100 % no es la meta
+
+Un porcentaje alto dice menos de lo que parece:
+
+- **Ejecutar no es comprobar.** Un test sin aserciones que llame a `firmaValida` también cubre sus líneas.
+- **Lo que falta no sale.** El fallo de la cantidad era un `UPDATE` que no existía, y una línea que no existe no puede salir como «no ejecutada».
+- **Las últimas líneas son las más caras.** Suelen ser las de errores raros, como una conexión cortada, y provocarlos en un test cuesta más que todo lo demás.
+
+**La cobertura es un mapa de dónde no ha mirado nadie, no una nota.** Lees las líneas sin cubrir, una por una, y decides cuáles merecen un test.
+
+### Tests intermitentes: verde, rojo, verde, sin tocar nada
+
+Un <Term id="flaky-test">test intermitente</Term> (*flaky test*) unas veces pasa y otras falla, con el mismo código. La tienda tuvo uno.
+
+El 22 de octubre de 2026, mientras se preparaba la Fase 9, GitHub Actions pasó los tests de la caché en sus ocho copias (los pasos 38 a 41, en los dos idiomas). En siete, «comprar comprueba el stock en la base de datos aunque la caché diga otra cosa» pasó en unos 12 milisegundos. En la copia en inglés del paso 38, falló: **a los dos segundos, la clave del producto 4 seguía sin estar en la caché.**
+
+Si una orden a la caché tarda más de 200 milisegundos, la tienda la [da por caída](/fase-9/cache-redis/#si-la-caché-falla-la-tienda-sigue) y lee de PostgreSQL sin guardar nada. La explicación que dio el arreglo, la más probable: la máquina de GitHub, cargada, tardó de más una vez. El test leía el producto una sola vez y esperaba una clave que esa lectura no iba a guardar.
+
+**La tienda hacía lo correcto; el test suponía algo falso:** que una lectura siempre guarda. El arreglo, en `test/cache.test.ts`, es `leerHastaQueClavesSean`: repite las lecturas hasta que aparecen las claves, con un máximo de 5 segundos.
+
+### De qué depende un test intermitente
+
+Casi siempre, de algo que el test no controla:
+
+- **El tiempo.** Dormir dos segundos fijos y suponer que basta. Mejor esperar a una condición con un máximo, como el end-to-end con el correo, o el reloj de mentira de la [lección 1](/fase-10/escribir-tests-node/#mocks-y-un-reloj-de-mentira).
+- **Lo que deja otro test.** Si comparten datos, el resultado depende del orden: la bandeja de Carmen guarda los correos de otras ejecuciones, y por eso el end-to-end busca el de su pedido.
+- **Una carrera de verdad.** En la lección 1, «pagar y cambiar la cantidad a la vez», con el stock roto, fallaba o no según quién llegara antes: ese rojo de vez en cuando era un fallo real.
+
+**Lo que no se hace es volver a ejecutarlo hasta que salga verde.** Un test que falla a veces enseña al equipo a no fiarse del rojo, y el día que el rojo es de verdad, nadie lo mira.
+
+### Dónde corre cada test
+
+- **`npm test`**, con cada cambio, y en tu workflow ([Fase 8](/fase-8/ci-cd-github-actions/)) antes de publicar la imagen.
+- **`npm run e2e`**, antes de desplegar, con la tienda de Compose arrancada. Tu workflow no lo pasa: tendría que levantar Compose entero.
+- **`npm run cobertura`**, de vez en cuando, para buscar huecos: no es una barrera para desplegar.
+
+## Pruébalo
+
+El objetivo: comprobar que la tienda de Compose vende de principio a fin y encontrar una línea que no ejecuta ningún test, para decidir si merece uno.
+
+Las salidas son de Node 26, en Linux, del 24 de octubre de 2026; tus tiempos serán otros. Usas el paso `42-tests` de la [lección 1](/fase-10/escribir-tests-node/#prepara-el-paso).
+
+### Arranca la tienda
+
+Desde tu proyecto, con tu `.env` de siempre:
+
+```sh
+cd ~/curso-backend/fase-3/tienda-api
+docker compose up -d --build --wait
+docker compose port api 3000
+```
+
+`--wait` vuelve cuando todo está sano. La última orden dice el puerto de la API: si es el `3001`, escribe `BASE_URL=http://127.0.0.1:3001 npm run e2e` en lugar de `npm run e2e`.
+
+### Una compra de principio a fin
+
+<TryIt
+  title="1. Los tests end-to-end"
+  cmd="npm run e2e"
+  output={`> tienda-api@1.0.0 e2e
+> node --env-file-if-exists=.env --test --test-concurrency=1 'test/e2e/*.e2e.ts'
+
+✔ una compra de principio a fin: sesión, pedido, pago y correo (1279.128976ms)
+✔ la tienda responde en /salud, y lo que no existe es un 404 en formato Problem Details (12.939363ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 1367.938498`}
+>
+
+Las dos primeras líneas son de npm: la orden detrás del script. Fíjate en **`pass 2`**: Carmen ha comprado, pagado y recibido su correo. La compra tarda 1,3 segundos, con la espera del correo: el test pregunta a Mailpit cada segundo, hasta que llega. Lo pasamos siete veces seguidas: las siete, en verde.
+
+Si falla:
+
+- **Los dos, con `fetch failed` y `ECONNREFUSED`**: nadie escucha en esa dirección. La tienda no está arrancada, o está en el `3001`.
+- **El primero, porque no llegó el correo**: mira si el trabajador está en marcha, con `docker compose ps`.
+
+</TryIt>
+
+<SelfCheck question="Reto: para solo la API, con docker compose stop api, y vuelve a pasar npm run e2e. ¿Cuántos fallan, y qué dice el error? ¿Ha cambiado algo en el código?">
+
+Fallan los dos, en milisegundos, con `fetch failed` y `ECONNREFUSED`, y el código está igual que hace un minuto. **Un test end-to-end se pone en rojo por cosas que no son tu código**: es parte de su precio. `npm test` seguiría en verde. Arráncala otra vez con `docker compose start api`.
+
+</SelfCheck>
+
+### Las líneas que no ejecuta ningún test
+
+Necesitas lo mismo que para `npm test`: PostgreSQL con `tienda_test` y el Redis de los tests ([«Antes de empezar»](/fase-10/#antes-de-empezar)).
+
+<TryIt
+  title="2. El informe de cobertura"
+  cmd="npm run cobertura"
+  output={`ℹ tests 325
+ℹ suites 0
+ℹ pass 325
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 131624.027252
+ℹ start of coverage report
+ℹ ---------------------------------------------------------------------
+ℹ file                 | line % | branch % | funcs % | uncovered lines
+ℹ ---------------------------------------------------------------------
+ℹ drizzle.config.ts    | 100.00 |    87.50 |  100.00 | 
+ℹ ejemplos             |        |          |         | 
+ℹ  carrera.ts          | 100.00 |    87.50 |  100.00 | 
+ℹ  dinero.ts           | 100.00 |   100.00 |  100.00 | 
+ℹ  hash-rapido.ts      | 100.00 |   100.00 |  100.00 | 
+ℹ  inyeccion.ts        | 100.00 |   100.00 |  100.00 | 
+ℹ  jwt.ts              | 100.00 |    91.67 |  100.00 | 
+ℹ  n-mas-uno.ts        | 100.00 |   100.00 |  100.00 | 
+ℹ  pagina-insegura.ts  | 100.00 |   100.00 |  100.00 | 
+ℹ  protobuf.ts         | 100.00 |   100.00 |  100.00 | 
+ℹ scripts              |        |          |         | 
+ℹ  cargar-datos.ts     | 100.00 |   100.00 |  100.00 | 
+ℹ  crear-admin.ts      | 100.00 |   100.00 |  100.00 | 
+ℹ  crear-clave.ts      |  84.21 |    50.00 |  100.00 | 8-10
+ℹ  migrar.ts           | 100.00 |   100.00 |  100.00 | 
+ℹ  muchos-pedidos.ts   | 100.00 |   100.00 |  100.00 | 
+ℹ  otra-web.ts         |  88.33 |    66.67 |   33.33 | 54-60
+ℹ  pasarela.ts         |  89.80 |    50.00 |  100.00 | 18-22
+ℹ  proveedor.ts        |  87.72 |    75.00 |  100.00 | 43 52-57
+ℹ  trabajador.ts       |  89.83 |    66.67 |   66.67 | 16-18 54-56
+ℹ src                  |        |          |         | 
+ℹ  almacen-redis.ts    | 100.00 |   100.00 |   85.71 | 
+ℹ  apagado.ts          | 100.00 |   100.00 |  100.00 | 
+ℹ  app.ts              | 100.00 |   100.00 |  100.00 | 
+ℹ  avisos.ts           | 100.00 |   100.00 |  100.00 | 
+ℹ  bd.ts               |  97.37 |   100.00 |    0.00 | 22
+ℹ  cache.ts            |  99.13 |    96.61 |   93.75 | 156-157
+ℹ  claves.ts           | 100.00 |   100.00 |  100.00 | 
+ℹ  cola.ts             | 100.00 |    80.95 |   78.57 | 
+ℹ  config.ts           | 100.00 |   100.00 |  100.00 | 
+ℹ  contrasenas.ts      | 100.00 |   100.00 |  100.00 | 
+ℹ  contrato.ts         | 100.00 |   100.00 |  100.00 | 
+ℹ  correo.ts           | 100.00 |    83.33 |  100.00 | 
+ℹ  datos.ts            | 100.00 |   100.00 |  100.00 | 
+ℹ  eco.ts              | 100.00 |    87.50 |   85.71 | 
+ℹ  esquema.ts          |  94.74 |    95.74 |   84.00 | 182-186 188-193
+ℹ  esquemas.ts         | 100.00 |   100.00 |  100.00 | 
+ℹ  eventos-pedidos.ts  |  98.33 |    95.12 |   95.65 | 179-182
+ℹ  firma.ts            | 100.00 |   100.00 |  100.00 | 
+ℹ  latido.ts           |  87.18 |    85.71 |  100.00 | 28-32
+ℹ  limites.ts          | 100.00 |    97.06 |  100.00 | 
+ℹ  log.ts              | 100.00 |   100.00 |  100.00 | 
+ℹ  middleware          |        |          |         | 
+ℹ   clave.ts           | 100.00 |   100.00 |  100.00 | 
+ℹ   idempotencia.ts    | 100.00 |    92.86 |  100.00 | 
+ℹ   registro.ts        | 100.00 |   100.00 |  100.00 | 
+ℹ   sesion.ts          | 100.00 |   100.00 |  100.00 | 
+ℹ   validar.ts         | 100.00 |   100.00 |  100.00 | 
+ℹ   verificar-firma.ts | 100.00 |   100.00 |  100.00 | 
+ℹ  paginacion.ts       | 100.00 |    88.89 |  100.00 | 
+ℹ  permisos.ts         | 100.00 |   100.00 |  100.00 | 
+ℹ  problemas.ts        | 100.00 |    80.00 |  100.00 | 
+ℹ  proveedor.ts        |  98.55 |    58.82 |   87.50 | 39-40
+ℹ  salientes.ts        | 100.00 |    96.15 |  100.00 | 
+ℹ  servidor.ts         | 100.00 |    85.71 |  100.00 | 
+ℹ  sesiones.ts         | 100.00 |   100.00 |  100.00 | 
+ℹ  tienda.ts           | 100.00 |   100.00 |  100.00 | 
+ℹ  url-segura.ts       |  96.71 |    94.59 |   75.00 | 136-140
+ℹ  usuarios.ts         | 100.00 |    94.74 |  100.00 | 
+ℹ  v1.ts               | 100.00 |    77.78 |   75.00 | 
+ℹ  v2.ts               |  99.62 |    96.83 |   76.00 | 452-453
+ℹ ---------------------------------------------------------------------
+ℹ all files            |  98.94 |    94.06 |   90.64 | 
+ℹ ---------------------------------------------------------------------
+ℹ end of coverage report`}
+>
+
+Antes salen los 325 tests, uno por línea; aquí está desde el resumen. **325** son los 320 que contaste en la [introducción](/fase-10/#fichero-a-fichero) y los 5 de la firma: los dos ayudantes de `test/` ya no cuentan. Tarda unos dos minutos.
+
+La última fila: **el 98,94 % de las líneas, el 94,06 % de las ramas y el 90,64 % de las funciones**. Salen también `scripts/` y `ejemplos/`, porque algunos tests los ejecutan. Si al final salen unas líneas `npm notice`, son de npm: no tienes que hacer nada.
+
+</TryIt>
+
+Ahora, una fila: **`bd.ts`, línea 22**, el fichero que abre las conexiones con PostgreSQL ([Fase 5](/fase-5/postgresql-node-js/#un-pool-conexiones-abiertas-que-se-prestan)). La línea 22 es la marcada:
+
+<ProjectCode file="tienda-api/42-tests/src/bd.ts" region="pool" mark={16} />
+
+Solo se ejecuta si PostgreSQL corta una conexión que espera en el pool, por ejemplo al reiniciarse, y ningún test lo reinicia. Por eso `funcs %` dice `0.00`: la única función del fichero es ese `(error) => { … }`.
+
+¿Merece un test? Tendría que cortar desde PostgreSQL una conexión del pool y comprobar que el proceso sigue vivo. Se puede, y cuesta. La línea solo escribe un mensaje; lo que importa es que, con alguien escuchando el `'error'`, Node no para el proceso.
+
+Y aquí está el límite de la cobertura. **La revisión final de la Fase 9 encontró el mismo fallo en una conexión prestada**, una que está en uso: nadie escuchaba su `'error'`, y si PostgreSQL la cortaba, se paraba el proceso entero. El informe no podía avisar, porque esa línea no existía. La tienda la gana en la lección 6.
+
+<SelfCheck question="Reto: en latido.ts, el latido del trabajador de la Fase 9, no se ejecutan las líneas 28 a 32: lo que hace si no puede escribir su fichero. ¿Cómo las cubrirías? ¿Merece la pena?">
+
+Esta sale barata. `empezarLatido` recibe el fichero en el que escribir: un test puede darle uno dentro de una carpeta que no existe y, con `mock.method(log, 'warn')` ([lección 1](/fase-10/escribir-tests-node/#mocks-y-un-reloj-de-mentira)), comprobar que avisa una sola vez aunque lata varias.
+
+Merece la pena: es un unitario de milisegundos. La línea 22 de `bd.ts` cuesta mucho más: por eso se decide fila a fila, no por el porcentaje.
+
+</SelfCheck>
+
+### En tu servidor
+
+Esta lección no cambia `src/`: en tu servidor no hay nada que copiar. **No apuntes `BASE_URL` a tu servidor:** producción no carga las cuentas de práctica, y cada ejecución dejaría allí un pedido de verdad.
+
+## Ya lo has visto
+
+- **El simulacro de incendio** de un colegio: no comprueba un extintor, sino que todo el edificio sale a tiempo. Por eso se hace pocas veces.
+- **El botón «Re-run failed jobs» de GitHub Actions**: la tentación con un test intermitente.
+- **Las insignias «coverage 95 %»** de muchos proyectos en GitHub: ahora sabes lo que miden, y lo que no.
+
+## Errores comunes
+
+- **Perseguir el 100 % de cobertura**: acabas con tests que ejecutan líneas sin comprobar nada.
+- **Probarlo todo con end-to-end** porque «es lo más real»: tardan más, fallan por cosas ajenas a tu código y no dicen dónde.
+- **Unitarios con una base de datos de mentira** para fallos que viven en la base de datos: pasan en verde con el fallo dentro.
+- **Repetir un test intermitente hasta que pase**, o saltárselo: el fallo sigue ahí.
+- **Dormir un tiempo fijo** en vez de esperar a una condición con un máximo: en una máquina más lenta, no basta.
+- **Pasar los end-to-end contra producción**: dejan pedidos de verdad, y necesitan una cuenta con una contraseña conocida.
+
+## Resumen
+
+- Unitario, una pieza sola; integración, varias de verdad juntas; end-to-end, la aplicación entera desde fuera. Cuanto más abarca, más caza y más cuesta.
+- La pirámide pide muchos unitarios; el trofeo, sobre todo integración. La tienda se parece al trofeo porque sus fallos viven en PostgreSQL.
+- `npm run e2e` compra en la tienda de Compose por HTTP: caza cómo encajan las piezas, y las necesita todas arrancadas.
+- La cobertura señala lo que nadie ha ejecutado; no dice si se comprueba ni ve el código que falta.
+- Un test intermitente depende de algo que no controla. Se busca la causa; no se repite hasta el verde.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Vas a añadir a la tienda una función que calcula los gastos de envío a partir del peso y del país, sin consultar nada. ¿Qué test le escribes primero?"
+  review="Tres tipos de test, según hasta dónde llega"
+>
+
+<QuizOption text="Uno de integración con PostgreSQL, porque así se prueba todo en la tienda.">
+
+Esta función no toca la base de datos: arrancar PostgreSQL no la prueba mejor, solo más despacio.
+
+</QuizOption>
+
+<QuizOption text="Unos cuantos unitarios: un peso y un país en cada uno." correct>
+
+Con los mismos datos devuelve siempre lo mismo y no habla con nada: un unitario tarda milisegundos y, si falla, dice el caso exacto.
+
+</QuizOption>
+
+<QuizOption text="Uno end-to-end que compre y mire el total, porque es el más parecido a un cliente.">
+
+Cazaría un error, pero sin decir dónde: un total mal puede ser el envío, el precio o el pedido. Para una regla de cálculo, es pagar mucho por poco.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Cambiar la cantidad de un pedido justo mientras otra petición lo cancela deja el stock mal. ¿Qué tipo de test lo caza?"
+  review="Por qué la tienda se parece al trofeo"
+>
+
+<QuizOption text="Uno de integración, con las dos peticiones a la vez contra PostgreSQL." correct>
+
+El fallo vive en cómo PostgreSQL ordena las dos transacciones: solo lo ve un test que las lanza contra uno de verdad, como «cambiar la cantidad y cancelar a la vez», de `transacciones.test.ts`.
+
+</QuizOption>
+
+<QuizOption text="Uno unitario, con una base de datos de mentira que devuelve el stock.">
+
+Un doble no tiene transacciones ni bloqueos: las dos peticiones nunca chocarían, y pasaría en verde con el fallo dentro.
+
+</QuizOption>
+
+<QuizOption text="Uno end-to-end, porque los fallos con dos peticiones solo se ven con la tienda de Compose.">
+
+Basta un PostgreSQL de verdad, sin Compose entero. Uno de integración lo caza más rápido y dice qué ruta y qué stock.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un pull request sube la cobertura del 98,9 % al 100 % con un test que llama a una función y no tiene ninguna aserción. ¿Qué ha ganado la tienda?"
+  review="Por qué el 100 % no es la meta"
+>
+
+<QuizOption text="Que esa función ya está probada: ninguna línea se queda sin ejecutar.">
+
+Ejecutada, sí; probada, no: si devolviera cualquier cosa, el test seguiría en verde.
+
+</QuizOption>
+
+<QuizOption text="Que ya no puede quedar ningún fallo sin cazar en el código de la tienda.">
+
+La cobertura no ve el código que falta, como el `UPDATE` del fallo de la cantidad, ni comprueba lo que se ejecuta.
+
+</QuizOption>
+
+<QuizOption text="Un número más alto, y ningún test que avise si esa función se rompe." correct>
+
+Sin aserción, el test solo falla si la función lanza un error. Sube el porcentaje, y nada queda comprobado.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un test de la caché falla en GitHub Actions una vez de cada diez, y en tu ordenador nunca. ¿Qué haces?"
+  review="De qué depende un test intermitente"
+>
+
+<QuizOption text="Pulsas «Re-run failed jobs»: si a la segunda pasa, era cosa de GitHub.">
+
+A la segunda pasará casi siempre, y el fallo seguirá ahí. Y el equipo aprende que un rojo no significa nada.
+
+</QuizOption>
+
+<QuizOption text="Buscas qué da por hecho el test que no siempre se cumple." correct>
+
+En la tienda, el test daba por hecho que una lectura siempre guarda en la caché, y eso no se cumple si la caché tarda y la tienda la da por caída. El arreglo fue repetir las lecturas con un máximo.
+
+</QuizOption>
+
+<QuizOption text="Lo marcas para que se salte en GitHub Actions, ya que en tu ordenador sí pasa.">
+
+Saltarlo es dejar de comprobar lo que prometía. Y a veces el intermitente es el código: lo que falla en una máquina lenta puede fallar en producción con carga.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="npm run e2e: la compra falla porque no llega el correo, y docker compose ps dice que todos los servicios están sanos, el trabajador también. ¿Qué haces?"
+  review="El problema"
+>
+
+<QuizOption text="Pasas npm test, para ver qué pieza de la tienda falla.">
+
+`npm test` no arranca Compose: puede salir entero en verde con este fallo, como en «El problema».
+
+</QuizOption>
+
+<QuizOption text="Borras todo con docker compose down -v y lo levantas otra vez.">
+
+Si el fallo está en la configuración, vuelve igual al arrancar, y has perdido tus datos de práctica sin saber la causa.
+
+</QuizOption>
+
+<QuizOption text="Lees el log del trabajador: es quien manda el correo." correct>
+
+Sano solo dice que el trabajador sigue vivo. Su log dice qué le pasa a cada trabajo, como un `ECONNREFUSED` al conectar con el servidor de correo.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="La tienda crece y le añades un módulo que calcula descuentos con 40 reglas, sin tocar la base de datos. ¿Cómo cambia el reparto de sus tests?"
+  review="Por qué la tienda se parece al trofeo"
+>
+
+<QuizOption text="Ese módulo pide muchos unitarios; el resto de la tienda sigue pidiendo integración." correct>
+
+Cuarenta reglas sin base de datos son lógica que funciona sola: con un unitario por caso, cada fallo dice qué regla se ha roto. Lo demás sigue viviendo en PostgreSQL.
+
+</QuizOption>
+
+<QuizOption text="No cambia: en esta tienda todo se prueba contra PostgreSQL, también los descuentos.">
+
+La regla no es «todo contra PostgreSQL», sino probar donde vive el fallo. Arrancar la base de datos para unas reglas que no la tocan solo hace más lentos los tests.
+
+</QuizOption>
+
+<QuizOption text="Toda la tienda pasa a la pirámide: más unitarios en todas partes, con dobles para la base de datos.">
+
+Los fallos del resto de la tienda siguen en PostgreSQL, y un doble no los vería, como no habría visto el de la cantidad.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [The Practical Test Pyramid](https://martinfowler.com/articles/practical-test-pyramid.html), de Ham Vocke, en inglés: la pirámide, con ejemplos.
+- [The Testing Trophy and Testing Classifications](https://kentcdodds.com/blog/the-testing-trophy-and-testing-classifications), de Kent C. Dodds, en inglés: el trofeo.
+- [Collecting code coverage](https://nodejs.org/api/test.html#collecting-code-coverage), en la documentación de Node, en inglés.
+- [Test Coverage](https://martinfowler.com/bliki/TestCoverage.html), de Martin Fowler, en inglés: por qué un número alto no basta.
+- [Eradicating Non-Determinism in Tests](https://martinfowler.com/articles/nonDeterminism.html), de Martin Fowler, en inglés: los tests intermitentes y cómo quitarlos.

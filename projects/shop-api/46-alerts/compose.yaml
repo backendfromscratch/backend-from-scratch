@@ -1,0 +1,192 @@
+# The whole shop with one command (Phase 7, lesson 7): the API, PostgreSQL and Redis, each in its
+# own container, on a network of their own where they find each other by the service name (db,
+# redis). Since Phase 9, also the worker, which does the jobs of the queue, Mailpit, which
+# receives the shop's emails and shows them at http://localhost:8025, and the cache, a second Redis.
+#   docker compose up --build    starts everything (Ctrl + C stops it)
+#   docker compose down          stops it and deletes the containers; with -v, the data too
+#
+# The secrets aren't written here: this file goes to Git. They come from your .env, which Compose
+# reads on its own (copy it from .env.example): ${POSTGRES_PASSWORD} is replaced with its value.
+
+# The project's name: the containers are called shop-api-1, shop-db-1…
+name: shop
+
+services:
+  # PostgreSQL 18, pinned by its digest. No published port: only the shop's containers see it, and
+  # it doesn't clash with the PostgreSQL on your computer (5432).
+  db:
+    image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336
+    # The image creates the user and the database the first time it starts with the volume empty.
+    environment:
+      POSTGRES_USER: shop
+      POSTGRES_DB: shop
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is missing in .env (see .env.example)}
+    # The data, in a named volume: it survives docker compose down (not down -v).
+    volumes:
+      - data:/var/lib/postgresql
+    # Healthy when it accepts connections: until then, whoever depends on it waits.
+    healthcheck:
+      test: ['CMD', 'pg_isready', '-U', 'shop', '-d', 'shop']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+
+  # #region redis
+  # Redis 8, pinned by its digest: the attempts of the limits, shared by all the copies of the API,
+  # and since Phase 9 the job queue. No published port, like db.
+  # Until Phase 8 it saved nothing to disk: losing the limits' attempts doesn't matter. Losing the
+  # queue does: they would be notifications and emails that never go out. That's why it now writes
+  # every change to disk (--appendonly yes), in a volume, and reads them again when it restarts. And
+  # it never deletes keys to make room (--maxmemory-policy noeviction): with a memory limit
+  # (--maxmemory), when it reached it, it would give an error, and the job that doesn't fit would
+  # fail in plain sight instead of disappearing. It's what BullMQ asks for.
+  redis:
+    image: redis:8@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+    command: ['redis-server', '--appendonly', 'yes', '--maxmemory-policy', 'noeviction']
+    volumes:
+      - redis:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+  # #endregion redis
+
+  # #region cache
+  # The cache (Phase 9, lesson 2): another Redis, with the same image and the opposite configuration
+  # to the queue's. What it holds is a copy of what is in PostgreSQL: if it is lost, it fills itself
+  # again. So:
+  #   --maxmemory 64mb: at most 64 MB of memory;
+  #   --maxmemory-policy allkeys-lru: at the limit, it deletes the keys nobody has read for the
+  #     longest (LRU, least recently used) to make room, instead of giving an error;
+  #   --save '' and --appendonly no: nothing on disk, and no volume. When it restarts, it starts empty.
+  # No published port, like redis. Look inside with:
+  #   docker compose exec cache redis-cli keys '*'
+  cache:
+    image: redis:8@sha256:2c2dff791878316e3b083188be0d578423b24813cdda5de0e80ea4f7b3e6bfd6
+    command:
+      [
+        'redis-server',
+        '--maxmemory',
+        '64mb',
+        '--maxmemory-policy',
+        'allkeys-lru',
+        '--save',
+        '',
+        '--appendonly',
+        'no',
+      ]
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 5s
+      retries: 15
+  # #endregion cache
+
+  # A task, not a server: it applies the migrations, loads the practice data (the accounts always;
+  # the products, only if there are none) and ends. With the API's image.
+  migrate:
+    build: .
+    command: ['sh', '-c', 'node scripts/migrate.ts && node scripts/seed.ts']
+    environment:
+      DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD}@db:5432/shop
+    depends_on:
+      db:
+        condition: service_healthy
+    # The image's HEALTHCHECK asks the API, and there's no API here.
+    healthcheck:
+      disable: true
+
+  # The API, built with this folder's Dockerfile.
+  api:
+    build: .
+    # Your configuration (the secrets, the identity provider…), from .env. What changes inside
+    # Compose goes in environment, which wins over env_file: the database and Redis, by their name.
+    # The cache is the other Redis: the cache service.
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD}@db:5432/shop
+      REDIS_URL: redis://redis:6379
+      CACHE_URL: redis://cache:6379
+      SMTP_URL: smtp://mailpit:1025
+    # Only on your computer (127.0.0.1). A range, and not a port: with docker compose up --scale
+    # api=2, each copy takes a free one, 3000 or 3001 (docker compose ps says which).
+    ports:
+      - '127.0.0.1:3000-3001:3000'
+    # It doesn't start until the database, Redis and the cache are healthy and the migrations have
+    # finished well. The cache, so the first requests already use it: the API works without it.
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      cache:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+
+  # #region worker
+  # The worker (Phase 9, lesson 1): the same image as the API, with another command. It doesn't
+  # listen on any port: it takes the jobs from the Redis queue and does them, and since lesson 7 it
+  # moves into the queue the outgoing events the API saves in PostgreSQL. The same configuration
+  # as the API, because it uses the same things: the database, Redis and the mail server. Also
+  # CACHE_URL: it is the same code, and if a job ever changed a product, it would delete its entry
+  # from the cache.
+  #   docker compose stop worker     the jobs wait, unrelayed, in outbox_events
+  #   docker compose start worker    and they go out
+  worker:
+    build: .
+    # Since Phase 10 (lesson 4), with --import, like the Dockerfile's CMD: the traces.
+    command: ['node', '--import', './src/instrumentation.ts', 'scripts/worker.ts']
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://shop:${POSTGRES_PASSWORD}@db:5432/shop
+      REDIS_URL: redis://redis:6379
+      CACHE_URL: redis://cache:6379
+      SMTP_URL: smtp://mailpit:1025
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    # The image's HEALTHCHECK asks /health, and the worker has none: it isn't a server. Its own
+    # instead: while it takes jobs, the worker writes to /tmp/heartbeat every 5 seconds
+    # (src/heartbeat.ts), and it's healthy if the file is less than 30 seconds old. Hung, or
+    # shutting down, it stops writing. In its first 10 seconds (start_period), Docker asks every
+    # second (start_interval): it's healthy almost as soon as it starts.
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "process.exit(Date.now() - require('node:fs').statSync('/tmp/heartbeat').mtimeMs < 30000 ? 0 : 1)",
+        ]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+      start_interval: 1s
+  # #endregion worker
+
+  # #region mailpit
+  # Mailpit, pinned by its digest: a practice mail server. It receives by SMTP (1025, only inside
+  # Compose's network) what the shop sends, sends it to nobody and shows it in an inbox at
+  # http://localhost:8025, only on your computer.
+  mailpit:
+    image: axllent/mailpit:v1.31.5@sha256:94f6b70c1436defae6799d9ac7ff0eeff9540465b842026d5cdb018f1c0234ea
+    # Since Phase 10 (lesson 6): Mailpit keeps the last 500 emails and deletes the oldest ones.
+    # npm run traffic sends one confirmation email per round, about 50 a minute: in 10 minutes, the
+    # alerts' emails would already be deleted. With 5000, almost two hours of traffic fit.
+    environment:
+      MP_MAX_MESSAGES: '5000'
+    ports:
+      - '127.0.0.1:8025:8025'
+  # #endregion mailpit
+
+volumes:
+  data:
+  # The Redis queue: it survives docker compose down and a restart (not down -v).
+  redis:

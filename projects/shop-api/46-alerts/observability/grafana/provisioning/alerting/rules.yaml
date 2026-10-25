@@ -1,0 +1,199 @@
+# The shop's alert rules (Phase 10, lesson 6). Grafana evaluates each one every 10 seconds against
+# Prometheus and, when the time it asks for (for) has passed, tells "on-call" (contact.yaml)
+# according to the policy (policy.yaml). The first three look at symptoms, what whoever uses the shop
+# notices (errors, slowness, an email that doesn't arrive), not causes (the CPU, a Redis that is
+# down): a symptom warns of any cause, including those nobody had thought of. The fourth watches the
+# others: if the API stops sending metrics, the other three are left with no data and stay quiet.
+# Each rule has three steps: A, the query to Prometheus (instant: just the value right now); B, the
+# last value of A (reduce); C, the condition (threshold): if B goes over the threshold, the rule
+# fires.
+# With no data (noDataState: OK), the first three don't alert: with no traffic there are no errors to
+# count. But no data can also mean that the API is down: the fourth warns of that, which does alert
+# with no data (noDataState: Alerting).
+# The thresholds were measured with npm run traffic and the shop healthy, on a laptop, for 5 minutes
+# (the reasoning, in each rule). Measure them on your machine: a threshold copied from somewhere else
+# alerts too much or too little.
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: shop
+    folder: Shop
+    interval: 10s
+    rules:
+      # #region errors
+      # Errors: the share of /v2's responses that are 5xx, in the last minute. It is the SLI of the
+      # lesson's SLO: "99% of the requests to /v2 are answered without a 5xx".
+      # Threshold, 5%: with npm run traffic (about 4 requests per second), the healthy shop didn't give
+      # a single 5xx in 5 minutes. A lone 5xx in a minute (out of about 250) is 0.4%, and doesn't
+      # alert. 5% spends the SLO's error budget (1%) five times faster than it can afford, and for 2
+      # minutes it is no longer bad luck. With little traffic, a single error weighs more: that is why
+      # the 2 minutes (for), so nobody is woken up for one request.
+      - uid: shop-errors-5xx
+        title: 5xx errors on /v2
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: 'More than 5% of the responses from /v2 have been 5xx errors for 2 minutes'
+          description: 'Look at the "The shop" dashboard (5xx errors by route) and the API log.'
+        labels:
+          severity: urgent
+        data:
+          # #region errors-query
+          - refId: A
+            datasourceUid: prom
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                sum(rate(http_server_request_duration_seconds_count{job="shop-api",
+                http_route=~"/v2/.*", http_response_status_code=~"5.."}[1m]))
+                / sum(rate(http_server_request_duration_seconds_count{job="shop-api",
+                http_route=~"/v2/.*"}[1m]))
+          # #endregion errors-query
+          # #region errors-threshold
+          - refId: B
+            datasourceUid: __expr__
+            model: { refId: B, type: reduce, expression: A, reducer: last }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: gt, params: [0.05] } }]
+          # #endregion errors-threshold
+      # #endregion errors
+
+      # #region slowness
+      # Slowness: the p99 of /v2's duration in the last minute, in seconds: 99% of the requests take
+      # less. Without /v2/orders/:id/events: it is a stream that lasts as long as the client wants to
+      # watch, and it isn't slowness.
+      # Threshold, 0.5 s: with npm run traffic, the healthy shop had a p99 of about 72 ms (the highest in
+      # 5 minutes, 72 ms; the slowest route, signing in, because of the password hash, 88 ms). 0.5 s is
+      # about seven times that, with room for a slower laptop, and it is a limit of the histogram's
+      # buckets (0.25, 0.5, 0.75…): Prometheus calculates the p99 inside a bucket, and at the edge it is
+      # less wrong. If your healthy shop goes over that, raise the threshold.
+      - uid: shop-slowness-p99
+        title: High p99 on /v2
+        condition: C
+        for: 2m
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: 'The p99 of /v2 has been over 0.5 seconds for 2 minutes'
+          description: 'Look at the "The shop" dashboard (p99 duration by route) and a slow trace in Jaeger.'
+        labels:
+          severity: warning
+        data:
+          - refId: A
+            datasourceUid: prom
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              instant: true
+              expr: >-
+                histogram_quantile(0.99, sum by (le)
+                (rate(http_server_request_duration_seconds_bucket{job="shop-api",
+                http_route=~"/v2/.*", http_route!="/v2/orders/:id/events"}[1m])))
+          - refId: B
+            datasourceUid: __expr__
+            model: { refId: B, type: reduce, expression: A, reducer: last }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: gt, params: [0.5] } }]
+      # #endregion slowness
+
+      # #region outbox
+      # Emails that don't go out: the age of the oldest unsent outgoing event (shop.outbox.age,
+      # src/metrics.ts), in seconds. With the relayer working, a few seconds at most; if it goes over
+      # 2 minutes, something has it stopped (the queue's Redis, the worker), and customers pay without
+      # receiving their email. It is the only one of the three that warns of a failure that gives no
+      # error. max: with several copies of the API, they all say the same (they read it from the same
+      # table). No for: the age is already a time. With no data, it doesn't alert: this metric is sent
+      # every 5 seconds, traffic or not, so no data means the API isn't reporting, and the next rule
+      # warns of that, with a title that says so.
+      # Threshold, 120 s: with npm run traffic, the oldest event never went over 0.6 s. Two minutes
+      # leave room for what is normal (a deployment that restarts the worker, a BullMQ retry) and warn
+      # before the customer starts asking about their email.
+      - uid: shop-outbox-stuck
+        title: Outgoing events stuck
+        condition: C
+        for: 0s
+        noDataState: OK
+        execErrState: Error
+        annotations:
+          summary: 'An outgoing event has been unsent for more than 2 minutes'
+          description: "Emails and notices aren't going out. Look at the worker and the queue's Redis."
+        labels:
+          severity: urgent
+        data:
+          - refId: A
+            datasourceUid: prom
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              instant: true
+              expr: max(shop_outbox_age_seconds{job="shop-api"})
+          - refId: B
+            datasourceUid: __expr__
+            model: { refId: B, type: reduce, expression: A, reducer: last }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: gt, params: [120] } }]
+      # #endregion outbox
+
+      # #region no-data
+      # The API isn't sending metrics: the seconds since the last sample of shop.outbox.age, which the
+      # API sends every 5 seconds while it lives, traffic or not (timestamp() gives the time of the
+      # sample). If the API goes down, or can no longer send, that time stands still and the seconds
+      # grow. After 5 minutes, Prometheus no longer finds it and the query is left with no data: that
+      # is why this rule, unlike the others, also alerts with no data (Alerting). max: with several
+      # copies, the one that has been quiet the longest; but one that goes completely quiet disappears
+      # from the query after 5 minutes and stops counting. This Grafana is the one on your computer,
+      # with one.
+      # Threshold, 60 s: the sample is never more than 5 s old if the API works; 60 s is twelve sends
+      # lost in a row. for: 1m, so it doesn't alert on startup, before the API's first send. In total,
+      # it alerts about 2 minutes after the API goes quiet. If the whole computer goes down, this rule
+      # goes down with it: that is what looking at the shop from outside is for (lesson 6).
+      - uid: shop-api-no-data
+        title: The API is not sending metrics
+        condition: C
+        for: 1m
+        noDataState: Alerting
+        execErrState: Error
+        annotations:
+          summary: "The API hasn't sent metrics for over a minute: the other alerts can't see anything"
+          description: 'Check whether the API is alive (docker compose ps, /health/live) and its log.'
+        labels:
+          severity: urgent
+        data:
+          - refId: A
+            datasourceUid: prom
+            relativeTimeRange: { from: 300, to: 0 }
+            model:
+              refId: A
+              instant: true
+              expr: max(time() - timestamp(shop_outbox_age_seconds{job="shop-api"}))
+          - refId: B
+            datasourceUid: __expr__
+            model: { refId: B, type: reduce, expression: A, reducer: last }
+          - refId: C
+            datasourceUid: __expr__
+            model:
+              refId: C
+              type: threshold
+              expression: B
+              conditions: [{ evaluator: { type: gt, params: [60] } }]
+      # #endregion no-data

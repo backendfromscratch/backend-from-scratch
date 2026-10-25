@@ -1,0 +1,46 @@
+# The shop's traces (Phase 10, lesson 4), separate: compose.yaml only starts the shop, as in
+# Phase 9, and this file adds Jaeger to it, which receives the traces and shows them. Both are used:
+#   docker compose -f compose.yaml -f compose.observability.yaml up -d --build --wait
+# Compose merges the two files: the new services are added, and what is said here about api and
+# worker is added to what compose.yaml says. To avoid typing it every time, in your .env:
+#   COMPOSE_FILE=compose.yaml:compose.observability.yaml
+# And then docker compose up -d --build --wait is enough. Jaeger, at http://localhost:16686.
+
+services:
+  # #region jaeger
+  # Jaeger 2, pinned by its digest: it receives the traces over OTLP (OpenTelemetry's protocol, on
+  # 4318 over HTTP) and shows them on its web page, on 16686. It keeps them in memory: they are lost
+  # when it stops, and for practice that is enough. 4318 is not published: only the API and the
+  # worker use it, inside Compose's network. The web page, only on your computer (127.0.0.1).
+  jaeger:
+    image: jaegertracing/jaeger:2.22.0@sha256:836b967b5abcf1f7758066aa6b348619267a2f1459f72d472840570f9bd88a17
+    ports:
+      - '127.0.0.1:16686:16686'
+    # Healthy when its health check (on 13133) says yes. The image has wget.
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:13133/status']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  # #endregion jaeger
+
+  # #region api-and-worker
+  # The API and the worker send their traces to Jaeger (src/instrumentation.ts). With
+  # OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, the whole URL, as is. OTEL_SERVICE_NAME: who each one is in
+  # Jaeger. They start when Jaeger is healthy, so the first traces aren't lost.
+  api:
+    environment:
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+      OTEL_SERVICE_NAME: shop-api
+    depends_on:
+      jaeger:
+        condition: service_healthy
+
+  worker:
+    environment:
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+      OTEL_SERVICE_NAME: shop-worker
+    depends_on:
+      jaeger:
+        condition: service_healthy
+  # #endregion api-and-worker

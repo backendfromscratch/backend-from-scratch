@@ -1,0 +1,585 @@
+---
+translationKey: alerts
+title: "Health checks, SLO y alertas con Grafana"
+description: "Liveness y readiness, SLI, SLO y presupuesto de errores, y alertas de Grafana que te llegan por correo antes de que un cliente note el fallo."
+sidebar:
+  label: Alertas
+  order: 6
+lesson:
+  oneLiner: "Una comprobación de salud (health check) dice si tu API está viva y si puede atender; una alerta te escribe cuando lo que notan tus clientes, errores, lentitud o un correo que no llega, pasa de un límite. La tienda gana las dos cosas, y aprende a fallar bien cuando algo de lo que depende no contesta."
+  objectives:
+    - "Separar «está viva» de «puede atender», y explicar por qué la comprobación de vida no mira la base de datos."
+    - "Poner un SLO a un SLI y usar su presupuesto de errores para decidir cuándo avisar."
+    - "Escribir alertas sobre síntomas, con umbrales medidos, sin caer en la fatiga de alertas."
+    - "Decidir qué hace tu API cuando una dependencia no contesta: esperar poco, y fallar abierta o cerrada."
+  prerequisites: [metrics, zero-downtime, rate-limiting]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Imagina un martes a las once de la noche. PostgreSQL deja de contestar, y la tienda responde `500` a cada inicio de sesión. Tú estás cenando. Te enteras a la mañana siguiente, por el correo de una clienta: «anoche no podía entrar».
+
+El panel de la [lección 5](/fase-10/metricas-prometheus-grafana/) lo enseñaba, pero nadie mira un panel a las once de la noche. **Hace falta que la tienda te busque a ti**: una alerta que te escriba cuando los errores pasen de un límite. En la [Fase 6](/fase-6/owasp-top-10/#los-logs-el-suceso-sí-el-secreto-nunca) quedó pendiente: un log que nadie lee no avisa de nada.
+
+Y antes, algo más básico: «¿reinicio esta copia?» y «¿le mando clientes?» son dos preguntas distintas, y contestarlas las dos con `/salud` sale caro.
+
+## La analogía
+
+<Analogy>
+
+Un restaurante tiene dos preguntas que no son la misma: ¿está bien el cocinero? Y ¿puede la cocina servir platos?
+
+Si se corta el gas, el cocinero está perfectamente, pero no puede cocinar. Lo sensato es colgar en la puerta «cerrado un rato», para que nadie entre a esperar, y llamar al técnico del gas. Llamar a una ambulancia para el cocinero no arregla el gas. Si se estropea el lavavajillas, en cambio, se sigue sirviendo: más despacio, fregando a mano.
+
+Y nadie espera a que un cliente se queje del humo: el detector pita por el humo, venga de una sartén o de un cable.
+
+<div slot="limits">
+
+- En el restaurante, alguien ve que no hay gas. En la tienda, quien reparte las peticiones solo sabe lo que contesta la comprobación.
+- La tienda puede tener muchas copias, y un corte de PostgreSQL las alcanza a todas a la vez: reiniciarlas todas es mucho peor que una ambulancia de más.
+- Un detector de humo trae su límite de fábrica. Los de tus alertas los eliges tú, y se miden: un límite copiado avisa de más o de menos.
+
+</div>
+
+</Analogy>
+
+El cocinero es `/salud/viva`; la cocina que puede servir, `/salud/lista`; el lavavajillas, la caché, y el detector de humo, una alerta sobre lo que notan los clientes.
+
+## Cómo funciona de verdad
+
+### Dos preguntas, dos rutas
+
+En la [Fase 9](/fase-9/despliegue-sin-cortes/#viva-y-lista-liveness-y-readiness) viste las dos preguntas: ¿está viva la copia? (*liveness*) y ¿está lista para atender? (*readiness*). El paso 46 le da una ruta a cada una:
+
+- **`/salud/viva`**, la <Term id="liveness-probe">sonda de vida</Term>: si no contesta, se reinicia la copia.
+- **`/salud/lista`**, la <Term id="readiness-probe">sonda de disponibilidad</Term>: si dice `503`, se le dejan de mandar peticiones, sin reiniciarla.
+
+<ProjectCode file="tienda-api/46-alertas/src/app.ts" region="viva" />
+
+**No pregunta a nadie, a propósito.** Si mirara PostgreSQL, un corte de la base de datos haría fallar la sonda de todas las copias a la vez, y todas se reiniciarían. Reiniciar no arregla PostgreSQL: solo suma copias arrancando a un corte que ya había.
+
+### /salud/lista pregunta a tres, medio segundo cada uno
+
+Pregunta a cada dependencia y dice qué ha visto:
+
+<ProjectCode file="tienda-api/46-alertas/src/salud.ts" region="lista" />
+
+- **Las tres a la vez** (`Promise.all`), y **cada una con 500 ms como mucho** (`comprobar`, en el mismo fichero). Una dependencia congelada no contesta nunca, y quien pregunta necesita una respuesta.
+- **Falla si falla PostgreSQL o el Redis de la cola**: sin ellos no hay tienda, ni inicios de sesión, ni trabajos.
+- **La caché se dice, pero no cuenta**: sin ella, la tienda lee de PostgreSQL, [más despacio](/fase-9/cache-redis/#si-la-caché-falla-la-tienda-sigue). Es el lavavajillas.
+
+### /salud se queda como estaba
+
+La leen el <Term id="healthcheck">healthcheck</Term> del Dockerfile, desde la [Fase 7](/fase-7/docker-multi-stage/#healthcheck-la-tienda-está-bien), y `desplegar.sh`. Para ellos, «sana» es: llega a PostgreSQL y no se está apagando. Si fuera `/salud/lista`, un corte de Redis haría volver atrás un despliegue sin culpa; si fuera `/salud/viva`, pasaría una copia sin base de datos.
+
+¿Y quién lee `/salud/lista`? En tu Compose, nadie: Docker tiene un solo healthcheck, y nginx [solo mira las peticiones de verdad](/fase-8/nginx-proxy-inverso/#dos-copias-y-nginx-que-se-entera-solo). Las rutas nuevas son para un orquestador como Kubernetes, que hace cada pregunta por separado. **Una sonda solo sirve si alguien hace lo correcto con su respuesta.**
+
+### SLI, SLO y presupuesto de errores
+
+Antes de avisar, hay que decidir qué es «ir bien». En la tienda:
+
+- **El <Term id="sli">SLI</Term>**, lo que se mide: la parte de las respuestas de `/v2` que no es un 5xx.
+- **El <Term id="slo">SLO</Term>**, el objetivo: el 99 %, contado en 30 días.
+- **El <Term id="error-budget">presupuesto de errores</Term>**, el 1 % que sobra: con un millón de peticiones al mes, 10.000 errores.
+
+**Mientras queda presupuesto, se despliegan novedades; si se agota, toca arreglar la fiabilidad.** Y da la medida de una alerta: con un 5 % de errores que durara, el presupuesto del mes entero se acabaría en seis días (30 entre 5). Eso ya no es mala suerte.
+
+### Alertas sobre síntomas, no sobre causas
+
+Una **causa** es lo que puede romper algo: la CPU al 90 %, un Redis caído. Un **síntoma** es lo que nota quien usa la tienda: errores, lentitud, un correo que no llega.
+
+**La tienda avisa de síntomas.** Un síntoma avisa de cualquier causa, también de las que nadie había pensado, y una causa que nadie nota no merece despertar a nadie. Grafana carga cuatro reglas desde ficheros del paso; preguntadas a su API:
+
+```text
+{"title":"Errores 5xx en /v2","for":"2m","noDataState":"OK","gravedad":"urgente"}
+{"title":"p99 de /v2 alto","for":"2m","noDataState":"OK","gravedad":"aviso"}
+{"title":"Eventos salientes parados","for":"0s","noDataState":"OK","gravedad":"urgente"}
+{"title":"La API no manda métricas","for":"1m","noDataState":"Alerting","gravedad":"urgente"}
+```
+
+Las tres primeras son síntomas: errores, lentitud y correos que no salen. La cuarta vigila a las otras.
+
+### Una regla por dentro: consulta, último valor y umbral
+
+La de los errores, en `reglas.yaml`, tiene tres pasos. El primero, **A**, la consulta a Prometheus:
+
+<ProjectCode file="tienda-api/46-alertas/observabilidad/grafana/provisioning/alerting/reglas.yaml" region="errores-consulta" />
+
+Qué parte de las respuestas de `/v2` fueron 5xx en el último minuto, con el `rate` de la [lección 5](/fase-10/metricas-prometheus-grafana/#promql-en-cuatro-consultas): el SLI visto al revés, la parte que falla. Después, el umbral:
+
+<ProjectCode file="tienda-api/46-alertas/observabilidad/grafana/provisioning/alerting/reglas.yaml" region="errores-umbral" />
+
+- **B** se queda con el último valor de A, y **C** mira si pasa de `0.05`, el 5 %.
+- **`for: 2m`**, en la lista de arriba: Grafana la evalúa cada 10 segundos. Al cumplirse, pasa a **pendiente** (*pending*); si sigue cumpliéndose 2 minutos, a **disparada** (*firing*), y avisa. Un error suelto no despierta a nadie.
+- **`noDataState: OK`**: sin tráfico no hay errores que contar, y no avisa.
+
+Los umbrales se midieron con la tienda sana y un script de tráfico del paso (`npm run trafico`, que verás en la [lección 7](/fase-10/gestion-de-incidentes/)): ni un 5xx en 5 minutos, y un p99 de 72 ms como mucho (el umbral del p99 es 0,5 s). El razonamiento está en los comentarios del fichero: **mide los tuyos**, que un umbral copiado avisa de más o de menos.
+
+### Un correo que no llega no da ningún error
+
+Con el Redis de la cola congelado, pagar sigue dando `200`: desde la [Fase 9](/fase-9/arquitectura-orientada-a-eventos/#el-outbox-el-aviso-en-la-misma-transacción), solo escribe en PostgreSQL. Ningún error, y ningún correo. Por eso el paso 46 añade una métrica:
+
+<ProjectCode file="tienda-api/46-alertas/src/metricas.ts" region="salientes-antiguedad" />
+
+- **Se lee de PostgreSQL, no de Redis**, para que siga diciendo la verdad cuando el que falla es Redis. Con el repartidor funcionando, unos pocos segundos; la regla avisa a los 120.
+- **Si se congela PostgreSQL, calla**: el SDK (la librería que manda las métricas) repite el último valor, la [línea plana](/fase-10/metricas-prometheus-grafana/#tres-tipos-contador-medidor-e-histograma) de la lección 5. De eso avisan los errores y la lentitud.
+
+### La cuarta regla vigila a las otras
+
+Si la API se cae, deja de mandar métricas, y las tres primeras, sin datos, callan: **una API muerta parece una API tranquila.** La cuarta mira cuánto tiempo tiene la última muestra de la antigüedad (llega una cada 5 segundos; con la API sana, nos dio 4,32 segundos), y avisa si pasa de 60. Al revés que las otras, también avisa sin datos.
+
+### A quién avisa, y cada cuánto
+
+`contacto.yaml` manda un correo a `guardia@tienda.example`, por SMTP, el protocolo de los correos, a [Mailpit](/fase-9/colas-trabajos-segundo-plano/#el-correo-mailpit-y-esperas-cortas), dentro de la red de Compose:
+
+<ProjectCode file="tienda-api/46-alertas/compose.observabilidad.yaml" region="correo" />
+
+`politica.yaml` reparte los avisos:
+
+- cada regla, en su correo (`group_by: alertname`);
+- 10 segundos de espera antes del primero, por si llega otra del mismo grupo (`group_wait`);
+- hasta un minuto para avisar de un cambio, como que se resuelva (`group_interval`);
+- un recordatorio cada 4 horas si sigue igual, no cada minuto (`repeat_interval`).
+
+Mailpit guarda ahora 5000 correos (`MP_MAX_MESSAGES`, en `compose.yaml`): con 500, el script de tráfico del paso borraba los de las alertas en diez minutos.
+
+### La fatiga de alertas
+
+Si de veinte alertas al día diecinueve no piden nada, a la semana dejas de leerlas, y la que importaba se pierde. Es la <Term id="alert-fatigue">fatiga de alertas</Term>. Se evita con:
+
+- **alertas que piden actuar ya**; lo demás, a un panel;
+- **umbrales medidos y un `for`**;
+- **gravedades**: `urgente` despierta a alguien, `aviso` espera al horario de trabajo;
+- **pocos recordatorios**, y **revisarlas**: la que salta sin que nadie haga nada se arregla o se borra.
+
+### Fallar bien: los tres arreglos que dejó la Fase 9
+
+La otra mitad es fallar bien: rápido, claro y sin arrastrar a lo demás. La revisión final de la Fase 9 dejó tres sitios donde la tienda no lo hacía.
+
+**1. Los límites de intentos esperaban a Redis sin fin**: 12,3 segundos en la [lección 4](/fase-10/trazas-opentelemetry/#congela-redis-e-inicia-sesión). Ahora cada pregunta espera **200 ms como mucho**, como la caché de la Fase 9. A la primera que no contesta, el límite da Redis por caído, y solo le vuelve a preguntar una vez por segundo, para no amontonar órdenes. ¿Y mientras? Lo decide cada límite:
+
+<ProjectCode file="tienda-api/46-alertas/src/limites.ts" region="limites-tienda" />
+
+- **Los de iniciar sesión se cierran**: `503` con `Retry-After: 5`, sin esperar a Redis mientras lo da por caído; solo la prueba de cada segundo espera. Dejar pasar contraseñas sin límite es justo el [ataque que frenan](/fase-6/rate-limiting-secretos/#probar-sin-parar-la-fuerza-bruta).
+- **El de crear cuentas se abre**: deja pasar y lo dice en el log. Unas cuantas altas sin límite cuestan menos que no dejar entrar a ningún cliente nuevo.
+
+**Es una decisión, no una regla**: una tienda con un problema de cuentas falsas cerraría las dos.
+
+**2. Una conexión prestada que se cortaba podía parar la API.** Es el hueco de la [lección 2](/fase-10/tipos-de-tests/#las-líneas-que-no-ejecuta-ningún-test): nadie escuchaba el `'error'` de una conexión en uso, y Node para el proceso cuando un error no tiene quien lo escuche. Pasa, por ejemplo, cuando el [ajuste de la Fase 9](/fase-9/arquitectura-orientada-a-eventos/#un-trabajador-que-desaparece-con-las-filas-bloqueadas) corta una transacción que lleva 5 segundos callada. Ahora se escucha en cada conexión nueva:
+
+<ProjectCode file="tienda-api/46-alertas/src/bd.ts" region="conexion-prestada" />
+
+**3. `desplegar.sh` podía dar por sana una copia que se reinicia en bucle**, si la pillaba sana en su única mirada. Ahora `esperar_salud` la mira **dos veces, con unos 5 segundos entre una y otra**, y el `RestartCount`, los reinicios que lleva contados Docker, tiene que ser el mismo en las dos.
+
+Los tres dicen lo mismo: **cuando falla algo de lo que dependes, espera poco, decide qué haces y sigue vivo.**
+
+### Vigilar desde fuera
+
+En producción, todo esto tiene un agujero: **un servidor no puede avisar de su propia muerte.** Si la máquina se apaga, Grafana se apaga con ella. Una vigilancia de verdad añade dos piezas, fuera del servidor:
+
+1. **Las métricas y las alertas, en otra máquina**: un servicio con plan gratuito, como Grafana Cloud (consulta sus límites actuales), o las mismas tres herramientas en otro servidor. Cambian las direcciones de `OTEL_EXPORTER_OTLP_…` del `.env` y, si el servicio la pide, una clave. Las consultas y los umbrales de las reglas sirven igual, pero allí se cargan por la API del servicio o con Terraform, no con estos ficheros, y hay que apuntarlas a su fuente de datos y a sus etiquetas.
+2. **Una comprobación desde fuera** (*uptime check*): un servicio que cada minuto pide `https://tu-dominio/salud` desde otra red. Ve lo mismo que un cliente, y avisa de lo que nada de dentro ve: la máquina apagada, la red cortada o el certificado caducado.
+
+## Pruébalo
+
+El objetivo: ver la tienda distinguir «viva» de «lista», provocar una alerta y leer su correo, y ver el límite de intentos cerrarse sin colgarse.
+
+Salidas del 24 de octubre de 2026, con la tienda en Node 26, en un MacBook con Docker en una máquina virtual de 2 GB. Tus tiempos serán otros.
+
+### Prepara el paso
+
+Pon tu proyecto en el paso 46, como en la [introducción](/fase-10/#cada-lección-su-paso):
+
+```sh
+cd ~/curso-backend/fase-3
+curl -O https://backenddesdecero.com/practicas/tienda-api/46-alertas.tar.gz
+tar -xzf 46-alertas.tar.gz
+cp -R 46-alertas/. tienda-api/
+cd tienda-api
+npm install
+grep -q '^COMPOSE_FILE=' .env || printf '\nCOMPOSE_FILE=compose.yaml:compose.observabilidad.yaml\n' >> .env
+docker compose up -d --build --wait
+```
+
+La línea de `grep` mira si tu `.env` ya tiene el `COMPOSE_FILE` del [«Pruébalo» de la lección 4](/fase-10/trazas-opentelemetry/#prepara-el-paso), y si no, lo añade antes de arrancar: sin él, la tienda arrancaría sin Grafana. Compose recrea Grafana y Mailpit, porque su configuración ha cambiado.
+
+### Las tres respuestas, con todo sano
+
+<TryIt
+  title="1. Todo sano"
+  cmd={`API=$(docker compose port api 3000)
+for ruta in /salud /salud/viva /salud/lista; do
+  printf '%-13s' $ruta; curl -s -w ' %{http_code}\\n' $API$ruta
+done`}
+  output={`/salud       {"estado":"ok"} 200
+/salud/viva  {"estado":"ok"} 200
+/salud/lista {"estado":"ok","comprobaciones":{"bd":"ok","cola":"ok","cache":"ok"}} 200`}
+>
+
+`API` guarda el puerto de la API, como en la [lección 5](/fase-10/metricas-prometheus-grafana/#prepara-el-paso). `printf '%-13s'` rellena la ruta con espacios para que las columnas cuadren, y `-w` añade el código. Si sale `000`, la API no contesta: mira `docker compose ps`.
+
+</TryIt>
+
+### PostgreSQL parado
+
+<TryIt
+  title="2. Sin base de datos"
+  cmd={`docker compose stop db
+for ruta in /salud /salud/viva /salud/lista; do
+  printf '%-13s' $ruta; curl -s -w ' %{http_code}\\n' $API$ruta
+done`}
+  output={` Container tienda-db-1 Stopping 
+ Container tienda-db-1 Stopped 
+/salud       {"type":"about:blank","title":"Service Unavailable","status":503,"detail":"La base de datos no responde"} 503
+/salud/viva  {"estado":"ok"} 200
+/salud/lista {"estado":"falla","comprobaciones":{"bd":"falla","cola":"ok","cache":"ok"}} 503`}
+>
+
+**`/salud/viva` sigue en `200`**: reiniciar el proceso no traería PostgreSQL. `/salud/lista` dice `503` y por qué: `bd: falla`. No arranques PostgreSQL todavía.
+
+</TryIt>
+
+### Provoca una alerta
+
+Abre otra terminal, en la carpeta del proyecto, y lanza un inicio de sesión de Carmen por segundo:
+
+<TryIt
+  title="3. Errores, uno por segundo"
+  cmd={`API=$(docker compose port api 3000)
+while true; do curl -s -o /dev/null -w '%{http_code} ' --json '{"email":"carmen@ejemplo.com","contrasena":"carmen-practica-2026"}' $API/v2/sesion; sleep 1; done`}
+  output={`500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 500 …`}
+>
+
+Sin PostgreSQL, cada uno es un `500`: el 100 % de lo que llega a `/v2` falla. Déjalo corriendo. Es un `500`, no un `503`: la tienda solo da `503` donde lo ha preparado, como en los límites de Redis.
+
+</TryIt>
+
+En la primera terminal, pregúntale a Grafana cómo están sus reglas. Repite la orden cada poco:
+
+<TryIt
+  title="4. El estado de las reglas"
+  cmd={`curl -s localhost:3100/api/prometheus/grafana/api/v1/rules | jq -r '.data.groups[].rules[] | "\\(.state)  \\(.name)"'`}
+  output={`firing  Errores 5xx en /v2
+inactive  p99 de /v2 alto
+inactive  Eventos salientes parados
+inactive  La API no manda métricas`}
+>
+
+La nuestra estaba en `pending` a los 15 segundos del primer `500`, y en `firing` a los 2 minutos y 12 segundos: los 2 minutos del `for`. En Grafana, `http://localhost:3100`, lo ves en **Alerting**, **Alert rules**, la carpeta **Tienda**. Si sigue en `inactive` pasado un minuto, mira que el bucle siga escribiendo `500`.
+
+</TryIt>
+
+<TryIt
+  title="5. El correo"
+  cmd={`curl -s 'localhost:8025/api/v1/messages?limit=5' | jq -r '.messages[] | "\\(.Created)  \\(.Subject)"'`}
+  output={`2026-10-24T16:20:42.537Z  [FIRING:1] Errores 5xx en /v2 (Tienda urgente)`}
+>
+
+Llegó 12 segundos después de disparar: el `group_wait`. La hora está en UTC, la hora de referencia de todo el mundo, sin horario de verano (es lo que dice la `Z`). `?limit=5` pide los cinco últimos.
+
+</TryIt>
+
+<TryIt
+  title="6. Lo que dice"
+  cmd={`curl -s localhost:8025/api/v1/message/latest | jq -r .Text`}
+  output={`…
+*Errores 5xx en /v2*
+
+View alert ( http://localhost:3100/alerting/grafana/tienda-errores-5xx/view?orgId=1 )
+
+*Summary*
+Más del 5 % de las respuestas de /v2 son errores 5xx desde hace 2 minutos
+*Description*
+Mira el panel «La tienda» (errores 5xx por ruta) y el log de la API.
+
+*Values*
+
+A=1 B=1 C=1
+
+*Labels*
+
+*alertname* Errores 5xx en /v2 *grafana_folder* Tienda *gravedad* urgente
+…`}
+>
+
+Hemos quitado la cabecera y el final. *Summary* y *Description* son las anotaciones de la regla: qué pasa y dónde mirar. **`A=1`**: el 100 % de las respuestas de `/v2` eran 5xx; `C=1`, la condición se cumple.
+
+</TryIt>
+
+### Arréglalo y espera el RESOLVED
+
+Para el bucle con <kbd>Ctrl</kbd> + <kbd>C</kbd> en la segunda terminal, y arranca PostgreSQL:
+
+<TryIt
+  title="7. PostgreSQL, de vuelta"
+  cmd="docker compose start db"
+  output={` Container tienda-db-1 Starting 
+ Container tienda-db-1 Started `}
+>
+
+Ahora espera unos dos minutos.
+
+</TryIt>
+
+<TryIt
+  title="8. Resuelta"
+  cmd={`curl -s 'localhost:8025/api/v1/messages?limit=5' | jq -r '.messages[] | "\\(.Created)  \\(.Subject)"'`}
+  output={`2026-10-24T16:23:42.429Z  [RESOLVED] Errores 5xx en /v2 (Tienda urgente)
+2026-10-24T16:20:42.537Z  [FIRING:1] Errores 5xx en /v2 (Tienda urgente)`}
+>
+
+El `RESOLVED` llegó 1 minuto y 54 segundos después de parar el bucle: primero, pasa el minuto de la ventana sin peticiones a `/v2` y la regla vuelve a la normalidad; después, Grafana espera para mandar el aviso de que se resolvió.
+
+</TryIt>
+
+### La caché no cuenta
+
+<TryIt
+  title="9. Sin caché"
+  cmd={`docker compose stop cache
+for ruta in /salud /salud/viva /salud/lista; do
+  printf '%-13s' $ruta; curl -s -w ' %{http_code}\\n' $API$ruta
+done
+docker compose start cache`}
+  output={` Container tienda-cache-1 Stopping 
+ Container tienda-cache-1 Stopped 
+/salud       {"estado":"ok"} 200
+/salud/viva  {"estado":"ok"} 200
+/salud/lista {"estado":"ok","comprobaciones":{"bd":"ok","cola":"ok","cache":"falla"}} 200
+ Container tienda-cache-1 Starting 
+ Container tienda-cache-1 Started `}
+>
+
+Los tres, `200`, con `cache: falla`: sin lavavajillas, la cocina sigue sirviendo.
+
+</TryIt>
+
+### Redis congelado: el 503 que no espera
+
+Ahora, lo de la lección 4 otra vez. Congela el Redis de la cola e intenta entrar dos veces seguidas:
+
+<TryIt
+  title="10. Un límite que se cierra"
+  cmd={`docker compose pause redis
+for i in 1 2; do
+  curl -si -o sesion.txt -w 'curl: HTTP %{http_code} en %{time_total} s\\n' --json '{"email":"carmen@ejemplo.com","contrasena":"carmen-practica-2026"}' $API/v2/sesion
+done
+grep -i '^retry-after' sesion.txt
+curl -s -w ' %{http_code}\\n' $API/salud/lista
+docker compose unpause redis`}
+  output={` Container tienda-redis-1 Paused 
+curl: HTTP 503 en 0.206346 s
+curl: HTTP 503 en 0.005444 s
+retry-after: 5
+{"estado":"falla","comprobaciones":{"bd":"ok","cola":"falla","cache":"ok"}} 503
+ Container tienda-redis-1 Unpaused `}
+>
+
+- **El primero esperó los 200 ms** y se cerró: `503` en 0,21 s.
+- **El segundo, enseguida, ya no le preguntó a Redis**: 0,005 s. En la lección 4, el mismo inicio de sesión tardó 12,3 segundos.
+- **`retry-after: 5`**: vuelve a intentarlo en unos segundos.
+- **`/salud/lista`, `503` con `cola: falla`**: esta copia no puede atender inicios de sesión.
+
+Con intentos más espaciados, cada uno sería la prueba: lo verás en la [lección 7](/fase-10/gestion-de-incidentes/).
+
+Con Redis de vuelta, el siguiente inicio de sesión nos entró: `200` en 0,087 s. Al terminar, borra `sesion.txt`: lleva la sesión de Carmen. Deja la tienda arrancada para la [lección 7](/fase-10/gestion-de-incidentes/).
+
+</TryIt>
+
+### En tu servidor
+
+`/salud` no cambia: el healthcheck y `desplegar.sh` siguen igual, y cada copia tarda unos 5 segundos más en darse por sana, por la segunda mirada. Las alertas no llegan: el `.env` del servidor no tiene las direcciones de OTLP, y `compose.produccion.yaml` no gana Grafana. Para eso, [Vigilar desde fuera](#vigilar-desde-fuera).
+
+## Ya lo has visto
+
+- **El cajero que enciende la pantalla y dice «fuera de servicio»**: vivo, pero no listo.
+- **El pitido del detector de humo con la pila gastada**: un aparato que avisa de que ya no podrá avisar. Es la cuarta regla.
+- **Un presupuesto de rendimiento** (*performance budget*): este curso falla su build si una página pasa de 400 KB de JavaScript. Un límite que te pones, como un SLO.
+
+## Errores comunes
+
+- **Que la sonda de vida mire la base de datos.** Un corte de PostgreSQL reinicia todas las copias y no arregla nada.
+- **Comprobar sin tiempo máximo.** Con una dependencia congelada, la comprobación espera con ella.
+- **Avisar de causas** en vez de lo que notan los clientes.
+- **Avisar de cada error.** Sin `for` ni un umbral medido, un `500` suelto despierta a alguien.
+- **Vigilar el servidor solo desde dentro.** Si se cae la máquina, cae con ella quien avisa.
+
+## Resumen
+
+- `/salud/viva` dice si el proceso contesta, sin preguntar a nadie; `/salud/lista`, si puede atender: PostgreSQL y el Redis de la cola, 500 ms cada uno; la caché no cuenta. `/salud` sigue igual.
+- Un SLI mide lo que nota el cliente, el SLO le pone objetivo y el presupuesto de errores es lo que sobra: si se acaba, toca arreglar.
+- Las alertas avisan de síntomas, con umbrales medidos y un `for`. La tienda tiene cuatro: errores, p99, correos que no salen y una API que calla.
+- Fallar bien es esperar poco, decidir si abres o cierras, y seguir vivo.
+- Un servidor no avisa de su propia muerte: en producción, las alertas viven fuera.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="Pones la sonda de vida de Kubernetes a /salud/lista, y PostgreSQL se cae dos minutos. ¿Qué pasa?"
+  review="Dos preguntas, dos rutas"
+>
+
+<QuizOption text="Las copias se quedan sin tráfico hasta que PostgreSQL vuelve, sin más.">
+
+Eso haría una sonda de disponibilidad. Una sonda de vida que falla no aparta la copia: la reinicia.
+
+</QuizOption>
+
+<QuizOption text="Kubernetes reinicia todas las copias, una y otra vez, y nada mejora." correct>
+
+Todas suspenden a la vez, y reiniciarlas no trae PostgreSQL: solo suma copias arrancando al corte. La sonda de vida no mira dependencias.
+
+</QuizOption>
+
+<QuizOption text="Nada: Kubernetes ve en la respuesta que la culpa es de PostgreSQL.">
+
+Kubernetes solo mira el código: un `503` es un fallo, diga lo que diga el cuerpo.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Se cae el Redis de la caché y /salud/lista sigue en 200, con cache: falla. Un compañero dice que es un fallo. ¿Lo es?"
+  review="/salud/lista pregunta a tres, medio segundo cada uno"
+>
+
+<QuizOption text="No: sin caché la tienda atiende, solo más despacio." correct>
+
+La caché es el lavavajillas: sin ella se sirve igual. Un `503` dejaría sin tráfico copias que pueden atender.
+
+</QuizOption>
+
+<QuizOption text="Sí: una dependencia que falla siempre deja la copia sin estar lista.">
+
+Depende de la dependencia. Solo cuenta lo que impide atender; la caché solo hace que vaya más rápido.
+
+</QuizOption>
+
+<QuizOption text="Sí: sin la caché, la tienda da precios viejos o equivocados.">
+
+Sin caché, la tienda lee de PostgreSQL, que tiene los precios de verdad. Va más lenta, no peor.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Vas por el día 20 del mes y el presupuesto de errores casi se ha acabado. Querías desplegar hoy una novedad arriesgada. ¿Qué te dice el SLO?"
+  review="SLI, SLO y presupuesto de errores"
+>
+
+<QuizOption text="Que la despliegues: el presupuesto solo cuenta errores, no despliegues.">
+
+Los despliegues son de lo que más errores trae. Con el presupuesto gastado, cada riesgo cuesta más.
+
+</QuizOption>
+
+<QuizOption text="Que bajes el SLO al 98 % para tener más margen este mes.">
+
+Mover el objetivo cuando molesta lo vacía de sentido: el SLO dice lo que tus clientes pueden esperar.
+
+</QuizOption>
+
+<QuizOption text="Que esperes, y dediques esos días a la fiabilidad." correct>
+
+Es para lo que sirve el presupuesto: mientras queda, se arriesga; si se acaba, se arregla lo que falla.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Alguien propone una alerta urgente: «la CPU de la API pasa del 80 % durante 5 minutos». ¿Qué le dices?"
+  review="Alertas sobre síntomas, no sobre causas"
+>
+
+<QuizOption text="Que mejor avisar del p99: la CPU alta que nadie nota no pide hacer nada." correct>
+
+Una alerta sobre un síntoma salta por cualquier causa, y solo cuando alguien lo nota. La CPU puede ir a un panel.
+
+</QuizOption>
+
+<QuizOption text="Que es la mejor: la CPU sube antes que los errores, así te enteras antes.">
+
+A veces sube antes, y muchas otras sube sin que nadie lo note. Cada aviso que no pide nada acerca la fatiga de alertas.
+
+</QuizOption>
+
+<QuizOption text="Que da igual síntoma o causa: cualquier número que pasa de su límite es un problema.">
+
+Solo es un problema si alguien lo sufre. Avisar de todo es la forma más rápida de que nadie lea las alertas.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A las tres de la mañana te llega «Eventos salientes parados». El panel de errores está a cero y los pagos dan 200. ¿Qué pasa?"
+  review="Un correo que no llega no da ningún error"
+>
+
+<QuizOption text="Una falsa alarma: si no hay 5xx, la tienda está bien.">
+
+Que no haya errores no quiere decir que todo vaya. Esta regla existe justo para el fallo que no da ningún error.
+
+</QuizOption>
+
+<QuizOption text="Que PostgreSQL está caído, porque la antigüedad se lee de allí.">
+
+Con PostgreSQL caído fallarían los pagos, y la antigüedad se quedaría quieta: esta regla callaría.
+
+</QuizOption>
+
+<QuizOption text="Los pagos van, pero los correos no salen: mira la cola." correct>
+
+El pago solo escribe en PostgreSQL; el correo necesita el Redis de la cola y el trabajador. Mira esos dos.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Tu tienda limita a 5 por hora los intentos de canjear un cupón de descuento, para que nadie adivine códigos. Si Redis no contesta, ¿abres o cierras ese límite?"
+  review="Fallar bien: los tres arreglos que dejó la Fase 9"
+>
+
+<QuizOption text="Abierto: un límite nunca debe impedir que alguien compre.">
+
+Abierto, cualquiera puede probar códigos sin límite mientras dure el corte, justo lo que el límite frena.
+
+</QuizOption>
+
+<QuizOption text="Cerrado: abierto dejaría probar códigos sin límite." correct>
+
+Como el inicio de sesión: el límite protege de quien prueba a ciegas. Sin cupón se puede comprar igual, a precio normal.
+
+</QuizOption>
+
+<QuizOption text="Da igual: con Redis caído no funciona nada de la tienda.">
+
+Con Redis caído, pagar sigue funcionando: solo falla lo que lo necesita, y lo que decidas cerrar.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Monitoring Distributed Systems](https://sre.google/sre-book/monitoring-distributed-systems/), del libro de SRE de Google, en inglés: síntomas y causas, y por qué avisar de poco.
+- [Service Level Objectives](https://sre.google/sre-book/service-level-objectives/), del mismo libro, en inglés: SLI, SLO y cómo elegirlos.
+- [Alerting on SLOs](https://sre.google/workbook/alerting-on-slos/), del cuaderno de SRE de Google, en inglés: alertas a partir del presupuesto de errores.
+- [Configure Liveness, Readiness and Startup Probes](https://kubernetes.io/docs/tasks/configure-pod-container/configure-liveness-readiness-startup-probes/), de Kubernetes, en inglés: las dos sondas, y una tercera para el arranque.
+- [Provision alerting resources from files](https://grafana.com/docs/grafana/latest/alerting/set-up/provision-alerting-resources/file-provisioning/), de Grafana, en inglés: reglas, puntos de contacto y políticas desde ficheros.

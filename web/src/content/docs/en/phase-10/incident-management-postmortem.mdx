@@ -1,0 +1,670 @@
+---
+translationKey: incidents
+title: "Incident management and postmortems"
+description: "What to do when an alert fires: detect, mitigate, fix and learn, with a practice incident in your shop and a blameless postmortem."
+sidebar:
+  label: Incidents
+  order: 7
+lesson:
+  oneLiner: "An incident is a failure your customers are already noticing. It’s handled in order: you detect it, stop the damage, look for the cause and write a blameless postmortem so it doesn’t happen again. In this lesson you live through a whole one in your shop, with the queue’s Redis frozen."
+  objectives:
+    - "Handle an incident in order: detect, mitigate, fix and learn, and mitigate before investigating."
+    - "Hand out the roles of an incident, in a team and when you’re alone, and tell what’s going on while it lasts."
+    - "Follow an alert to the cause with the dashboard, a trace and the log, and check that the shop recovers."
+    - "Write a blameless postmortem, with its timeline and concrete actions, and know what being on call costs."
+  prerequisites: [alerts, tracing, ci-cd]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+Imagine it’s three in the morning and you get two emails in a row: “5xx errors on /v2” and “Outgoing events stuck.” The alerts from [lesson 6](/en/phase-10/health-checks-alerts/) have done their job: you found out before your customers. And now what?
+
+What your gut asks for is to open the code and look for the bug, while customers still can’t get in. Or to restart everything, and wipe out the clues. And in the morning nobody remembers when anything happened.
+
+**Handling a failure in production has an order**, and it’s better learned on a quiet Tuesday. This lesson closes the phase with a practice <Term id="incident">incident</Term> in your shop, from the first alert to the final report.
+
+## The analogy
+
+<Analogy>
+
+A pipe bursts at home and water runs down the hallway. First you close the main valve, even if you don’t know which pipe it is. Then the plumber finds the break and replaces it.
+
+And afterwards you think: do I replace the old pipes? Do I put in a leak detector? Nobody blames whoever turned on the tap: it would have burst anyway.
+
+<div slot="limits">
+
+- Closing the valve stops the damage. On a server, mitigating doesn’t undo everything: the delayed emails arrive, but late.
+- You can see water. On a server you only see what you measure.
+- A pipe bursts for one reason. An incident almost never has just one.
+
+</div>
+
+</Analogy>
+
+Closing the valve is **mitigating**; the plumber, **fixing**; thinking about the old pipes, **learning**.
+
+## How it really works
+
+### What an incident is
+
+An incident is a failure customers notice now and that asks for action now. A misaligned button gets fixed on Monday. Nobody being able to sign in is an incident.
+
+**Saying it out loud changes how you work**: one person leads, you talk in a single place, you write down the time of everything and nobody touches anything without saying so.
+
+### Detect, mitigate, fix, learn
+
+Every incident goes through four phases:
+
+| Phase | The question | In the practice incident |
+|---|---|---|
+| Detect | Is something wrong, and how badly? | Two alert emails, at about two and a half minutes |
+| Mitigate | How do I stop the damage now? | Unfreeze the queue’s Redis |
+| Fix | Why did it happen, and how do I keep it from coming back? | Find out why it froze, and change that |
+| Learn | What do we change for next time? | The postmortem, with its actions |
+
+### Mitigate first, investigate later
+
+While you investigate, customers keep suffering. **First you stop the damage, even if you don’t know the cause**:
+
+- **If it started right after a deployment, you roll back.** It’s Phase 8’s <Term id="rollback">rollback</Term> ([roll back on purpose](/en/phase-8/ci-cd-github-actions/#roll-back-on-purpose)): a few seconds, and then you investigate calmly. It brings back the code, [not the schema](/en/phase-8/ci-cd-github-actions/#a-rollback-brings-back-the-code-not-the-schema).
+- **If a piece has hung, you restart it**, or replace it with another.
+- **If a new part fails, you switch it off**, and the rest of the shop keeps going.
+
+Before restarting, **save the clues**: Jaeger keeps the traces in memory, and recreating a container takes its logs with it. `docker compose logs api > incident-api.log` takes a second.
+
+### Roles: who leads, who fixes, who communicates
+
+In a team, a serious incident hands out three roles:
+
+- **Whoever leads** (*incident commander*): decides what gets tried and in what order, and doesn’t type: they see the whole picture.
+- **Whoever fixes**: looks at dashboards, traces and logs, and runs what’s decided.
+- **Whoever communicates**: tells support and customers, and writes down the time of each thing.
+
+**If you’re alone, all three roles are yours.** Write down in a file the time of everything you see or do: it will be the postmortem’s timeline. Tell people early, even if it’s just two lines. And every ten minutes, look up: is what you’re trying bringing you closer to the solution?
+
+### Telling it while it lasts: the status page
+
+A **status page** tells your customers what’s failing, what isn’t and when you’ll give more news. An example, GitHub’s: [githubstatus.com](https://www.githubstatus.com/). Three sentences are enough: “You can’t sign in. Orders and payments work. We’ll update at 3:30.”
+
+It lives **outside your server**, like [watching from outside](/en/phase-10/health-checks-alerts/#watching-from-outside): if the machine goes down, the page is still there to say so.
+
+### The blameless postmortem
+
+When everything works again, you write a <Term id="postmortem">postmortem</Term>: what happened, when, why and what changes. **Blameless**: it doesn’t ask who made a mistake, but why the system allowed it. If one person could break production with one command, the next one would do the same.
+
+A real case: in 2017, a person at GitLab deleted the main database by mistake, thinking they were on the secondary one. Its [public postmortem](https://about.gitlab.com/blog/2017/02/10/postmortem-of-database-outage-of-january-31/) doesn’t stop at the person: it keeps asking why until it gets to the backups failing without anyone knowing, because the emails warning about it were being rejected.
+
+Step 46 brings the template, in `docs/postmortem.md`. It starts with five facts:
+
+<ProjectCode file="shop-api/46-alerts/docs/postmortem.md" region="header" />
+
+Its sections follow, from Summary to Actions, each with a comment that says what to write. The timeline:
+
+<ProjectCode file="shop-api/46-alerts/docs/postmortem.md" region="timeline" />
+
+- **The times, from a source**: the alert’s email, the log, a chart; not memory.
+- **The cause, with several “why?”s**, until you reach something that can be changed.
+- **Actions with a name and a date.** “Be more careful” isn’t an action.
+
+### Being on call, and what it costs
+
+Someone has to read the alerts at three in the morning: that’s being <Term id="on-call">on call</Term>. It costs sleep and plans, and a badly run rotation burns people out. It becomes bearable like this:
+
+- **In shifts**, like pharmacies: never the same person all the time.
+- **Only what’s urgent wakes you up.** It’s the [alerts’ severity](/en/phase-10/health-checks-alerts/#alert-fatigue): `urgent` wakes you up, `warning` waits until morning.
+- **Every alert says what to look at**, like “Look at the worker and the queue’s Redis.” With a page of steps per alert (a *runbook*), anyone on the shift can handle it.
+- **It gets counted**: how many times it woke someone up, and how many for no reason. And it gets paid, or compensated with time off.
+- **With someone as backup**, in case whoever is on call doesn’t answer.
+
+If you run your shop alone, being on call is yours: decide what wakes you up.
+
+## Try it
+
+The goal: live through a whole incident. You freeze the queue’s Redis while the shop is selling, you find out through the alerts, you find the failure with the dashboard, the log and a trace, you mitigate it, you check that everything comes back and you write the postmortem.
+
+Outputs from October 24, 2026, with the shop on Node 26, on a MacBook with Docker in a 2 GB virtual machine. Your times and numbers will be different. **Watch out for the times:** `npm run traffic` writes your computer’s (ours, Madrid’s, two hours ahead of UTC), and Grafana, Mailpit and Jaeger, UTC’s.
+
+### Get the shop ready
+
+If you’re coming from lesson 6, your shop is still running on step 46. If not, [get the step ready](/en/phase-10/health-checks-alerts/#get-the-step-ready) as there. Open two terminals in the project’s folder, and empty Mailpit so you can count better:
+
+<TryIt
+  title="1. Mailpit, empty"
+  cmd="curl -s -X DELETE localhost:8025/api/v1/messages"
+  output={`ok`}
+>
+
+If it doesn’t answer anything, check that Mailpit is running: `docker compose ps mailpit`.
+
+</TryIt>
+
+### A customer who never stops buying
+
+In the second terminal, start the practice traffic:
+
+<TryIt
+  title="2. The traffic"
+  cmd={`API=$(docker compose port api 3000)
+SHOP_URL=http://$API npm run traffic`}
+  output={`> shop-api@1.0.0 traffic
+> node --env-file-if-exists=.env scripts/traffic.ts
+
+Traffic against http://127.0.0.1:3001. Ctrl + C to stop.
+20:49:28  session 200  order 201  payment 200  cancel 200
+20:49:29  session 200  sign-out 204  order 201  payment 200  cancel 200
+20:49:30  session 200  sign-out 204  order 201  payment 200  cancel 200
+…`}
+>
+
+Carmen, the practice customer, signs in, buys a mug, pays for it with the fake gateway and cancels the order. One round every second and a bit, and every payment leaves an email in Mailpit. **Leave it running.** `SHOP_URL` tells it where your API is.
+
+</TryIt>
+
+### Freeze the queue’s Redis
+
+In the first terminal, write down the time: your timeline starts. And freeze Redis:
+
+<TryIt
+  title="3. The incident starts"
+  cmd="docker compose pause redis"
+  output={` Container shop-redis-1 Paused `}
+>
+
+We froze it at 20:50:27, 18:50:27 in UTC. Redis is still there, but it doesn’t answer.
+
+</TryIt>
+
+In the second terminal, from that second on:
+
+```text
+20:50:26  session 200  sign-out 204  order 201  payment 200  cancel 200
+20:50:27  session 200  sign-out 204  order 201  payment 200  cancel 200
+20:50:28  session 503  order 201  payment 200  cancel 200
+20:50:29  session 503  order 201  payment 200  cancel 200
+```
+
+**Sign-ins fail; orders and payments don’t.** The attempt limit lives in that Redis and, without it, [it closes](/en/phase-10/health-checks-alerts/#failing-well-the-three-fixes-phase-9-left); paying only writes to PostgreSQL. What you can’t see here: the emails have stopped going out.
+
+### Detect: the alerts
+
+Ask Grafana about its rules, as in lesson 6:
+
+<TryIt
+  title="4. Pending"
+  cmd={`curl -s localhost:3100/api/prometheus/grafana/api/v1/rules | jq -r '.data.groups[].rules[] | "\\(.state)  \\(.name)"'`}
+  output={`pending  5xx errors on /v2
+inactive  High p99 on /v2
+inactive  Outgoing events stuck
+inactive  The API is not sending metrics`}
+>
+
+At 47 seconds, the errors one is already pending: it’s missing the 2 minutes of its `for`. The outgoing events one waits for the oldest one to go past 120 seconds.
+
+</TryIt>
+
+Wait about two minutes. Among so many confirmations, `select` keeps the alert emails, which start with `[`:
+
+<TryIt
+  title="5. The alert emails"
+  cmd={`curl -s 'localhost:8025/api/v1/messages?limit=500' | jq -r '.messages[] | select(.Subject | startswith("[")) | "\\(.Created)  \\(.Subject)"'`}
+  output={`2026-10-24T18:53:02.516Z  [FIRING:1] 5xx errors on /v2 (Shop urgent)
+2026-10-24T18:52:55.032Z  [FIRING:1] Outgoing events stuck (Shop urgent)`}
+>
+
+**Detected at 2 minutes and 28 seconds**: from 18:50:27 to 18:52:55, in UTC. Without `?limit=500`, Mailpit only lists the last 50. If there’s nothing yet, wait a minute and repeat.
+
+</TryIt>
+
+<TryIt
+  title="6. What the errors one says"
+  cmd={`curl -s localhost:8025/api/v1/message/latest | jq -r .Text`}
+  output={`…
+*Summary*
+More than 5% of the responses from /v2 have been 5xx errors for 2 minutes
+*Description*
+Look at the "The shop" dashboard (5xx errors by route) and the API log.
+
+*Values*
+
+A=0.25 B=0.25 C=1
+…`}
+>
+
+**`A`, 0.25: one in four of `/v2`’s responses fails.** It fits Carmen’s round: the sign-in fails, and the order, the payment and the cancellation don’t. The other email says: “Emails and notices aren’t going out. Look at the worker and the queue’s Redis.”
+
+</TryIt>
+
+### Diagnose: the dashboard
+
+The alert sends you to the dashboard. In Grafana, `http://localhost:3100`, open “The shop”: in “5xx errors per second, by route” only one line goes up. It’s this query:
+
+<TryIt
+  title="7. Which route fails"
+  cmd={`curl -sG localhost:9090/api/v1/query --data-urlencode 'query=sum by (http_route) (rate(http_server_request_duration_seconds_count{job="shop-api",http_response_status_code=~"5.."}[1m]))' | jq -c '.data.result[] | {metric, value: .value[1]}'`}
+  output={`{"metric":{"http_route":"/health"},"value":"0"}
+{"metric":{"http_route":"/health/ready"},"value":"0"}
+{"metric":{"http_route":"/v2/session"},"value":"0.7480523271725446"}`}
+>
+
+Only `/v2/session`: about 0.75 errors per second, one per round, with the `rate` from [lesson 5](/en/phase-10/prometheus-grafana-metrics/#promql-in-four-queries). `/health` and `/health/ready`, at 0: they had 5xx in lesson 6’s “Try it,” and their series is still there.
+
+</TryIt>
+
+And the rest of the shop? The same count, by route and code, without the series at zero (`> 0`):
+
+<TryIt
+  title="8. What works"
+  cmd={`curl -sG localhost:9090/api/v1/query --data-urlencode 'query=sum by (http_route, http_response_status_code) (rate(http_server_request_duration_seconds_count{job="shop-api",http_route=~"/v2/.*"}[1m])) > 0' | jq -c '.data.result[] | {metric, value: .value[1]}'`}
+  output={`{"metric":{"http_response_status_code":"201","http_route":"/v2/orders"},"value":"0.7480523271725448"}
+{"metric":{"http_response_status_code":"200","http_route":"/v2/webhooks/payments"},"value":"0.7480523271725448"}
+{"metric":{"http_response_status_code":"503","http_route":"/v2/session"},"value":"0.7480523271725448"}
+{"metric":{"http_response_status_code":"200","http_route":"/v2/orders/:id/cancellation"},"value":"0.7480523271725448"}`}
+>
+
+**The shop takes money, but doesn’t let people in.** It’s the first thing you’d put on the status page.
+
+</TryIt>
+
+And the emails:
+
+<TryIt
+  title="9. The email that doesn’t go out"
+  cmd={`curl -sG localhost:9090/api/v1/query --data-urlencode 'query=max(shop_outbox_age_seconds)' | jq -c '.data.result[] | {metric, value: .value[1]}'
+curl -sG localhost:9090/api/v1/query --data-urlencode 'query=max(shop_queue_waiting)' | jq -c '.data.result[] | {metric, value: .value[1]}'`}
+  output={`{"metric":{},"value":"157.726945"}
+{"metric":{},"value":"0"}`}
+>
+
+- **The oldest outgoing event has gone 158 seconds without going out**, one more every second.
+- **The queue says `0` jobs waiting, and it’s lying.** It’s read from Redis, which doesn’t answer, and the last value is repeated: lesson 5’s [flat line](/en/phase-10/prometheus-grafana-metrics/#three-types-counter-gauge-and-histogram). That’s why the age is read from PostgreSQL.
+
+</TryIt>
+
+### Diagnose: the log
+
+The API’s log says why signing in fails:
+
+<TryIt
+  title="10. The limits, without Redis"
+  cmd={`docker compose logs api --no-log-prefix | grep 'ask their store' | tail -1 | jq .`}
+  output={`{
+  "level": 40,
+  "time": 1792867986926,
+  "pid": 1,
+  "hostname": "1b91f715bffb",
+  "trace_id": "68dcfd55e523e563c73ea8e6a1a9277f",
+  "span_id": "edebd05df5e85d97",
+  "trace_flags": "01",
+  "limit": "session-email",
+  "onFailure": "closed",
+  "reason": "no answer in 200 ms",
+  "msg": "the limits can't ask their store: nobody is let through"
+}`}
+>
+
+A `warn` (level 40): **the limit by email gets no answer from Redis in 200 ms, and closes.** Keep its `trace_id` for Jaeger.
+
+</TryIt>
+
+And the worker’s, why the emails don’t go out:
+
+<TryIt
+  title="11. The relayer, without a queue"
+  cmd={`docker compose logs worker --no-log-prefix | grep 'reached the queue' | tail -1 | jq .`}
+  output={`{
+  "level": 40,
+  "time": 1792867987065,
+  "pid": 1,
+  "hostname": "1344bad05566",
+  "reason": "the queue doesn't answer in 2000 ms",
+  "msg": "the outgoing events haven't reached the queue: it will be retried"
+}`}
+>
+
+The [relayer](/en/phase-9/event-driven-architecture/#the-relayer-from-the-table-to-the-queue) waits for the queue 2 seconds per round and tries again. **Both clues point to the queue’s Redis.**
+
+</TryIt>
+
+### Diagnose: the trace
+
+In Jaeger, `http://localhost:16686`, paste the log’s `trace_id` in **Lookup by Trace ID**, as in [lesson 4](/en/phase-10/opentelemetry-tracing/#from-the-log-to-the-trace). We looked ours up right away, and it wasn’t there yet: the API sends its spans in batches, every 5 seconds or so. If that happens to you, wait a few seconds. One from a few seconds earlier, summarized as there:
+
+```text
+POST /v2/session                                          shop-api              205.34 ms   +0 ms   error
+```
+
+**A single span, with an error, and none from Redis.** Redis was asked: a span is sent to Jaeger when it ends, and the commands to Redis were still waiting for an answer.
+
+To see them all, in **Search**: service `shop-api`, **Span Name** `POST /v2/session`, **Attributes** `http.response.status_code=503` and **Min Duration** `100ms`. We got the 20 it shows at once, every one with a single span, and in the log, **the 131 took between 200 and 210 ms**. The downed limit only lets one question through to Redis per second, and Carmen signs in every 1.3 seconds: every sign-in was that question, and waited its 200 ms. With more customers, the others would get the `503` instantly.
+
+### Mitigate
+
+In a real incident, mitigating would be restarting that Redis, or swapping it for another. Here, unfreezing it is enough:
+
+<TryIt
+  title="12. Redis, back"
+  cmd="docker compose unpause redis"
+  output={` Container shop-redis-1 Unpaused `}
+>
+
+We did it at 20:53:22 (18:53:22 in UTC): **27 seconds after the first email**. In the second terminal, the next sign-in already gives `200`.
+
+</TryIt>
+
+Go back to Jaeger and open the same trace. Now it has its Redis spans:
+
+```text
+POST /v2/session                                          shop-api              205.34 ms   +0 ms   error
+  redis-ZREMRANGEBYSCORE                                  shop-api            19073.02 ms   +0 ms
+  redis-ZRANGE                                            shop-api            19073.00 ms   +0 ms
+```
+
+**The request answered at 205 ms, but its commands to Redis lasted 19 seconds**: from 18:53:04 until the `unpause`. The request stopped waiting; the command kept waiting in the Redis client. The first sign-in of the incident, at 18:50:28, has spans of 174,816 ms, also until the `unpause`. **It’s lesson 6’s cutoff, seen from the inside**: without it, every sign-in would have waited that long.
+
+### Check that it comes back
+
+The relayer catches up all at once:
+
+<TryIt
+  title="13. The outbox empties"
+  cmd={`curl -sG localhost:9090/api/v1/query --data-urlencode 'query=max(shop_outbox_age_seconds)' | jq -c '.data.result[] | {metric, value: .value[1]}'
+docker compose logs worker --no-log-prefix --since 30s | grep 'relayed' | jq -c '{time, events, msg}'`}
+  output={`{"metric":{},"value":"0.143419"}
+{"time":1792868003193,"events":50,"msg":"outgoing events relayed"}
+{"time":1792868003283,"events":50,"msg":"outgoing events relayed"}
+{"time":1792868003325,"events":31,"msg":"outgoing events relayed"}
+{"time":1792868004332,"events":1,"msg":"outgoing events relayed"}
+…`}
+>
+
+Seven seconds later, the oldest event isn’t waiting anymore: 0.14 seconds. **131 events in the same second**, 50 at a time, and then one per new payment.
+
+</TryIt>
+
+<TryIt
+  title="14. The delayed emails"
+  cmd={`curl -s 'localhost:8025/api/v1/messages?limit=500' | jq -r '.messages[].Created[0:19]' | sort | uniq -c | sort -rn | head -3`}
+  output={` 131 2026-10-24T18:53:23
+   1 2026-10-24T18:53:35
+   1 2026-10-24T18:53:34`}
+>
+
+It counts the emails by the second they arrived. **131 emails at once**: those of the incident’s payments, the first ones almost three minutes late. None was lost: the outbox, the table of pending events, kept them in PostgreSQL and, as [at-least-once delivery](/en/phase-9/background-jobs-queues/#at-least-once-a-job-can-be-done-twice) promises, they went out when the queue came back.
+
+</TryIt>
+
+Wait a couple more minutes:
+
+<TryIt
+  title="15. Resolved"
+  cmd={`curl -s 'localhost:8025/api/v1/messages?limit=500' | jq -r '.messages[] | select(.Subject | startswith("[")) | "\\(.Created)  \\(.Subject)"'`}
+  output={`2026-10-24T18:55:02.309Z  [RESOLVED] 5xx errors on /v2 (Shop urgent)
+2026-10-24T18:53:54.83Z  [RESOLVED] Outgoing events stuck (Shop urgent)
+2026-10-24T18:53:02.516Z  [FIRING:1] 5xx errors on /v2 (Shop urgent)
+2026-10-24T18:52:55.032Z  [FIRING:1] Outgoing events stuck (Shop urgent)`}
+>
+
+The outgoing events one, 32 seconds after the `unpause`; the errors one, 1 minute and 40 seconds after, when its one-minute window was left without 5xx.
+
+</TryIt>
+
+Stop the traffic with <kbd>Ctrl</kbd> + <kbd>C</kbd>. Before leaving, it counts what it has seen:
+
+```text
+20:55:17  session 200  sign-out 204  order 201  payment 200  cancel 200
+20:55:18  session 200  sign-out 204  order 201  payment 200  cancel 200
+
+Responses: 200: 718, 201: 283, 204: 151, 503: 131
+```
+
+**131 `503`s, one per sign-in during the incident, and 283 orders**, as many as confirmation emails: the impact, in numbers.
+
+### Write the postmortem
+
+Copy the template into a folder for your incidents:
+
+```sh
+mkdir -p incidents
+cp docs/postmortem.md incidents/2026-10-24-frozen-redis.md
+```
+
+Fill it in with your times and numbers, and delete its comments. Ours, in UTC:
+
+### Our postmortem
+
+**The queue’s Redis, frozen.** October 24, 2026. Duration: 2 min 55 s, from 18:50:27 to 18:53:22; detected at 2 min 28 s. Severity: urgent. Author: whoever was on call. Status: draft.
+
+**Summary.** The queue’s Redis stopped answering for three minutes. Sign-ins failed with `503` and confirmation emails didn’t go out; orders and payments worked. When it was unfrozen, everything came back within a second.
+
+**Impact.**
+
+- 131 failed sign-ins, in about 200 ms each.
+- 131 emails delayed by up to almost three minutes; none lost (283 payments, 283 emails).
+- 131 5xx responses: with lesson 6’s SLO and a million requests a month, 1.3% of the error budget.
+
+**Timeline** (UTC):
+
+| Time | What happened | Source |
+|---|---|---|
+| 18:50:27 | The queue’s Redis frozen; the first `session 503` a second later | Terminal, `npm run traffic` |
+| 18:52:40 | “Outgoing events stuck,” fired | The alert’s email |
+| 18:52:50 | “5xx errors on /v2,” fired | The alert’s email |
+| 18:52:55 | First alert email | Mailpit |
+| 18:53:07 | Diagnosis: only `/v2/session` fails; limits and relayer without an answer from Redis | Dashboard and log |
+| 18:53:22 | Mitigated: `docker compose unpause redis` | Terminal |
+| 18:53:23 | The 131 held emails arrive; the next sign-in gives `200` | Mailpit, `npm run traffic` |
+| 18:55:02 | The last alert resolved, the errors one | Mailpit |
+
+**Cause.** The queue’s Redis stopped answering (in this practice, on purpose). Why did sign-ins fail? Because their limits live in that Redis and close without it. Why didn’t the emails go out? Because the relayer couldn’t enqueue them. Why did everything fail at once? Because limits and queue share a single Redis, with no copy.
+
+**What went well.** Payments kept going because they only write to PostgreSQL, and the emails waited in the outbox until the queue came back. The limits answered in 200 ms, not in 12 seconds. The alerts arrived with their hint (“Look at the worker and the queue’s Redis”). No email was lost.
+
+**What went wrong.** Detecting it took two and a half minutes. The trace didn’t show the Redis spans until it came back. The queue metric said `0` while nothing went out, and the outgoing events’ age isn’t on the dashboard.
+
+**Where we were lucky.** There was a single customer buying. Redis was frozen, not down: it came back with its data.
+
+**Actions.**
+
+| Action | Owner | Due | Status |
+|---|---|---|---|
+| The oldest outgoing event’s age, on “The shop” dashboard | Whoever is on call | October 31 | Pending |
+| A page per alert, with the steps, linked from its description | Whoever is on call | November 7 | Pending |
+| Study whether the attempt limits go in their own Redis | Whoever is on call | November 14 | Pending |
+
+### On your server
+
+This lesson doesn’t bring a step. On your server there are no alerts (lesson 6). What you do take with you is the `incidents/` folder, in the repository.
+
+## You have already seen it
+
+- **Pharmacies on duty at night**: in shifts, so no single one opens every night.
+- **The status page** of a service you use, when it fails: “We’re investigating problems with…”
+- **Aviation accident reports**: by international rule, they look for what to change, not whom to blame. That’s where the blameless postmortem comes from.
+
+## Common mistakes
+
+- **Investigating before mitigating.** While you look for the cause, customers still can’t get in.
+- **Restarting everything without saving anything.** The clues go away with the restart.
+- **Looking for someone to blame.** Next time nobody will tell anything, and the flaw will still be there.
+- **Actions without an owner or a date.** “Be more careful” changes nothing.
+- **Being on call, always the same person.** They burn out, and without them nobody knows what to do.
+
+## Summary
+
+- An incident is a failure your customers notice now. It’s handled in order: detect, mitigate, fix, learn.
+- First you stop the damage (roll back, restart, switch off), saving the clues; the cause is looked for later.
+- Whoever leads, whoever fixes and whoever communicates: in a team, three people; alone, you, with a timeline and early updates.
+- The blameless postmortem asks why the system allowed it, and ends in actions with an owner and a date.
+- Being on call costs: in shifts, only what’s urgent wakes you up, and every alert says what to look at.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="At 2:50 you deploy a new version. At 3:00 “5xx errors on /v2” fires. What do you do first?"
+  review="Mitigate first, investigate later"
+>
+
+<QuizOption text="Read the new code until you find the bug, and deploy the fix.">
+
+While you read, the damage goes on: first you stop it, then you look.
+
+</QuizOption>
+
+<QuizOption text="Go back to the previous version, and then look for the cause calmly." correct>
+
+It started after a deployment: rolling back stops the damage in seconds. Then you investigate without hurrying.
+
+</QuizOption>
+
+<QuizOption text="Wait ten minutes, in case it fixes itself.">
+
+The alert already waited its 2 minutes of `for`: the failure lasts. Waiting longer only stretches what customers suffer.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="A postmortem says: “Cause: Luis ran a wrong command in production. Action: Luis will be more careful.” What’s missing?"
+  review="The blameless postmortem"
+>
+
+<QuizOption text="Asking why one command could break production." correct>
+
+It stops at a person. What gets changed is that the system allows it. And “be more careful” isn’t an action.
+
+</QuizOption>
+
+<QuizOption text="Nothing: it tells the truth, and the action has an owner.">
+
+It’s true, but useless: the next person will break the same thing, and nobody will want to tell their mistakes.
+
+</QuizOption>
+
+<QuizOption text="Removing Luis’s name; with that it’s already blameless.">
+
+Without the name, it still blames someone. Blameless is changing the question: what allowed the failure, not who caused it.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="During the incident, the trace of a 503 from /v2/session has a single span, with nothing from Redis. A coworker concludes Redis has nothing to do with it. Is she right?"
+  review="Diagnose: the trace"
+>
+
+<QuizOption text="Yes: if the request had asked Redis, Jaeger would show it.">
+
+Jaeger only shows what has arrived, and a span arrives when it ends. The commands to Redis were still waiting.
+
+</QuizOption>
+
+<QuizOption text="No: Jaeger loses the Redis spans when there are lots of errors.">
+
+They aren’t lost: they arrive when Redis comes back, in the same trace.
+
+</QuizOption>
+
+<QuizOption text="No: its Redis spans haven’t ended or arrived yet." correct>
+
+The request stopped waiting at 200 ms; its commands are still waiting for Redis, and show up when they end.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You run your shop on your own. At midnight an urgent alert fires. Which roles are yours?"
+  review="Roles: who leads, who fixes, who communicates"
+>
+
+<QuizOption text="None: roles are for teams; you just fix it.">
+
+Someone has to decide what to try and tell the customers. If you’re alone, that’s you.
+
+</QuizOption>
+
+<QuizOption text="All three: you write down the time of everything, tell people early and fix it." correct>
+
+The three roles exist all the same. The timeline you write down now will be the postmortem’s.
+
+</QuizOption>
+
+<QuizOption text="Only fixing it; telling the customers, once it’s resolved.">
+
+With no news, customers imagine the worst. A three-sentence notice at the start takes a minute.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Which of these is a good action for a postmortem?"
+  review="The blameless postmortem"
+>
+
+<QuizOption text="The outgoing event’s age, on the dashboard: Ana, by the 31st." correct>
+
+Concrete, checkable, with an owner and a date: in a month you know whether it’s done.
+
+</QuizOption>
+
+<QuizOption text="Watch Redis better from now on, all of us.">
+
+“Better” can’t be checked, and what belongs to everyone belongs to no one: nobody will know when it’s done.
+
+</QuizOption>
+
+<QuizOption text="Make sure the queue’s Redis never freezes again.">
+
+It’s a wish, not a change. The action is what you’ll do so it doesn’t happen, or to find out sooner if it does.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="In your team of three, Marta is always on call because she knows Redis best. What do you propose?"
+  review="Being on call, and what it costs"
+>
+
+<QuizOption text="Nothing: that way each incident is handled by whoever solves it fastest.">
+
+Until Marta burns out or goes on vacation. What she knows has to be written down.
+
+</QuizOption>
+
+<QuizOption text="That the alerts reach all three at once, and whoever can answers.">
+
+When everyone gets the alert, each one thinks someone else is handling it. Being on call is one named person per shift.
+
+</QuizOption>
+
+<QuizOption text="Shifts among the three, with a page of steps per alert." correct>
+
+With the steps written down, anyone on the shift handles the alert, and Marta sleeps.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [Managing Incidents](https://sre.google/sre-book/managing-incidents/), from Google’s SRE book: the roles in an incident, with a whole example.
+- [Postmortem Culture: Learning from Failure](https://sre.google/sre-book/postmortem-culture/), from the same book: the blameless postmortem and how it’s reviewed.
+- [Incident Response](https://sre.google/workbook/incident-response/), from Google’s SRE workbook: real cases.
+- [PagerDuty Incident Response](https://response.pagerduty.com/): PagerDuty’s open guide on roles and on-call.
+- [Postmortem of database outage of January 31](https://about.gitlab.com/blog/2017/02/10/postmortem-of-database-outage-of-january-31/), from GitLab: a real, public postmortem, with its timeline.

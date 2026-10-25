@@ -1,0 +1,423 @@
+// Las trazas (Fase 10, lección 4): src/instrumentacion.ts arranca OpenTelemetry, y cada petición y
+// cada trabajo dejan sus spans. Aquí, en vez de mandarlos a Jaeger, se quedan en la memoria del
+// test (InMemorySpanExporter), para mirarlos.
+// El orden importa: la instrumentación tiene que empezar ANTES de que se carguen pg, redis, BullMQ o
+// pino, porque los cambia al cargarlos. Por eso este fichero no importa nada de la tienda arriba,
+// como los demás: empieza la instrumentación y, después, la importa con import(). En la tienda de
+// verdad lo mismo lo hace node --import ./src/instrumentacion.ts.
+import assert from 'node:assert/strict';
+import { execFile } from 'node:child_process';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
+import { after, before, test } from 'node:test';
+import { setTimeout as dormir } from 'node:timers/promises';
+import { promisify } from 'node:util';
+import { SpanKind, trace } from '@opentelemetry/api';
+import { InMemorySpanExporter, type ReadableSpan } from '@opentelemetry/sdk-trace-base';
+import { empezarInstrumentacion, ordenSinDatos, urlSinQuery } from '../src/instrumentacion.ts';
+
+const exportador = new InMemorySpanExporter();
+const instrumentacion = empezarInstrumentacion({ exportador });
+
+// Con Redis (REDIS_URL_TESTS), la tienda de este fichero lo usa como en Compose: los límites de
+// intentos van a Redis, y así se ve qué apuntan sus spans. Tiene que estar antes de importar
+// config.ts, que lee las variables al cargarse.
+if (process.env.REDIS_URL_TESTS) process.env.REDIS_URL = process.env.REDIS_URL_TESTS;
+
+// Ahora sí, la tienda. También node:http: url-segura.ts lo importa para mandar los avisos, y la
+// instrumentación de http solo ve los import que llegan después de empezar.
+const { createServer } = await import('node:http');
+const { serve } = await import('@hono/node-server');
+const { app } = await import('../src/app.ts');
+const { conectarRedis } = await import('../src/almacen-redis.ts');
+const { cerrarCola, crearCola, crearTrabajador, encolar, procesar } =
+  await import('../src/cola.ts');
+const { crearClave } = await import('../src/claves.ts');
+const { buscarPedido } = await import('../src/datos.ts');
+const { cambiosDePedidos } = await import('../src/eventos-pedidos.ts');
+const { cerrarLimites } = await import('../src/limites.ts');
+const { config } = await import('../src/config.ts');
+const { firmar } = await import('../src/firma.ts');
+const { repartir } = await import('../src/salientes.ts');
+const { pool } = await import('../src/bd.ts');
+const { usarBd } = await import('./bd.ts');
+
+usarBd();
+
+const url = process.env.REDIS_URL_TESTS;
+const sinRedis = url
+  ? false
+  : 'sin Redis: pon REDIS_URL_TESTS en test/.env (redis://localhost:6379/1) para probarlo';
+
+// La API de verdad, en un puerto libre: así la petición pasa por node:http, como en producción, y
+// se ve si la instrumentación de http añade otro span de servidor.
+let tienda: string;
+let servidor: ReturnType<typeof serve>;
+before(async () => {
+  servidor = serve({ fetch: app.fetch, port: 0, hostname: '127.0.0.1' });
+  await once(servidor, 'listening');
+  tienda = `http://127.0.0.1:${(servidor.address() as AddressInfo).port}`;
+});
+
+after(async () => {
+  servidor.close();
+  // Las conexiones con Redis que abre la tienda con REDIS_URL, como al apagarse (servidor.ts).
+  await cerrarCola();
+  await cambiosDePedidos.cerrar();
+  await cerrarLimites();
+  await instrumentacion.apagar();
+});
+
+const spans = () => exportador.getFinishedSpans();
+const deLaTraza = (traza: string) => spans().filter((s) => s.spanContext().traceId === traza);
+
+/** Los spans de servidor: uno por cada petición que ha recibido la API. */
+const deServidor = () => spans().filter((s) => s.kind === SpanKind.SERVER);
+
+/** Espera hasta que se cumpla la condición, o falla pasado el tiempo. */
+async function esperar(condicion: () => boolean | Promise<boolean>, ms = 10_000, que = '') {
+  const hasta = Date.now() + ms;
+  while (!(await condicion())) {
+    if (Date.now() > hasta) assert.fail(`pasados ${ms} ms, aún no: ${que}`);
+    await dormir(50);
+  }
+}
+
+test('una petición deja un span de servidor, con la ruta y el requestId, y uno por consulta', async () => {
+  exportador.reset();
+  const res = await fetch(`${tienda}/v2/productos`);
+  assert.equal(res.status, 200);
+  await res.arrayBuffer();
+  await esperar(() => deServidor().length > 0, 5000, 'el span de la petición');
+
+  // Uno solo: el de Hono (@hono/otel). La instrumentación de http no añade el suyo.
+  const [peticion, ...otros] = deServidor();
+  assert.equal(otros.length, 0, 'un solo span de servidor');
+  // Con la plantilla de la ruta, no la URL: GET /v2/pedidos/:id, nunca GET /v2/pedidos/7.
+  assert.equal(peticion!.name, 'GET /v2/productos');
+  assert.equal(peticion!.attributes['http.route'], '/v2/productos');
+  // El id que ve quien llama (la cabecera X-Request-Id) encuentra la traza.
+  assert.equal(peticion!.attributes['tienda.request_id'], res.headers.get('x-request-id'));
+
+  // Y sus consultas a PostgreSQL, dentro: spans hijos del de la petición.
+  const traza = peticion!.spanContext().traceId;
+  const consultas = deLaTraza(traza).filter((s) => s.attributes['db.system.name'] === 'postgresql');
+  assert.ok(consultas.length >= 1, 'al menos una consulta');
+  assert.ok(
+    consultas.some((s) => s.parentSpanContext?.spanId === peticion!.spanContext().spanId),
+    'una consulta, hija directa de la petición',
+  );
+});
+
+test('una ruta con un parámetro: el span lleva la plantilla, no el id', async () => {
+  exportador.reset();
+  const res = await fetch(`${tienda}/v2/productos/1`);
+  await res.arrayBuffer();
+  await esperar(() => deServidor().length > 0, 5000, 'el span de la petición');
+  assert.equal(deServidor()[0]!.name, 'GET /v2/productos/:id');
+});
+
+/** La pasarela avisa de que el pedido está pagado (scripts/pasarela.ts). */
+async function pagar(pedidoId: number) {
+  const cuerpo = JSON.stringify({ id: `evt_traza_${pedidoId}`, tipo: 'pago.completado', pedidoId });
+  return fetch(`${tienda}/v2/webhooks/pagos`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Firma': firmar(cuerpo, config.WEBHOOK_SECRET),
+    },
+    body: cuerpo,
+  });
+}
+
+test(
+  'del pago al trabajador, una sola traza: pasa por eventos_salientes y por la cola',
+  { skip: sinRedis },
+  async () => {
+    const conexion = conectarRedis(url!);
+    const cola = crearCola(conexion);
+    await cola.obliterate({ force: true });
+    await pool.query('DELETE FROM avisos');
+    exportador.reset();
+    const trabajador = crearTrabajador({ url: url! });
+    try {
+      // El 21, pendiente, es de Carmen. Sin avisos guardados: un solo trabajo, el correo.
+      const res = await pagar(21);
+      assert.equal(res.status, 200);
+      await res.arrayBuffer();
+      await esperar(() => deServidor().length > 0, 5000, 'el span del pago');
+      const pago = deServidor()[0]!;
+      assert.equal(pago.name, 'POST /v2/webhooks/pagos');
+      const traza = pago.spanContext().traceId;
+
+      // El evento saliente guarda la traza en la que se creó (W3C traceparent): versión, traza,
+      // span y opciones (01: se guarda).
+      const { rows } = await pool.query<{ contexto: string | null }>(
+        'SELECT contexto FROM eventos_salientes',
+      );
+      assert.equal(rows.length, 1);
+      assert.match(rows[0]!.contexto ?? '', new RegExp(`^00-${traza}-[0-9a-f]{16}-01$`));
+
+      // El repartidor (en el trabajador, sin petición) lo pone en la cola, en esa misma traza.
+      assert.equal(await repartir(50, (trabajo) => encolar(trabajo, cola)), 1);
+      await esperar(
+        () => deLaTraza(traza).some((s) => s.kind === SpanKind.CONSUMER),
+        10_000,
+        'el span del trabajador, en la traza del pago',
+      );
+      const enLaTraza = deLaTraza(traza);
+      const productor = enLaTraza.find((s) => s.kind === SpanKind.PRODUCER);
+      assert.equal(productor?.name, 'add tienda.correo-de-confirmacion');
+      const consumidor = enLaTraza.find((s) => s.kind === SpanKind.CONSUMER);
+      assert.equal(consumidor?.name, 'process tienda');
+      assert.equal(consumidor?.parentSpanContext?.spanId, productor?.spanContext().spanId);
+    } finally {
+      await trabajador.cerrar();
+      await cola.obliterate({ force: true });
+      await cola.close();
+      conexion.destroy();
+    }
+  },
+);
+
+test(
+  'un evento guardado sin traza (de antes de este paso) se reparte igual',
+  { skip: sinRedis },
+  async () => {
+    const conexion = conectarRedis(url!);
+    const cola = crearCola(conexion);
+    try {
+      await cola.obliterate({ force: true });
+      await pool.query('DELETE FROM eventos_salientes');
+      await pool.query(
+        `INSERT INTO eventos_salientes (tipo, datos) VALUES ('correo-de-confirmacion', $1)`,
+        [{ tipo: 'correo-de-confirmacion', pedido: { id: 22 } }],
+      );
+      // Y uno con un contexto que no es un traceparent: tampoco falla, empieza su propia traza.
+      await pool.query(
+        `INSERT INTO eventos_salientes (tipo, datos, contexto)
+           VALUES ('correo-de-confirmacion', $1, 'no-es-un-traceparent')`,
+        [{ tipo: 'correo-de-confirmacion', pedido: { id: 24 } }],
+      );
+      assert.equal(await repartir(50, (trabajo) => encolar(trabajo, cola)), 2);
+      assert.equal(await cola.count(), 2);
+    } finally {
+      await cola.obliterate({ force: true });
+      await cola.close();
+      conexion.destroy();
+    }
+  },
+);
+
+// Una traza no debe llevar lo que el log no lleva: lo que apunta un span sale de la tienda.
+
+/**
+ * Todos los valores que apuntan el span de una petición y los que cuelgan de él: sus atributos y
+ * los de sus eventos. Sin el span del fetch de este test, que es el cliente: en la traza está por
+ * encima de la petición, y en producción no es de la tienda.
+ */
+function valoresDe(peticion: ReadableSpan): string[] {
+  const deLaTienda = new Set([peticion.spanContext().spanId]);
+  const todos = deLaTraza(peticion.spanContext().traceId);
+  // Los hijos, los hijos de los hijos…: hasta que no se añade ninguno más.
+  for (let antes = 0; antes !== deLaTienda.size;) {
+    antes = deLaTienda.size;
+    for (const span of todos) {
+      if (deLaTienda.has(span.parentSpanContext?.spanId ?? '')) {
+        deLaTienda.add(span.spanContext().spanId);
+      }
+    }
+  }
+  return todos
+    .filter((span) => deLaTienda.has(span.spanContext().spanId))
+    .flatMap((span) =>
+      [span.attributes, ...span.events.map((evento) => evento.attributes ?? {})].flatMap(
+        (atributos) => Object.values(atributos).map(String),
+      ),
+    );
+}
+
+test('la vuelta del proveedor: ni el código ni el state llegan a la traza', async () => {
+  exportador.reset();
+  const res = await fetch(
+    `${tienda}/v2/sesion/proveedor/vuelta?code=codigo-secreto-123&state=estado-secreto-456`,
+  );
+  await res.arrayBuffer();
+  await esperar(() => deServidor().length > 0, 5000, 'el span de la vuelta');
+  const vuelta = deServidor()[0]!;
+  assert.equal(vuelta.name, 'GET /v2/sesion/proveedor/vuelta');
+  // La URL, sin la query.
+  assert.equal(vuelta.attributes['url.full'], `${tienda}/v2/sesion/proveedor/vuelta`);
+  for (const valor of valoresDe(vuelta)) {
+    assert.doesNotMatch(valor, /codigo-secreto|estado-secreto/);
+  }
+  // Y el span del fetch de este test, el cliente (instrumentación de undici): también sin la query.
+  const cliente = deLaTraza(vuelta.spanContext().traceId).find(
+    (s) => s.instrumentationScope.name === '@opentelemetry/instrumentation-undici',
+  );
+  assert.equal(cliente?.attributes['url.full'], `${tienda}/v2/sesion/proveedor/vuelta`);
+});
+
+test('un aviso a la empresa de reparto: su span (node:http) lleva la URL sin la query', async () => {
+  // Un receptor de avisos en 127.0.0.1, con un token en la query de su URL, como el que podría dar
+  // una empresa de reparto.
+  const receptor = createServer((_peticion, respuesta) => void respuesta.writeHead(204).end());
+  receptor.listen(0, '127.0.0.1');
+  await once(receptor, 'listening');
+  const urlAvisos = `http://127.0.0.1:${(receptor.address() as AddressInfo).port}/avisos`;
+  const { id } = await crearClave('Reparto de prueba');
+  await pool.query(`INSERT INTO avisos (clave_id, url, secreto) VALUES ($1, $2, 'secreto')`, [
+    id,
+    `${urlAvisos}?token=token-del-reparto`,
+  ]);
+  try {
+    exportador.reset();
+    // El trabajo del aviso, como lo hace el trabajador, dentro de un span que hace de su traza.
+    await trace.getTracer('prueba').startActiveSpan('aviso de prueba', async (span) => {
+      await procesar(
+        { tipo: 'aviso-de-pago', avisoId: id, pedido: (await buscarPedido(13))!, idEvento: 'e1' },
+        { hostsDeDesarrollo: ['127.0.0.1'] },
+      );
+      span.end();
+    });
+    const aviso = spans().find(
+      (s) => s.instrumentationScope.name === '@opentelemetry/instrumentation-http',
+    );
+    assert.equal(aviso?.kind, SpanKind.CLIENT);
+    assert.equal(aviso?.attributes['url.full'], urlAvisos);
+    for (const valor of valoresDe(aviso!)) assert.doesNotMatch(valor, /token-del-reparto/);
+  } finally {
+    receptor.close();
+    await pool.query('DELETE FROM avisos');
+  }
+});
+
+test(
+  'un inicio de sesión: ni el email ni la IP llegan a los spans de Redis',
+  { skip: sinRedis },
+  async () => {
+    const cliente = conectarRedis(url!);
+    try {
+      exportador.reset();
+      // Una contraseña mala: los dos límites (por email y por IP) apuntan el fallo en Redis.
+      const res = await fetch(`${tienda}/v2/sesion`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: 'Traza.Secreta@ejemplo.com', contrasena: 'no-es-la-buena' }),
+      });
+      assert.equal(res.status, 400);
+      await res.arrayBuffer();
+      await esperar(() => deServidor().length > 0, 5000, 'el span del inicio de sesión');
+      const peticion = deServidor()[0]!;
+      const traza = peticion.spanContext().traceId;
+      // Hay spans de Redis (si no, el test no probaría nada), y solo dicen la orden y de qué es la
+      // clave: «ZADD limites:?», sin el resto (limites:sesion-email:traza.secreta@ejemplo.com).
+      const deRedis = deLaTraza(traza).filter((s) => s.attributes['db.system.name'] === 'redis');
+      // Dos fallos apuntados: uno por el email y otro por la IP.
+      assert.equal(
+        deRedis.filter((s) => s.attributes['db.query.text'] === 'ZADD limites:?').length,
+        2,
+      );
+      for (const span of deRedis) {
+        assert.match(String(span.attributes['db.query.text']), /^[A-Z]+( [\w-]+:\?)?$/);
+      }
+      for (const valor of valoresDe(peticion)) assert.doesNotMatch(valor, /traza\.secreta/i);
+    } finally {
+      // Los intentos apuntados, fuera: no cuentan para otros tests.
+      const claves = await cliente.keys('limites:sesion-*');
+      if (claves.length > 0) await cliente.del(claves);
+      cliente.destroy();
+    }
+  },
+);
+
+test('urlSinQuery: la URL sin la query ni el fragmento', () => {
+  assert.equal(
+    urlSinQuery('https://tienda.example/v2/x?code=1&state=2#a'),
+    'https://tienda.example/v2/x',
+  );
+  assert.equal(urlSinQuery('http://127.0.0.1:3000/salud'), 'http://127.0.0.1:3000/salud');
+  // Una que no es una URL entera: lo de antes del ?, al menos.
+  assert.equal(urlSinQuery('/v2/x?code=1'), '/v2/x');
+});
+
+test('ordenSinDatos: la orden y de qué es la clave, sin la clave', () => {
+  assert.equal(
+    ordenSinDatos('ZADD', ['limites:sesion-email:ana@ejemplo.com', '1', '1']),
+    'ZADD limites:?',
+  );
+  assert.equal(ordenSinDatos('GET', ['limites:sesion-ip:2001:db8::1']), 'GET limites:?');
+  assert.equal(ordenSinDatos('PUBLISH', [Buffer.from('tienda:pedidos'), '{}']), 'PUBLISH tienda:?');
+  // Sin dos puntos no se sabe qué es: solo la orden.
+  assert.equal(ordenSinDatos('EVALSHA', ['5f3a9c…', '2']), 'EVALSHA');
+  assert.equal(ordenSinDatos('PING', []), 'PING');
+});
+
+const ejecutar = promisify(execFile);
+
+/** El entorno de los tests sin ninguna variable de OpenTelemetry. */
+function sinOtel(): NodeJS.ProcessEnv {
+  return Object.fromEntries(
+    Object.entries(process.env).filter(([nombre]) => !nombre.startsWith('OTEL_')),
+  );
+}
+
+// Lo que cada proceso imprime al final: quién da los spans. Sin SDK, el de «no hacer nada» de la
+// API de OpenTelemetry (NoopTracerProvider).
+const PROVEEDOR = `import { trace } from '@opentelemetry/api';
+import { instrumentacion } from './src/instrumentacion.ts';
+trace.getTracer('prueba').startSpan('una-prueba').end();
+await instrumentacion.apagar();
+console.log(trace.getTracerProvider().getDelegate().constructor.name);`;
+
+test('sin OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, no arranca nada y no escribe nada en stderr', async () => {
+  const { stdout, stderr } = await ejecutar(
+    'node',
+    ['--import', './src/instrumentacion.ts', '--input-type=module', '-e', PROVEEDOR],
+    { env: sinOtel() },
+  );
+  assert.equal(stdout, 'NoopTracerProvider\n');
+  assert.equal(stderr, '');
+});
+
+test('con OTEL_EXPORTER_OTLP_TRACES_ENDPOINT, manda los spans ahí, y sin avisos en stderr', async () => {
+  // Un Jaeger de mentira: apunta lo que le llega.
+  const recibidas: { url: string | undefined; tipo: string | undefined; cuerpo: Buffer }[] = [];
+  const receptor = createServer(async (peticion, respuesta) => {
+    const trozos: Buffer[] = [];
+    for await (const trozo of peticion) trozos.push(trozo as Buffer);
+    recibidas.push({
+      url: peticion.url,
+      tipo: peticion.headers['content-type'],
+      cuerpo: Buffer.concat(trozos),
+    });
+    respuesta.writeHead(200).end();
+  });
+  receptor.listen(0, '127.0.0.1');
+  await once(receptor, 'listening');
+  try {
+    const { port } = receptor.address() as AddressInfo;
+    const { stdout, stderr } = await ejecutar(
+      'node',
+      ['--import', './src/instrumentacion.ts', '--input-type=module', '-e', PROVEEDOR],
+      {
+        env: {
+          ...sinOtel(),
+          OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: `http://127.0.0.1:${port}/v1/traces`,
+          OTEL_SERVICE_NAME: 'tienda-prueba',
+        },
+      },
+    );
+    assert.notEqual(stdout, 'NoopTracerProvider\n');
+    // Ni el aviso DEP0205 de module.register(): se usa module.registerHooks().
+    assert.equal(stderr, '');
+    // apagar() ha mandado lo que quedaba: el span, en protobuf, a la URL tal cual.
+    assert.equal(recibidas.length, 1);
+    assert.equal(recibidas[0]!.url, '/v1/traces');
+    assert.equal(recibidas[0]!.tipo, 'application/x-protobuf');
+    assert.ok(recibidas[0]!.cuerpo.includes('una-prueba'));
+    assert.ok(recibidas[0]!.cuerpo.includes('tienda-prueba'));
+  } finally {
+    receptor.close();
+  }
+});

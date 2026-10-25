@@ -50,8 +50,10 @@ describe('the guided projects', () => {
         const regions = (project: string, step: string) =>
           JSON.stringify(
             readdirSync(join(root, project, step), { recursive: true, encoding: 'utf8' })
-              .filter((file) => /\.([jt]s|sql)$/.test(file) && !file.startsWith('node_modules'))
-              .map((file) => read(project, step, file).match(/(\/\/|--) #region /g)?.length ?? 0)
+              .filter((file) => /\.([jt]s|sql|md)$/.test(file) && !file.startsWith('node_modules'))
+              .map(
+                (file) => read(project, step, file).match(/(\/\/|--|<!--) #region /g)?.length ?? 0,
+              )
               .reduce((sum, n) => sum + n, 0),
           );
         expect(regions(languages.en, en)).toBe(regions(languages.es, es));
@@ -65,6 +67,8 @@ describe('the guided projects', () => {
         const spanish = versions(languages.es, es);
         expect(versions(languages.en, en)).toEqual(spanish);
         for (const version of Object.values(spanish)) expect(version).toMatch(/^\d+\.\d+\.\d+$/);
+        // The same Node floor too: engines differs from step to step, so each pair is compared.
+        expect(json(languages.en, en).engines.node).toBe(json(languages.es, es).engines.node);
       });
 
       it.each(Object.values(languages))(
@@ -75,7 +79,7 @@ describe('the guided projects', () => {
           expect(npmrc).toMatch(/^min-release-age=7$/m);
           expect(npmrc).toMatch(/^ignore-scripts=true$/m);
           expect(existsSync(join(root, project, step, 'package-lock.json'))).toBe(true);
-          expect(json(project, step).engines.node).toBe('>=24');
+          expect(json(project, step).engines.node).toMatch(/^>=24(\.\d+\.\d+)?$/);
           // `nvm use` in the folder picks the Node version the lessons use.
           expect(read(project, step, '.nvmrc').trim()).toBe('26');
         },

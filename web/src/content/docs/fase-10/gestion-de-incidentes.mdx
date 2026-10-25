@@ -1,0 +1,668 @@
+---
+translationKey: incidents
+title: "Gestión de incidentes y postmortem"
+description: "Qué hacer cuando salta una alerta: detectar, mitigar, arreglar y aprender, con un incidente de práctica en tu tienda y un postmortem sin culpables."
+sidebar:
+  label: Incidentes
+  order: 7
+lesson:
+  oneLiner: "Un incidente es un fallo que tus clientes ya están notando. Se atiende en orden: lo detectas, paras el daño, buscas la causa y escribes un postmortem sin culpables para que no se repita. En esta lección vives uno entero en tu tienda, con el Redis de la cola congelado."
+  objectives:
+    - "Atender un incidente en orden: detectar, mitigar, arreglar y aprender, y mitigar antes de investigar."
+    - "Repartir los papeles de un incidente, en un equipo y cuando estás solo, y contar lo que pasa mientras dura."
+    - "Seguir una alerta hasta la causa con el panel, una traza y el log, y comprobar que la tienda se recupera."
+    - "Escribir un postmortem sin culpables, con su cronología y acciones concretas, y saber lo que cuesta una guardia."
+  prerequisites: [alerts, tracing, ci-cd]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## El problema
+
+Imagina que son las tres de la mañana y te llegan dos correos seguidos: «Errores 5xx en /v2» y «Eventos salientes parados». Las alertas de la [lección 6](/fase-10/health-checks-alertas/) han hecho su trabajo: te has enterado antes que tus clientes. ¿Y ahora qué?
+
+Lo que pide el cuerpo es abrir el código y buscar el fallo, mientras los clientes siguen sin poder entrar. O reiniciarlo todo, y borrar las pistas. Y por la mañana nadie recuerda la hora de nada.
+
+**Atender un fallo en producción tiene un orden**, y se aprende mejor un martes tranquilo. Esta lección cierra la fase con un <Term id="incident">incidente</Term> de práctica en tu tienda, de la primera alerta al informe final.
+
+## La analogía
+
+<Analogy>
+
+Se rompe una tubería en casa y el agua corre por el pasillo. Primero cierras la llave de paso, aunque no sepas qué tubería es. Después, el fontanero encuentra la rotura y la cambia.
+
+Y luego piensas: ¿cambio las tuberías viejas? ¿Pongo un detector de humedad? Nadie culpa a quien abrió el grifo: se habría roto igual.
+
+<div slot="limits">
+
+- Cerrar la llave para el daño. En un servidor, mitigar no lo deshace todo: los correos retrasados llegan, pero tarde.
+- El agua se ve. En un servidor solo ves lo que mides.
+- Una tubería se rompe por una causa. Un incidente casi nunca tiene una sola.
+
+</div>
+
+</Analogy>
+
+Cerrar la llave es **mitigar**; el fontanero, **arreglar**; pensar en las tuberías viejas, **aprender**.
+
+## Cómo funciona de verdad
+
+### Qué es un incidente
+
+Un incidente es un fallo que los clientes notan ahora y que pide actuar ya. Un botón mal alineado se arregla el lunes. Que nadie pueda iniciar sesión es un incidente.
+
+**Decirlo en voz alta cambia el modo de trabajar**: una persona dirige, se habla en un solo sitio, se apunta la hora de todo y nadie toca nada sin decirlo.
+
+### Detectar, mitigar, arreglar, aprender
+
+Cada incidente pasa por cuatro fases:
+
+| Fase | La pregunta | En el incidente de práctica |
+|---|---|---|
+| Detectar | ¿Va algo mal, y cuánto? | Dos correos de alerta, a los dos minutos y medio |
+| Mitigar | ¿Cómo paro el daño ya? | Descongelar el Redis de la cola |
+| Arreglar | ¿Por qué ha pasado, y cómo evito que vuelva? | Buscar por qué se congeló, y cambiarlo |
+| Aprender | ¿Qué cambiamos para la próxima? | El postmortem, con sus acciones |
+
+### Mitigar primero, investigar después
+
+Mientras investigas, los clientes siguen sufriendo. **Primero se para el daño, aunque no sepas la causa**:
+
+- **Si empezó justo después de un despliegue, vuelves atrás.** Es la <Term id="rollback">vuelta atrás</Term> de la [Fase 8](/fase-8/ci-cd-github-actions/#vuelve-atrás-a-propósito): unos segundos, y luego investigas tranquilo. Devuelve el código, [no el esquema](/fase-8/ci-cd-github-actions/#volver-atrás-devuelve-el-código-no-el-esquema).
+- **Si una pieza se ha colgado, la reinicias**, o la sustituyes por otra.
+- **Si falla una parte nueva, la apagas**, y el resto de la tienda sigue.
+
+Antes de reiniciar, **guarda las pistas**: Jaeger guarda las trazas en memoria, y recrear un contenedor se lleva sus logs. `docker compose logs api > incidente-api.log` cuesta un segundo.
+
+### Papeles: quién dirige, quién arregla, quién cuenta
+
+En un equipo, un incidente serio reparte tres papeles:
+
+- **Quien dirige** (*incident commander*): decide qué se prueba y en qué orden, y no teclea: ve el conjunto.
+- **Quien arregla**: mira paneles, trazas y logs, y ejecuta lo que se decide.
+- **Quien cuenta**: avisa a soporte y a los clientes, y apunta la hora de cada cosa.
+
+**Si estás solo, los tres papeles son tuyos.** Apunta en un fichero la hora de cada cosa que ves o haces: será la cronología del postmortem. Avisa pronto, aunque sea con dos líneas. Y cada diez minutos, levanta la vista: ¿lo que pruebas acerca la solución?
+
+### Contarlo mientras dura: la página de estado
+
+Una **página de estado** (*status page*) dice a tus clientes qué falla, qué no y cuándo darás más noticias. Un ejemplo, la de GitHub: [githubstatus.com](https://www.githubstatus.com/). Bastan tres frases: «No se puede iniciar sesión. Los pedidos y los pagos funcionan. Volvemos a informar a las 3:30».
+
+Vive **fuera de tu servidor**, como la [vigilancia desde fuera](/fase-10/health-checks-alertas/#vigilar-desde-fuera): si cae la máquina, la página sigue ahí para decirlo.
+
+### El postmortem sin culpables
+
+Cuando todo vuelve a funcionar, se escribe un <Term id="postmortem">postmortem</Term>: qué pasó, cuándo, por qué y qué se cambia. **Sin culpables** (*blameless*): no pregunta quién se equivocó, sino por qué el sistema lo permitió. Si una persona pudo romper producción con un comando, la siguiente haría lo mismo.
+
+Un caso real: en 2017, una persona de GitLab borró por error la base de datos principal, creyendo que estaba en la secundaria. Su [postmortem público](https://about.gitlab.com/blog/2017/02/10/postmortem-of-database-outage-of-january-31/) no se queda en ella: con una cadena de «¿por qué?», llega a que las copias de seguridad fallaban sin que nadie lo supiera, porque se rechazaban los correos que lo avisaban.
+
+El paso 46 trae la plantilla, en `docs/postmortem.md`. Empieza con cinco datos:
+
+<ProjectCode file="tienda-api/46-alertas/docs/postmortem.md" region="cabecera" />
+
+Siguen sus secciones, de Resumen a Acciones, cada una con un comentario que dice qué escribir. La cronología:
+
+<ProjectCode file="tienda-api/46-alertas/docs/postmortem.md" region="cronologia" />
+
+- **Las horas, de una fuente**: el correo de la alerta, el log, una gráfica; no la memoria.
+- **La causa, con varios «¿por qué?»**, hasta algo que se pueda cambiar.
+- **Acciones con nombre y fecha.** «Tener más cuidado» no es una acción.
+
+### La guardia, y lo que cuesta
+
+Alguien tiene que leer las alertas a las tres de la mañana: es la <Term id="on-call">guardia</Term> (*on-call*). Cuesta sueño y planes, y una guardia mal hecha quema a la gente. Se hace llevadera así:
+
+- **Por turnos**, como las farmacias: nunca la misma persona siempre.
+- **Solo despierta lo urgente.** Es la [gravedad de las alertas](/fase-10/health-checks-alertas/#la-fatiga-de-alertas): `urgente` despierta, `aviso` espera a la mañana.
+- **Cada alerta dice qué mirar**, como «Mira el trabajador y el Redis de la cola». Con una página de pasos por alerta (un *runbook*), cualquiera del turno puede atenderla.
+- **Se cuenta** cuántas veces despertó, y cuántas sin motivo. Y se paga, o se compensa con tiempo libre.
+- **Con alguien de reserva**, por si quien está de guardia no contesta.
+
+Si llevas tu tienda solo, la guardia es tuya: decide qué te despierta.
+
+## Pruébalo
+
+El objetivo: vivir un incidente entero. Congelas el Redis de la cola con la tienda vendiendo, te enteras por las alertas, encuentras el fallo con el panel, el log y una traza, lo mitigas, compruebas que todo vuelve y escribes el postmortem.
+
+Salidas del 24 de octubre de 2026, con la tienda en Node 26, en un MacBook con Docker en una máquina virtual de 2 GB. Tus horas y números serán otros. **Ojo con las horas:** `npm run trafico` escribe la de tu ordenador (la nuestra, la de Madrid, dos horas más que UTC), y Grafana, Mailpit y Jaeger, la de UTC.
+
+### Prepara la tienda
+
+Si vienes de la lección 6, tu tienda sigue arrancada en el paso 46. Si no, [prepara el paso](/fase-10/health-checks-alertas/#prepara-el-paso) como allí. Abre dos terminales en la carpeta del proyecto, y vacía Mailpit para contar mejor:
+
+<TryIt
+  title="1. Mailpit, vacío"
+  cmd="curl -s -X DELETE localhost:8025/api/v1/messages"
+  output={`ok`}
+>
+
+Si no contesta nada, mira que Mailpit esté arrancado: `docker compose ps mailpit`.
+
+</TryIt>
+
+### Una clienta que no para de comprar
+
+En la segunda terminal, arranca el tráfico de práctica:
+
+<TryIt
+  title="2. El tráfico"
+  cmd={`API=$(docker compose port api 3000)
+TIENDA_URL=http://$API npm run trafico`}
+  output={`> tienda-api@1.0.0 trafico
+> node --env-file-if-exists=.env scripts/trafico.ts
+
+Tráfico contra http://127.0.0.1:3001. Ctrl + C para parar.
+18:55:13  sesión 200  pedido 201  pago 200  cancelar 200
+18:55:14  sesión 200  salir 204  pedido 201  pago 200  cancelar 200
+18:55:16  sesión 200  salir 204  pedido 201  pago 200  cancelar 200
+…`}
+>
+
+Carmen, la clienta de práctica, inicia sesión, compra una taza, la paga con la pasarela de mentira y cancela el pedido. Una vuelta cada poco más de un segundo, y cada pago deja un correo en Mailpit. **Déjalo corriendo.** `TIENDA_URL` le dice dónde está tu API.
+
+</TryIt>
+
+### Congela el Redis de la cola
+
+En la primera terminal, apunta la hora: empieza tu cronología. Y congela Redis:
+
+<TryIt
+  title="3. Empieza el incidente"
+  cmd="docker compose pause redis"
+  output={` Container tienda-redis-1 Paused `}
+>
+
+Nosotros lo congelamos a las 18:56:20, las 16:56:20 en UTC. Redis sigue ahí, pero no contesta.
+
+</TryIt>
+
+En la segunda terminal, desde ese segundo:
+
+```text
+18:56:18  sesión 200  salir 204  pedido 201  pago 200  cancelar 200
+18:56:19  sesión 200  salir 204  pedido 201  pago 200  cancelar 200
+18:56:20  sesión 503  pedido 201  pago 200  cancelar 200
+18:56:22  sesión 503  pedido 201  pago 200  cancelar 200
+```
+
+**Los inicios de sesión fallan; los pedidos y los pagos, no.** El límite de intentos vive en ese Redis y, sin él, [se cierra](/fase-10/health-checks-alertas/#fallar-bien-los-tres-arreglos-que-dejó-la-fase-9); pagar solo escribe en PostgreSQL. Lo que aquí no se ve: los correos han dejado de salir.
+
+### Detecta: las alertas
+
+Pregúntale a Grafana por sus reglas, como en la lección 6:
+
+<TryIt
+  title="4. Pendiente"
+  cmd={`curl -s localhost:3100/api/prometheus/grafana/api/v1/rules | jq -r '.data.groups[].rules[] | "\\(.state)  \\(.name)"'`}
+  output={`pending  Errores 5xx en /v2
+inactive  p99 de /v2 alto
+inactive  Eventos salientes parados
+inactive  La API no manda métricas`}
+>
+
+A los 47 segundos, la de los errores ya está pendiente: le faltan los 2 minutos de su `for`. La de los eventos salientes espera a que el más viejo pase de 120 segundos.
+
+</TryIt>
+
+Espera unos dos minutos. Entre tantas confirmaciones, `select` se queda con los correos de alerta, que empiezan por `[`:
+
+<TryIt
+  title="5. Los correos de alerta"
+  cmd={`curl -s 'localhost:8025/api/v1/messages?limit=500' | jq -r '.messages[] | select(.Subject | startswith("[")) | "\\(.Created)  \\(.Subject)"'`}
+  output={`2026-10-24T16:58:52.527Z  [FIRING:1] Errores 5xx en /v2 (Tienda urgente)
+2026-10-24T16:58:47.551Z  [FIRING:1] Eventos salientes parados (Tienda urgente)`}
+>
+
+**Detectado a los 2 minutos y 27 segundos**: de las 16:56:20 a las 16:58:47, en UTC. Sin `?limit=500`, Mailpit solo lista los 50 últimos. Si aún no hay nada, espera un minuto y repite.
+
+</TryIt>
+
+<TryIt
+  title="6. Lo que dice el de los errores"
+  cmd={`curl -s localhost:8025/api/v1/message/latest | jq -r .Text`}
+  output={`…
+*Summary*
+Más del 5 % de las respuestas de /v2 son errores 5xx desde hace 2 minutos
+*Description*
+Mira el panel «La tienda» (errores 5xx por ruta) y el log de la API.
+
+*Values*
+
+A=0.24848484848484848 B=0.24848484848484848 C=1
+…`}
+>
+
+**`A`, casi 0,25: una de cada cuatro respuestas de `/v2` falla.** Cuadra con la vuelta de Carmen: falla el inicio de sesión, y el pedido, el pago y la cancelación no. El otro correo dice: «Los correos y los avisos no salen. Mira el trabajador y el Redis de la cola».
+
+</TryIt>
+
+### Diagnostica: el panel
+
+La alerta manda al panel. En Grafana, `http://localhost:3100`, abre «La tienda»: en «Errores 5xx por segundo, por ruta» hay una sola línea. Es esta consulta:
+
+<TryIt
+  title="7. Qué ruta falla"
+  cmd={`curl -sG localhost:9090/api/v1/query --data-urlencode 'query=sum by (http_route) (rate(http_server_request_duration_seconds_count{job="tienda-api",http_response_status_code=~"5.."}[1m]))' | jq -c '.data.result[] | {metric, value: .value[1]}'`}
+  output={`{"metric":{"http_route":"/v2/sesion"},"value":"0.7450752344261105"}`}
+>
+
+Solo `/v2/sesion`: unos 0,75 errores por segundo, uno por vuelta, con el `rate` de la [lección 5](/fase-10/metricas-prometheus-grafana/#promql-en-cuatro-consultas).
+
+</TryIt>
+
+¿Y el resto de la tienda? La misma cuenta, por ruta y código, sin las series a cero (`> 0`):
+
+<TryIt
+  title="8. Qué funciona"
+  cmd={`curl -sG localhost:9090/api/v1/query --data-urlencode 'query=sum by (http_route, http_response_status_code) (rate(http_server_request_duration_seconds_count{job="tienda-api",http_route=~"/v2/.*"}[1m])) > 0' | jq -c '.data.result[] | {metric, value: .value[1]}'`}
+  output={`{"metric":{"http_response_status_code":"201","http_route":"/v2/pedidos"},"value":"0.7450752344261105"}
+{"metric":{"http_response_status_code":"200","http_route":"/v2/webhooks/pagos"},"value":"0.7450752344261105"}
+{"metric":{"http_response_status_code":"200","http_route":"/v2/pedidos/:id/cancelacion"},"value":"0.7450752344261105"}
+{"metric":{"http_response_status_code":"503","http_route":"/v2/sesion"},"value":"0.7450752344261105"}`}
+>
+
+**La tienda cobra, pero no deja entrar.** Es lo primero que contarías en la página de estado.
+
+</TryIt>
+
+Y los correos:
+
+<TryIt
+  title="9. El correo que no sale"
+  cmd={`curl -sG localhost:9090/api/v1/query --data-urlencode 'query=max(tienda_salientes_antiguedad_seconds)' | jq -c '.data.result[] | {metric, value: .value[1]}'
+curl -sG localhost:9090/api/v1/query --data-urlencode 'query=max(tienda_cola_esperando)' | jq -c '.data.result[] | {metric, value: .value[1]}'`}
+  output={`{"metric":{},"value":"176.76526"}
+{"metric":{},"value":"0"}`}
+>
+
+- **El evento saliente más viejo lleva 177 segundos sin salir**, uno más cada segundo.
+- **La cola dice `0` trabajos esperando, y miente.** Se lee de Redis, que no contesta, y se repite el último valor: la [línea plana](/fase-10/metricas-prometheus-grafana/#tres-tipos-contador-medidor-e-histograma) de la lección 5. Por eso la antigüedad se lee de PostgreSQL.
+
+</TryIt>
+
+### Diagnostica: el log
+
+El log de la API dice por qué falla el inicio de sesión:
+
+<TryIt
+  title="10. Los límites, sin Redis"
+  cmd={`docker compose logs api --no-log-prefix | grep 'almacén' | tail -1 | jq .`}
+  output={`{
+  "level": 40,
+  "time": 1792861159340,
+  "pid": 1,
+  "hostname": "18cdaad6507c",
+  "trace_id": "acc379355ae4f8e5ef936d89d2236183",
+  "span_id": "6e98646e8db2d602",
+  "trace_flags": "01",
+  "limite": "sesion-email",
+  "siFalla": "cerrar",
+  "motivo": "no contesta en 200 ms",
+  "msg": "los límites no pueden preguntar a su almacén: no se deja pasar a nadie"
+}`}
+>
+
+Un `warn` (nivel 40): **el límite por email no recibe respuesta de Redis en 200 ms, y se cierra.** Guarda su `trace_id` para Jaeger.
+
+</TryIt>
+
+Y el del trabajador, por qué no salen los correos:
+
+<TryIt
+  title="11. El repartidor, sin cola"
+  cmd={`docker compose logs trabajador --no-log-prefix | grep 'no han llegado' | tail -1 | jq .`}
+  output={`{
+  "level": 40,
+  "time": 1792861157247,
+  "pid": 1,
+  "hostname": "671014af538b",
+  "motivo": "la cola no contesta en 2000 ms",
+  "msg": "los eventos salientes no han llegado a la cola: se reintentará"
+}`}
+>
+
+El [repartidor](/fase-9/arquitectura-orientada-a-eventos/#el-repartidor-de-la-tabla-a-la-cola) espera a la cola 2 segundos por vuelta y lo vuelve a intentar. **Las dos pistas apuntan al Redis de la cola.**
+
+</TryIt>
+
+### Diagnostica: la traza
+
+En Jaeger, `http://localhost:16686`, pega el `trace_id` del log en **Lookup by Trace ID**, como en la [lección 4](/fase-10/trazas-opentelemetry/#del-log-a-la-traza). La nuestra, resumida como allí:
+
+```text
+POST /v2/sesion                                           tienda-api            200.92 ms   +0 ms   error
+```
+
+**Un solo span, con error, y ninguno de Redis.** Sí se le preguntó: un span se manda a Jaeger cuando termina, y las órdenes a Redis seguían esperando respuesta.
+
+Para verlos todos, en **Search**: servicio `tienda-api`, **Span Name** `POST /v2/sesion`, **Attributes** `http.response.status_code=503` y **Min Duration** `100ms`. Nos salieron los 20 que enseña de una vez, y en el log, **los 144 tardaron entre 200 y 210 ms**. El límite caído solo deja pasar una pregunta a Redis por segundo, y Carmen inicia sesión cada 1,3 segundos: cada inicio de sesión era esa pregunta, y esperó sus 200 ms. Con más clientes, los demás lo recibirían al instante.
+
+### Mitiga
+
+En un incidente de verdad, mitigar sería reiniciar ese Redis, o cambiarlo por otro. Aquí basta con descongelarlo:
+
+<TryIt
+  title="12. Redis, de vuelta"
+  cmd="docker compose unpause redis"
+  output={` Container tienda-redis-1 Unpaused `}
+>
+
+Nosotros, a las 18:59:32 (16:59:32 en UTC): **45 segundos después del primer correo**. En la segunda terminal, el siguiente inicio de sesión ya da `200`.
+
+</TryIt>
+
+Vuelve a Jaeger y abre la misma traza. Ahora tiene sus spans de Redis:
+
+```text
+POST /v2/sesion                                           tienda-api            200.92 ms   +0 ms   error
+  redis-ZREMRANGEBYSCORE                                  tienda-api          14007.03 ms   +0 ms
+  redis-ZRANGE                                            tienda-api          14007.01 ms   +0 ms
+```
+
+**La petición contestó a los 200 ms, pero sus órdenes a Redis duraron 14 segundos**: de las 16:59:18 al `unpause`. La petición dejó de esperar; la orden siguió esperando en el cliente de Redis. Otra, de las 16:57:19, tiene spans de 133 296 ms, también hasta el `unpause`. **Es el corte de la lección 6, visto por dentro**: sin él, cada inicio de sesión habría esperado lo mismo.
+
+### Comprueba que vuelve
+
+El repartidor se pone al día de golpe:
+
+<TryIt
+  title="13. El outbox se vacía"
+  cmd={`curl -sG localhost:9090/api/v1/query --data-urlencode 'query=max(tienda_salientes_antiguedad_seconds)' | jq -c '.data.result[] | {metric, value: .value[1]}'
+docker compose logs trabajador --no-log-prefix --since 30s | grep 'repartidos' | jq -c '{time, eventos, msg}'`}
+  output={`{"metric":{},"value":"0"}
+{"time":1792861173367,"eventos":50,"msg":"eventos salientes repartidos"}
+{"time":1792861173426,"eventos":50,"msg":"eventos salientes repartidos"}
+{"time":1792861173487,"eventos":45,"msg":"eventos salientes repartidos"}
+{"time":1792861174505,"eventos":1,"msg":"eventos salientes repartidos"}
+…`}
+>
+
+Seis segundos después, el evento más viejo ya no espera. **145 eventos en el mismo segundo**, de 50 en 50, y luego uno por pago nuevo.
+
+</TryIt>
+
+<TryIt
+  title="14. Los correos retrasados"
+  cmd={`curl -s 'localhost:8025/api/v1/messages?limit=500' | jq -r '.messages[].Created[0:19]' | sort | uniq -c | sort -rn | head -3`}
+  output={` 145 2026-10-24T16:59:33
+   2 2026-10-24T17:00:52
+   1 2026-10-24T17:01:12`}
+>
+
+Cuenta los correos por segundo de llegada. **145 correos a la vez**: los de los pagos del incidente, los primeros con algo más de tres minutos de retraso. Ninguno se perdió: el outbox, la tabla de eventos pendientes, los guardó en PostgreSQL y, como promete la [entrega al menos una vez](/fase-9/colas-trabajos-segundo-plano/#al-menos-una-vez-un-trabajo-puede-hacerse-dos-veces), salieron al volver la cola.
+
+</TryIt>
+
+Espera un par de minutos más:
+
+<TryIt
+  title="15. Resueltas"
+  cmd={`curl -s 'localhost:8025/api/v1/messages?limit=500' | jq -r '.messages[] | select(.Subject | startswith("[")) | "\\(.Created)  \\(.Subject)"'`}
+  output={`2026-10-24T17:00:52.525Z  [RESOLVED] Errores 5xx en /v2 (Tienda urgente)
+2026-10-24T16:59:47.52Z  [RESOLVED] Eventos salientes parados (Tienda urgente)
+2026-10-24T16:58:52.527Z  [FIRING:1] Errores 5xx en /v2 (Tienda urgente)
+2026-10-24T16:58:47.551Z  [FIRING:1] Eventos salientes parados (Tienda urgente)`}
+>
+
+La de los eventos salientes, 15 segundos después del `unpause`; la de los errores, 1 minuto y 20 segundos, cuando su ventana de un minuto se quedó sin 5xx.
+
+</TryIt>
+
+Para el tráfico con <kbd>Ctrl</kbd> + <kbd>C</kbd>. Antes de salir, cuenta lo que ha visto:
+
+```text
+19:01:10  sesión 200  salir 204  pedido 201  pago 200  cancelar 200
+19:01:11  sesión 200  salir 204  pedido 201  pago 200  cancelar 200
+
+Respuestas: 200: 720, 201: 288, 204: 143, 503: 144
+```
+
+**144 `503`, uno por inicio de sesión del incidente, y 288 pedidos**, tantos como correos de confirmación: el impacto, con números.
+
+### Escribe el postmortem
+
+Copia la plantilla en una carpeta para tus incidentes:
+
+```sh
+mkdir -p incidentes
+cp docs/postmortem.md incidentes/2026-10-24-redis-congelado.md
+```
+
+Rellénala con tus horas y números, y borra sus comentarios. El nuestro, en UTC:
+
+### Nuestro postmortem
+
+**El Redis de la cola, congelado.** 24 de octubre de 2026. Duración: 3 min 12 s, de 16:56:20 a 16:59:32; detectado a los 2 min 27 s. Gravedad: urgente. Autoría: quien estaba de guardia. Estado: borrador.
+
+**Resumen.** El Redis de la cola dejó de contestar tres minutos. Los inicios de sesión fallaron con `503` y los correos de confirmación no salieron; los pedidos y los pagos funcionaron. Al descongelarlo, todo volvió en un segundo.
+
+**Impacto.**
+
+- 144 inicios de sesión fallidos, en unos 200 ms cada uno.
+- 145 correos con hasta unos tres minutos de retraso; ninguno perdido (288 pagos, 288 correos).
+- 144 respuestas 5xx: con el SLO de la lección 6 y un millón de peticiones al mes, el 1,4 % del presupuesto de errores.
+
+**Cronología** (UTC):
+
+| Hora | Qué pasó | Fuente |
+|---|---|---|
+| 16:56:20 | Redis de la cola congelado; el primer `sesión 503` | `npm run trafico` |
+| 16:58:30 | «Eventos salientes parados», disparada | Correo de la alerta |
+| 16:58:40 | «Errores 5xx en /v2», disparada | Correo de la alerta |
+| 16:58:47 | Primer correo de alerta | Mailpit |
+| 16:59:19 | Diagnóstico: solo falla `/v2/sesion`; límites y repartidor sin respuesta de Redis | Panel y log |
+| 16:59:32 | Mitigado: `docker compose unpause redis` | Terminal |
+| 16:59:33 | Vuelven los inicios de sesión; llegan 145 correos retenidos | `npm run trafico`, Mailpit |
+| 17:00:52 | Resuelta la última alerta, la de los errores | Mailpit |
+
+**Causa.** El Redis de la cola dejó de contestar (en esta práctica, a propósito). ¿Por qué fallaron los inicios de sesión? Porque sus límites viven en ese Redis y se cierran sin él. ¿Por qué no salieron los correos? Porque el repartidor no podía encolarlos. ¿Por qué falló todo a la vez? Porque límites y cola comparten un solo Redis, sin copia.
+
+**Qué fue bien.** Los pagos siguieron porque solo escriben en PostgreSQL, y los correos esperaron en el outbox hasta que volvió la cola. Los límites contestaron en 200 ms, no en 12 segundos. Las alertas llegaron con su pista («Mira el trabajador y el Redis de la cola»). No se perdió ningún correo.
+
+**Qué fue mal.** Detectarlo costó dos minutos y medio. La traza no enseñaba los spans de Redis hasta que volvió. La métrica de la cola decía `0` mientras no salía nada, y la antigüedad de los eventos salientes no está en el panel.
+
+**Dónde tuvimos suerte.** Había una sola clienta comprando. Redis estaba congelado, no caído: volvió con sus datos.
+
+**Acciones.**
+
+| Acción | Responsable | Para cuándo | Estado |
+|---|---|---|---|
+| La antigüedad del evento saliente más viejo, en el panel «La tienda» | Quien está de guardia | 31 de octubre | Pendiente |
+| Una página por alerta, con los pasos, enlazada desde su descripción | Quien está de guardia | 7 de noviembre | Pendiente |
+| Estudiar si los límites de intentos van en su propio Redis | Quien está de guardia | 14 de noviembre | Pendiente |
+
+### En tu servidor
+
+Esta lección no trae paso. En tu servidor no hay alertas (lección 6). Lo que sí te llevas es la carpeta `incidentes/`, en el repositorio.
+
+## Ya lo has visto
+
+- **Las farmacias de guardia**: por turnos, para que ninguna abra todas las noches.
+- **La página de estado** de un servicio que usas, cuando falla: «Estamos investigando problemas con…».
+- **Los informes de accidentes de aviación**: por norma internacional, buscan qué cambiar, no a quién culpar. De ahí viene el postmortem sin culpables.
+
+## Errores comunes
+
+- **Investigar antes de mitigar.** Mientras buscas la causa, los clientes siguen sin poder entrar.
+- **Reiniciarlo todo sin guardar nada.** Las pistas se van con el reinicio.
+- **Buscar un culpable.** La próxima vez nadie contará nada, y el fallo seguirá ahí.
+- **Acciones sin dueño ni fecha.** «Tener más cuidado» no cambia nada.
+- **La guardia, siempre de la misma persona.** Se quema, y sin ella nadie sabe qué hacer.
+
+## Resumen
+
+- Un incidente es un fallo que tus clientes notan ahora. Se atiende en orden: detectar, mitigar, arreglar, aprender.
+- Primero se para el daño (volver atrás, reiniciar, apagar), guardando las pistas; la causa se busca después.
+- Quien dirige, quien arregla y quien cuenta: en un equipo, tres personas; solo, tú, con una cronología y avisos pronto.
+- El postmortem sin culpables pregunta por qué el sistema lo permitió, y termina en acciones con dueño y fecha.
+- La guardia cuesta: por turnos, solo lo urgente despierta, y cada alerta dice qué mirar.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="A las 2:50 despliegas una versión nueva. A las 3:00 salta «Errores 5xx en /v2». ¿Qué haces primero?"
+  review="Mitigar primero, investigar después"
+>
+
+<QuizOption text="Leer el código nuevo hasta encontrar el fallo, y desplegar el arreglo.">
+
+Mientras lees, el daño sigue: primero se para, después se busca.
+
+</QuizOption>
+
+<QuizOption text="Volver a la versión anterior, y luego buscar la causa con calma." correct>
+
+Empezó tras un despliegue: volver atrás para el daño en segundos. Después investigas sin prisa.
+
+</QuizOption>
+
+<QuizOption text="Esperar diez minutos, por si se arregla solo.">
+
+La alerta ya esperó sus 2 minutos de `for`: el fallo dura. Esperar más solo alarga lo que sufren los clientes.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Un postmortem dice: «Causa: Luis ejecutó un comando equivocado en producción. Acción: Luis tendrá más cuidado». ¿Qué le falta?"
+  review="El postmortem sin culpables"
+>
+
+<QuizOption text="Preguntar por qué un comando pudo romper producción." correct>
+
+Se queda en una persona. Lo que se cambia es que el sistema lo permita. Y «tener más cuidado» no es una acción.
+
+</QuizOption>
+
+<QuizOption text="Nada: dice la verdad, y la acción tiene un responsable.">
+
+Es verdad, pero no sirve: la próxima persona romperá lo mismo, y nadie querrá contar sus errores.
+
+</QuizOption>
+
+<QuizOption text="Quitar el nombre de Luis; con eso ya es sin culpables.">
+
+Sin el nombre, sigue culpando a alguien. Sin culpables es cambiar la pregunta: qué permitió el fallo, no quién lo hizo.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Durante el incidente, la traza de un 503 de /v2/sesion tiene un solo span, sin nada de Redis. Un compañero concluye que Redis no tiene nada que ver. ¿Tiene razón?"
+  review="Diagnostica: la traza"
+>
+
+<QuizOption text="Sí: si la petición hubiera preguntado a Redis, Jaeger lo enseñaría.">
+
+Jaeger solo enseña lo que ha llegado, y un span llega cuando termina. Las órdenes a Redis seguían esperando.
+
+</QuizOption>
+
+<QuizOption text="No: Jaeger pierde los spans de Redis cuando hay muchos errores.">
+
+No se pierden: llegan al volver Redis, en la misma traza.
+
+</QuizOption>
+
+<QuizOption text="No: sus spans de Redis aún no han terminado ni llegado." correct>
+
+La petición dejó de esperar a los 200 ms; sus órdenes siguen esperando a Redis, y aparecen al terminar.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Llevas tu tienda tú solo. A medianoche salta una alerta urgente. ¿Qué papeles te tocan?"
+  review="Papeles: quién dirige, quién arregla, quién cuenta"
+>
+
+<QuizOption text="Ninguno: los papeles son para equipos; tú solo arreglas.">
+
+Alguien tiene que decidir qué probar y avisar a los clientes. Si estás solo, eres tú.
+
+</QuizOption>
+
+<QuizOption text="Los tres: apuntas la hora de todo, avisas pronto y arreglas." correct>
+
+Los tres papeles existen igual. La cronología que apuntas ahora será la del postmortem.
+
+</QuizOption>
+
+<QuizOption text="Solo arreglar; contarlo a los clientes, cuando ya esté resuelto.">
+
+Sin noticias, los clientes se imaginan lo peor. Un aviso de tres frases al principio cuesta un minuto.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="¿Cuál de estas es una buena acción para un postmortem?"
+  review="El postmortem sin culpables"
+>
+
+<QuizOption text="La antigüedad del saliente, al panel: Ana, el día 31." correct>
+
+Concreta, comprobable, con dueño y fecha: dentro de un mes se sabe si está hecha.
+
+</QuizOption>
+
+<QuizOption text="Vigilar mejor Redis a partir de ahora, entre todos.">
+
+«Mejor» no se puede comprobar, y lo que es de todos no es de nadie: nadie sabrá cuándo está hecha.
+
+</QuizOption>
+
+<QuizOption text="Conseguir que no vuelva a congelarse el Redis de la cola.">
+
+Es un deseo, no un cambio. La acción es lo que harás para que no pase, o para enterarte antes si pasa.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="En tu equipo de tres, Marta hace todas las guardias porque es la que mejor conoce Redis. ¿Qué propones?"
+  review="La guardia, y lo que cuesta"
+>
+
+<QuizOption text="Nada: así cada incidente lo atiende quien lo resuelve antes.">
+
+Hasta que Marta se queme o se vaya de vacaciones. Lo que sabe tiene que estar escrito.
+
+</QuizOption>
+
+<QuizOption text="Que las alertas lleguen a los tres a la vez, y conteste quien pueda.">
+
+Cuando todos reciben la alerta, cada uno cree que la atiende otro. Una guardia es una persona con nombre en cada turno.
+
+</QuizOption>
+
+<QuizOption text="Turnos entre los tres, con una página de pasos por alerta." correct>
+
+Con los pasos escritos, cualquiera del turno atiende la alerta, y Marta duerme.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Managing Incidents](https://sre.google/sre-book/managing-incidents/), del libro de SRE de Google, en inglés: los papeles de un incidente, con un ejemplo entero.
+- [Postmortem Culture: Learning from Failure](https://sre.google/sre-book/postmortem-culture/), del mismo libro, en inglés: el postmortem sin culpables y cómo se revisa.
+- [Incident Response](https://sre.google/workbook/incident-response/), del cuaderno de SRE de Google, en inglés: casos reales.
+- [PagerDuty Incident Response](https://response.pagerduty.com/), en inglés: la guía abierta de PagerDuty sobre papeles y guardias.
+- [Postmortem of database outage of January 31](https://about.gitlab.com/blog/2017/02/10/postmortem-of-database-outage-of-january-31/), de GitLab, en inglés: un postmortem real y público, con su cronología.

@@ -1,0 +1,563 @@
+---
+translationKey: metrics
+title: "Metrics with Prometheus and Grafana"
+description: "What a metric is: counters, gauges, histograms, the RED method and PromQL. Measure your API with OpenTelemetry, Prometheus and a Grafana dashboard."
+sidebar:
+  label: Metrics
+  order: 5
+lesson:
+  oneLiner: "A metric is a number measured over time: how many requests arrive, how many fail and how long they take. The shop sends them with OpenTelemetry to Prometheus, which keeps them, and Grafana draws them on a dashboard that tells you at a glance whether something is wrong."
+  objectives:
+    - "Choose between a counter, a gauge and a histogram for what you want to measure."
+    - "Watch an API with RED and get its p99 from a histogram, knowing what that number doesn’t know."
+    - "Write PromQL queries with rate, sum by and histogram_quantile, and read their result."
+    - "Choose labels with few values, and explain why an id, a URL or an email aren’t."
+  prerequisites: [tracing, phase-9]
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+## The problem
+
+Imagine someone writes: “the shop is slow.” In [lesson 4](/en/phase-10/opentelemetry-tracing/) you learned to open a request’s trace and see where the time went. But which one do you open? In the ten seconds of that lesson’s <Term id="load-test">load test</Term>, the shop answered 68,000 requests.
+
+A trace tells about **one** request. To know whether **the shop** is slow, you need numbers that sum them all up: how many arrive per second, how many fail, how long the slowest take. In [Phase 9](/en/phase-9/#latency-how-long-each-request-waits) you measured them once, from outside, with autocannon. Now the shop measures them itself, all the time, from inside.
+
+## The analogy
+
+<Analogy>
+
+Your home’s electricity meter only goes up: it marks the kilowatt-hours used since it was installed. That number, alone, says little. What matters is **how much it went up between two readings**: that’s what you pay. And if you divide it by the days, you know how much you use per day.
+
+Next to it, the display of the power you’re using right now goes up and down: you turn on the oven, and it jumps.
+
+<div slot="limits">
+
+- The electricity meter never goes back to zero. A program’s does, every time it restarts; <Term id="prometheus">Prometheus</Term> notices and doesn’t take it for a drop.
+- Electricity is read once a month. Prometheus receives a value every few seconds and, between two, estimates: that’s why three payments can come out as “4.42.”
+- Neither of the two says how long something took. For that you need a third type, the histogram.
+
+</div>
+
+</Analogy>
+
+## How it really works
+
+### A metric is a number with a time
+
+This is what Prometheus keeps about paid orders, asked through its API after four payments:
+
+```text
+{"metric":{"__name__":"shop_orders_paid_total","job":"shop-api"},"value":"4"}
+```
+
+A name, some **labels** (`job="shop-api"`) and a value. Every 5 seconds, the API sends it again, and Prometheus writes it down with its time. That list of values with times is a **time series**, and each combination of name and labels is a different series.
+
+`job` is who sends the <Term id="metric">metric</Term>: lesson 4’s `OTEL_SERVICE_NAME`, `shop-api` or `shop-worker`.
+
+### Three types: counter, gauge and histogram
+
+| Type | How it moves | In the shop | What you look at |
+|---|---|---|---|
+| <Term id="counter">Counter</Term> | Only goes up | `shop_orders_paid_total`, the requests | How much it goes up per second or per minute |
+| <Term id="gauge">Gauge</Term> | Goes up and down | `shop_queue_waiting`, the jobs waiting in the queue | What it’s worth now |
+| <Term id="histogram">Histogram</Term> | Counts measurements by buckets | `http_server_request_duration_seconds`, how long each request takes | The <Term id="percentile">percentiles</Term> |
+
+The shop’s own two counters are in `src/metrics.ts`:
+
+<ProjectCode file="shop-api/45-metrics/src/metrics.ts" region="counters" />
+
+- **The name has dots** (`shop.orders.paid`), as OpenTelemetry asks; Prometheus changes them to underscores and adds `_total`.
+- **A payment counts once.** In `src/v2.ts`, `metrics.ordersPaid.add(1)` goes after the `COMMIT` and only if the order really became paid: a repeated event or the payment of a canceled order don’t add up.
+- **The one for responses outside the contract** from [lesson 3](/en/phase-10/contract-testing-openapi/#three-modes-no-log-and-fail) carries a label, `route`, with the route’s template.
+
+The gauge, `shop.queue.waiting`, doesn’t keep anything: every time the SDK collects the metrics, it asks the [queue](/en/phase-9/background-jobs-queues/) how many jobs are waiting, with 2 seconds at most. If Redis doesn’t answer, it observes nothing. And even so **the graph isn’t cut**: the SDK keeps sending the last value it saw. With Redis frozen, the line stays flat, as if nothing were wrong. A flat line isn’t always a healthy line.
+
+### Every request’s histogram
+
+`@hono/otel`, the one that creates each request’s span in lesson 4, also writes down how long it took in a histogram. In Prometheus it’s three series:
+
+```text
+http_server_request_duration_seconds_bucket
+http_server_request_duration_seconds_count
+http_server_request_duration_seconds_sum
+```
+
+- `_count`: how many requests, a counter.
+- `_sum`: how many seconds they took altogether.
+- `_bucket`: how many took **at most** each limit, the `le` label (*less or equal*): 5 ms, 10 ms, 25 ms, 50 ms… up to 10 s. Each bucket includes the ones before it.
+
+The labels: `http_route`, the route’s template; `http_request_method`, the method, and `http_response_status_code`, the code.
+
+### RED for what’s asked of you, USE for what holds you up
+
+The <Term id="red-method">RED method</Term> watches a service with three questions: how many requests arrive (*Rate*), how many fail (*Errors*) and how long they take (*Duration*). All three come from the same histogram: the first two from `_count`, the third from `_bucket`. They’re the shop’s top three panels.
+
+For resources (CPU, memory, a queue) there’s the USE method: how much they’re used (*Utilization*), how much work is waiting (*Saturation*) and how many errors they give (*Errors*). `shop_queue_waiting` is saturation: work waiting for a worker that can’t keep up.
+
+### PromQL in four queries
+
+<Term id="promql">PromQL</Term> is the language for asking Prometheus. Four queries cover almost the whole shop dashboard:
+
+1. `http_server_request_duration_seconds_count{job="shop-api",http_route="/v2/products"}`: the counter as it is, with the labels that have to match between braces. A number that only grows.
+2. `rate(…[1m])`: how much it went up per second, on average, in the last minute. This is already **requests per second**.
+3. `sum by (http_route) (rate(…[1m]))`: adds up the series that only differ in other labels (the method, the code, each copy of the API) and leaves one per route. It’s the “Requests per second, by route” panel.
+4. `histogram_quantile(0.99, sum by (le, http_route) (rate(…_bucket[1m])))`: each route’s 99th percentile, from the buckets.
+
+One more, `increase(…[1m])`, is `rate` times the window’s seconds: how much it went up in a minute. The “Paid orders per minute” panel is `sum(increase(shop_orders_paid_total[1m]))`.
+
+### Cardinality: every label multiplies
+
+**Each different combination of labels is a series**, and Prometheus keeps every one. Route, method and code give a few dozen: few. With the whole URL (`/v2/products/1`, `/v2/products/2`…) there would be one per product; with the order’s id or the customer’s email, one per order or per person, endlessly.
+
+That’s <Term id="cardinality">cardinality</Term>, and the kind that grows without limit fills Prometheus’s memory. That’s why `@hono/otel` uses the template (`/v2/products/:id`). An email is also personal data: lesson 4’s rule for spans applies to labels.
+
+### Prometheus receives, Grafana draws
+
+Usually Prometheus goes and fetches the metrics from each service every few seconds (*scrape*). In the shop, **the API pushes**: the OpenTelemetry SDK sends them over OTLP every 5 seconds to `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`:
+
+<ProjectCode file="shop-api/45-metrics/compose.observability.yaml" region="prometheus" />
+
+<Term id="grafana">Grafana</Term> doesn’t keep metrics: it asks Prometheus and draws. Everything it knows comes from files in the step. This one says where it reads from:
+
+<ProjectCode file="shop-api/45-metrics/observability/grafana/provisioning/datasources/datasources.yaml" />
+
+Only Prometheus: Grafana’s connector for Jaeger asks for an API that Jaeger 2.22 no longer has, so traces are still looked at in Jaeger’s web page.
+
+The dashboard, “The shop,” is another file, `observability/grafana/dashboards/shop.json`, with six graphs: the three RED ones, paid orders per minute, the queue and responses outside the contract. Being a file, it goes into Git, gets reviewed and comes out the same on any computer.
+
+Grafana lets you in without a password and as an administrator (`GF_AUTH_ANONYMOUS_ENABLED`), and that’s why it’s only published on `127.0.0.1`. **On a server, never like that.**
+
+### Watching also uses memory
+
+With the brakes below in place, when a load test with the dashboard open ended, `docker stats` gave: the API, 229 MiB; Prometheus, 43; Jaeger, 58, and **Grafana, 294**. Docker’s 2 GB virtual machine never had less than about 470 MB left.
+
+Grafana weighs the most. As it comes, it installs 18 plugins, of which the shop uses one, and leaves 13 more processes running. While we were building this step, **the system killed it twice** for lack of memory: once during a load test, once with a panel editor open.
+
+That’s why the step puts two brakes on it. It installs only the Prometheus plugin (`GF_PLUGINS_PREINSTALL_SYNC`) and disables the rest (`GF_PLUGINS_DISABLE_PLUGINS`): at rest, from about 450 to about 310 MiB. And `GOMEMLIMIT: 250MiB` asks its memory collector, Go’s, to clean up before going past that: at rest, about 210 MiB; with the web page in use during a load test, it reached 573 MiB without it, and 361 with it.
+
+Jaeger had it happen first: it kept every trace of `npm run load` in memory, with no cap, until the system killed it. Now `observability/jaeger.yaml` sets `max_traces: 5000` and throws away the oldest: under 394,000 requests, 58 MiB. Watching also costs, and that’s why in production traces are [sampled](/en/phase-10/opentelemetry-tracing/#keeping-everything-costs-sampling).
+
+## Try it
+
+The goal: see what the shop tells about itself; find out why three payments come out as 4.42 and why Prometheus and autocannon don’t give the same p99; and build the paid orders per minute panel by hand.
+
+Outputs from October 24, 2026, with the shop on Node 26, on a MacBook with Docker in a 2 GB virtual machine. Your numbers will be different.
+
+### Get the step ready
+
+Put your project on step 45, as in the [introduction](/en/phase-10/#each-lesson-its-step):
+
+```sh
+cd ~/backend-course/phase-3
+curl -O https://backenddesdecero.com/practicas/shop-api/45-metrics.tar.gz
+tar -xzf 45-metrics.tar.gz
+cp -R 45-metrics/. shop-api/
+cd shop-api
+npm install
+grep -q '^COMPOSE_FILE=' .env || printf '\nCOMPOSE_FILE=compose.yaml:compose.observability.yaml\n' >> .env
+docker compose up -d --build --wait
+```
+
+The `grep` line checks whether your `.env` already has the `COMPOSE_FILE` from [lesson 4’s “Try it”](/en/phase-10/opentelemetry-tracing/#get-the-step-ready), and if not, adds it before starting. Two services show up: `prometheus`, with its web page at `http://localhost:9090`, and `grafana`, at `http://localhost:3100`.
+
+The API can end up on port 3000 or 3001: Compose picks a free one from Phase 9’s range. Ask it which and keep it in a variable, `API`, which the commands below use:
+
+<TryIt
+  title="0. The API’s port"
+  cmd={`API=$(docker compose port api 3000)
+echo $API`}
+  output={`127.0.0.1:3000`}
+>
+
+It says which port of your computer the container’s 3000 is on. If you open another terminal, repeat the first line in it.
+
+</TryIt>
+
+If Grafana stops answering and `docker compose ps -a` says `Exited (137)`, the system killed it for lack of memory: `docker compose up -d --wait` starts it again.
+
+### What the shop sends
+
+Carmen, the practice customer, signs in, orders a mug and pays for it with the fake gateway, which sends the notice to `SHOP_URL`. `-s` removes npm’s lines, and the gateway writes two: what it sends (`→`) and what the shop answers (`← 200`):
+
+```sh
+curl -s -o /dev/null -c carmen.txt --json '{"email":"carmen@example.com","password":"carmen-practice-2026"}' $API/v2/session
+ORDER=$(curl -s -b carmen.txt --json '{"productId":2,"quantity":1}' $API/v2/orders | jq .id)
+SHOP_URL=http://$API npm run -s gateway -- $ORDER
+```
+
+Wait about 10 seconds, what the API takes to send its metrics, and ask Prometheus which names it has:
+
+<TryIt
+  title="1. The names"
+  cmd={`curl -s localhost:9090/api/v1/label/__name__/values | jq -r '.data[]' | grep -E '^(http_|shop_)'`}
+  output={`http_client_request_duration_seconds_bucket
+http_client_request_duration_seconds_count
+http_client_request_duration_seconds_sum
+http_server_active_requests
+http_server_request_duration_seconds_bucket
+http_server_request_duration_seconds_count
+http_server_request_duration_seconds_sum
+shop_orders_paid_total
+shop_queue_waiting`}
+>
+
+`grep -E` keeps the shop’s and the HTTP ones. The three `http_server_…` are the histogram; `http_client_…`, the one for the requests that leave the shop, and `http_server_active_requests`, the ones in progress. **`shop_responses_outside_contract_total` is missing**: a counter nobody has added anything to yet doesn’t exist. If `shop_orders_paid_total` is missing, wait another 5 seconds.
+
+</TryIt>
+
+### Three payments that come out as 4.42
+
+Three more orders, each one paid:
+
+<TryIt
+  title="2. Three payments"
+  cmd={`for i in 1 2 3; do
+  ORDER=$(curl -s -b carmen.txt --json '{"productId":2,"quantity":1}' $API/v2/orders | jq .id)
+  SHOP_URL=http://$API npm run -s gateway -- $ORDER
+done`}
+  output={`→ POST /v2/webhooks/payments {"id":"evt_800b58a3-9dd7-4bbb-9bcb-834be0d09237","type":"payment.completed","orderId":27}
+← 200 {"received":"evt_800b58a3-9dd7-4bbb-9bcb-834be0d09237","repeated":false}
+→ POST /v2/webhooks/payments {"id":"evt_7b109c92-c031-48ef-ae5a-a81ad42dccf1","type":"payment.completed","orderId":28}
+← 200 {"received":"evt_7b109c92-c031-48ef-ae5a-a81ad42dccf1","repeated":false}
+→ POST /v2/webhooks/payments {"id":"evt_9afe935d-ad78-431c-99fe-4c4a8a5ae3b5","type":"payment.completed","orderId":29}
+← 200 {"received":"evt_9afe935d-ad78-431c-99fe-4c4a8a5ae3b5","repeated":false}`}
+>
+
+`for` repeats the last two commands from before three times. If the gateway answers `Usage: npm run gateway…`, the order wasn’t created and `ORDER` was left as `null`: check that `echo $API` gives a port and sign in again with the first command of the previous section.
+
+</TryIt>
+
+Wait another 10 seconds and ask for the counter. `-G` with `--data-urlencode` puts the query in the URL; `jq` keeps only the labels and the value. You can paste the same query in Prometheus’s web page, at `http://localhost:9090`.
+
+<TryIt
+  title="3. The counter and how much it went up"
+  cmd={`curl -sG localhost:9090/api/v1/query --data-urlencode 'query=shop_orders_paid_total' | jq -c '.data.result[] | {metric, value: .value[1]}'
+curl -sG localhost:9090/api/v1/query --data-urlencode 'query=increase(shop_orders_paid_total[5m])' | jq -c '.data.result[] | {metric, value: .value[1]}'`}
+  output={`{"metric":{"__name__":"shop_orders_paid_total","job":"shop-api"},"value":"4"}
+{"metric":{"job":"shop-api"},"value":"4.416616676664667"}`}
+>
+
+The counter says **4**, and how much it went up in five minutes, **4.42**. Two surprises:
+
+- **The first payment doesn’t count.** The series was born with it, worth 1, and Prometheus has no earlier value to subtract from.
+- **Three payments give 4.42.** The values arrive every 5 seconds, and the first and last ones Prometheus saw don’t fall on the edges of the window. So as not to fall short, it stretches the rise toward both edges, as if the counter had kept going at the same pace: all the way to the edge if it’s less than about one interval away, and half an interval if it’s farther. It extrapolates.
+
+Ours: the values went from 1 to 4 over 15 seconds, and Prometheus stretched that 2.5 seconds back and about 4.6 forward. Three over 15 seconds, stretched to about 22: 4.42. `rate` and `increase` are good for trends; to count orders one by one, the database.
+
+</TryIt>
+
+### A load test, with the dashboard in front of you
+
+Open Grafana, `http://localhost:3100`, and in the menu on the left, **Dashboards** and **The shop**. It reloads every 5 seconds. With the dashboard in view, launch 75 seconds of load on the product list:
+
+<TryIt
+  title="4. 75 seconds of load"
+  cmd="npm run load -- -c 10 -d 75 http://$API/v2/products"
+  output={`…
+┌─────────┬──────┬──────┬───────┬──────┬────────┬─────────┬────────┐
+│ Stat    │ 2.5% │ 50%  │ 97.5% │ 99%  │ Avg    │ Stdev   │ Max    │
+├─────────┼──────┼──────┼───────┼──────┼────────┼─────────┼────────┤
+│ Latency │ 1 ms │ 1 ms │ 4 ms  │ 6 ms │ 1.4 ms │ 1.58 ms │ 190 ms │
+└─────────┴──────┴──────┴───────┴──────┴────────┴─────────┴────────┘
+┌───────────┬────────┬─────────┬─────────┬─────────┬──────────┬────────┬────────┐
+│ Stat      │ 1%     │ 2.5%    │ 50%     │ 97.5%   │ Avg      │ Stdev  │ Min    │
+├───────────┼────────┼─────────┼─────────┼─────────┼──────────┼────────┼────────┤
+│ Req/Sec   │ 2,999  │ 3,787   │ 5,543   │ 5,951   │ 5,251.83 │ 640.94 │ 2,998  │
+├───────────┼────────┼─────────┼─────────┼─────────┼──────────┼────────┼────────┤
+│ Bytes/Sec │ 2.8 MB │ 3.54 MB │ 5.18 MB │ 5.56 MB │ 4.9 MB   │ 599 kB │ 2.8 MB │
+└───────────┴────────┴─────────┴─────────┴─────────┴──────────┴────────┴────────┘
+
+Req/Bytes counts sampled once per second.
+# of samples: 75
+
+394k requests in 75.01s, 368 MB read`}
+>
+
+We’ve removed the beginning. The load left our Mac through the published port, like yours: about **5,252 requests per second**, with a `99%` of **6 ms**.
+
+</TryIt>
+
+While it runs, on the dashboard:
+
+- **Requests per second**: the `/v2/products` line appears and climbs for a minute, up to about 5,300. When the load ends, it takes another minute to come down.
+- **5xx errors**: “No data.” A healthy API leaves this panel empty.
+- **p99 duration**: `/v2/products`, at about 5 ms. The `/health` one goes up to about 25: Docker’s check queues up behind the load.
+- **Paid orders** and **queue**: still; the load only reads.
+
+### What Prometheus says, and why it doesn’t match
+
+From another terminal, at 70 seconds of load, ask for each route’s requests per second:
+
+<TryIt
+  title="5. Requests per second"
+  cmd={`curl -sG localhost:9090/api/v1/query --data-urlencode 'query=sum by (http_route) (rate(http_server_request_duration_seconds_count{job="shop-api"}[1m]))' | jq -c '.data.result[] | {metric, value: .value[1]}'`}
+  output={`{"metric":{"http_route":"/health"},"value":"0.09089256498818396"}
+{"metric":{"http_route":"/v2/session"},"value":"0"}
+{"metric":{"http_route":"/v2/orders"},"value":"0"}
+{"metric":{"http_route":"/v2/webhooks/payments"},"value":"0"}
+{"metric":{"http_route":"/v2/products"},"value":"5317.269587347755"}`}
+>
+
+**5,317.3** for `/v2/products`, close to autocannon’s 5,252. `/health` gets about one every ten seconds: it’s Docker’s healthcheck. The other routes, at 0: they had requests before, and their series is still there.
+
+</TryIt>
+
+The same query at 25 seconds gave us **2,044.6**: the one-minute window still included 35 seconds without load. That’s why the dashboard’s line takes a minute to climb. With `[15s]` instead of `[1m]`, at 70 seconds, it gave 5,308: a short window reacts sooner and jumps around more.
+
+Now, the p99:
+
+<TryIt
+  title="6. The p99, from the histogram"
+  cmd={`curl -sG localhost:9090/api/v1/query --data-urlencode 'query=histogram_quantile(0.99, sum by (le, http_route) (rate(http_server_request_duration_seconds_bucket{job="shop-api"}[1m])))' | jq -c '.data.result[] | {metric, value: .value[1]}'`}
+  output={`{"metric":{"http_route":"/health"},"value":"0.02475"}
+{"metric":{"http_route":"/v2/session"},"value":"NaN"}
+{"metric":{"http_route":"/v2/orders"},"value":"NaN"}
+{"metric":{"http_route":"/v2/webhooks/payments"},"value":"NaN"}
+{"metric":{"http_route":"/v2/products"},"value":"0.004954946425699238"}`}
+>
+
+In seconds: **4.95 ms** for `/v2/products`. `NaN` (*not a number*) is a route with no requests in the last minute: there’s no percentile of nothing.
+
+</TryIt>
+
+autocannon said 6 ms. With the same window, the histogram’s p50 gave 2.50 ms (autocannon, 1 ms) and the mean, `_sum` divided by `_count`, 0.68 ms (autocannon, 1.4). Neither one is lying:
+
+- **They measure different things.** The API measures from when it receives the request until it answers. autocannon, from your computer, adds the round trip through Docker’s published port.
+- **The histogram only knows about buckets.** Of the 5,317.3 requests per second, 5,312 took 5 ms or less: almost all of them in the first bucket. Inside it, `histogram_quantile` assumes they’re spread evenly. The p50 comes out in the middle of the bucket, 2.5; the p99, almost at the edge, 4.95. They’re estimates, as fine as the buckets.
+
+In exchange, a histogram keeps 15 buckets and two totals, not every measurement, and it can be added up: with two copies of the API, you add their buckets and get the p99 of both together.
+
+### A panel made by hand
+
+Now, the paid orders per minute one, from scratch:
+
+1. In **Dashboards**, press **New** and **New dashboard**.
+2. On the right, in **Add**, press the **Panel** box. In **Title**, type “Paid orders per minute.”
+3. Press **Configure visualization**. The source is already Prometheus. Switch **Builder** to **Code**, type `sum(increase(shop_orders_paid_total[1m]))` and press **Run queries**.
+4. At the top, change **Last 6 hours** to **Last 15 minutes**.
+5. Press **Save**, give it the title “My dashboards” and press **Save** again.
+
+Run the three-payment `for` loop again and press **Refresh**. The line climbs to a bit over 3, stays there for a minute and goes back to 0. What it draws, asked of Prometheus right after paying:
+
+<TryIt
+  title="7. The panel’s query"
+  cmd={`curl -sG localhost:9090/api/v1/query --data-urlencode 'query=sum(increase(shop_orders_paid_total[1m]))' | jq -c '.data.result[] | {metric, value: .value[1]}'`}
+  output={`{"metric":{},"value":"3.27189442687316"}`}
+>
+
+Three payments, **3.27**: extrapolation again. `sum` joins the series of all the API’s copies, and that’s why `metric` comes out empty. A minute and a bit later, the same query gave us `0`.
+
+</TryIt>
+
+Your panel lives in Grafana’s database, inside its container. Recreate the container, as happens every time you change Grafana’s configuration:
+
+<TryIt
+  title="8. Grafana, recreated"
+  cmd={`docker compose up -d --force-recreate --wait grafana
+curl -s localhost:3100/api/search | jq -c '.[] | {title, url}'`}
+  output={`…
+{"title":"The shop","url":"/d/shop/the-shop"}`}
+>
+
+We’ve removed Compose’s lines. **“My dashboards” is gone**, and “The shop” is still there, because it’s a file. That’s why real dashboards are saved as JSON, next to `shop.json`.
+
+</TryIt>
+
+When you finish, delete `carmen.txt`: it carries Carmen’s session. Leave the shop running if you’re going on to lesson 6.
+
+### On your server
+
+Your server’s `.env` doesn’t have `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`: no metric is sent there, `compose.production.yaml` gains no service and the timer from [Phase 8](/en/phase-8/ci-cd-github-actions/) deploys the step as always. If one day you set up Grafana on a server, give it a password and never leave it as an anonymous administrator.
+
+## You have already seen it
+
+- **The car’s dashboard**, the one from the [introduction](/en/phase-10/#check-before-leaving-watch-along-the-way): the odometer is a counter; the speedometer, a gauge.
+- **A website’s Core Web Vitals**: Google sorts visits into three buckets, good, needs improvement and poor, and judges by the 75th percentile. A histogram.
+
+## Common mistakes
+
+- **Drawing the counter as it is.** A line that only goes up says nothing: `rate` or `increase`.
+- **Using an id, a whole URL or an email as a label.** One series per value, forever, and in the email’s case, personal data.
+- **Averaging the p99s of several copies.** It isn’t the p99 of anything: add up the buckets (`sum by (le)`) and get the percentile afterwards.
+- **Believing a percentile’s decimals.** It comes from the buckets; if almost everything falls in the first one, the number is an estimate.
+- **Making dashboards with clicks only.** They’re lost when Grafana is recreated and nobody reviews them: into a file.
+
+## Summary
+
+- A metric is a number with a time. Each combination of name and labels is a series: few labels, and with few values.
+- Counter for what only goes up (looked at with `rate` or `increase`), gauge for what goes up and down, histogram for durations and percentiles.
+- RED watches a service: requests, errors and duration, all three from the same histogram. USE watches resources, like the queue.
+- `rate` and `increase` look at a window backwards and extrapolate; `histogram_quantile` estimates inside a bucket. They’re trends, not exact counts.
+- The shop sends its metrics over OTLP to Prometheus, Grafana draws them from files, and the watching tools use memory too.
+
+## Did you get it?
+
+<Quiz>
+
+<QuizQuestion
+  question="The shop_orders_paid_total panel goes up all afternoon and at night stays flat at 1,200, without going down. What does it tell you?"
+  review="Three types: counter, gauge and histogram"
+>
+
+<QuizOption text="That the metric is broken: a counter should go back to zero every night, at closing time.">
+
+A counter only goes back to zero if the process restarts. Not going down is normal.
+
+</QuizOption>
+
+<QuizOption text="That nothing is paid at night: a flat counter isn’t going up." correct>
+
+What matters about a counter is how much it goes up. Flat means it isn’t going up: `increase` would give 0.
+
+</QuizOption>
+
+<QuizOption text="That right now there are 1,200 orders being paid at the same time.">
+
+That would be a gauge. 1,200 is the ones paid since the API started, added up.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="To know which customers buy the most, someone proposes adding the email as a label to shop.orders.paid. What do you tell them?"
+  review="Cardinality: every label multiplies"
+>
+
+<QuizOption text="No: one series per customer, and personal data." correct>
+
+Labels are for few, repeated values. Who buys the most is a question for the database.
+
+</QuizOption>
+
+<QuizOption text="Yes: Prometheus merges the repeated series and it takes up no more space.">
+
+Each different combination of labels is one more series to keep. With emails, they grow endlessly.
+
+</QuizOption>
+
+<QuizOption text="Yes, as long as it also carries the route’s template.">
+
+The template takes nothing away: the email still multiplies the series, and it’s still personal data.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You have two copies of the API. One has a p99 of 10 ms and the other, of 300 ms. What’s the shop’s p99?"
+  review="What Prometheus says, and why it doesn’t match"
+>
+
+<QuizOption text="155 ms, the average of the two.">
+
+The average of two percentiles isn’t a percentile: it depends on how many requests each copy served.
+
+</QuizOption>
+
+<QuizOption text="300 ms: the shop’s p99 is always the slowest copy’s.">
+
+If the slow copy serves few requests, the p99 of all of them together can be well below.
+
+</QuizOption>
+
+<QuizOption text="You have to add up both copies’ buckets and calculate it." correct>
+
+That’s the histogram’s advantage: `sum by (le)` joins the copies’ buckets, and `histogram_quantile` calculates the p99 of all of them.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You launch a 30-second load test and, at 20 seconds, rate(…[1m]) says 1,800 per second, but autocannon measures 5,000. What’s going on?"
+  review="What Prometheus says, and why it doesn’t match"
+>
+
+<QuizOption text="Prometheus loses lots of requests when there’s load.">
+
+The counter counts them all: at the end, the total matches autocannon’s.
+
+</QuizOption>
+
+<QuizOption text="The one-minute window still includes 40 seconds without load." correct>
+
+`rate(…[1m])` is the last minute’s average. Until the load fills it, it comes out low.
+
+</QuizOption>
+
+<QuizOption text="autocannon counts every request twice, there and back.">
+
+autocannon counts responses, one per request. The difference is in the window.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="With the shop running, the histogram gives a p50 of 2.5 ms and autocannon, of 1 ms. Which one is lying?"
+  review="What Prometheus says, and why it doesn’t match"
+>
+
+<QuizOption text="Prometheus: the histogram skips the fastest requests.">
+
+It counts them all, in their bucket. What it doesn’t know is where they fall inside it.
+
+</QuizOption>
+
+<QuizOption text="autocannon: what counts is what the API measures from inside.">
+
+Both measurements are true: autocannon adds the trip over the network, which whoever uses the shop also waits for.
+
+</QuizOption>
+
+<QuizOption text="Neither: they measure different things, and the histogram estimates." correct>
+
+With almost everything in the first bucket, the p50 comes out in its middle. And autocannon also measures the path to the API.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="You freeze the queue’s Redis and the graph of jobs waiting stays flat at 3, without a gap. What do you know about the queue?"
+  review="Three types: counter, gauge and histogram"
+>
+
+<QuizOption text="Nothing: the SDK repeats the last value it read." correct>
+
+The gauge observes nothing if Redis doesn’t answer, but the series keeps the previous value. Flat isn’t healthy.
+
+</QuizOption>
+
+<QuizOption text="That the queue is stable, with 3 jobs waiting the whole time.">
+
+That line is the last value that was read. With Redis frozen, nobody knows how many are waiting.
+
+</QuizOption>
+
+<QuizOption text="That the worker keeps taking jobs out at the same pace they come in.">
+
+The worker needs that Redis too: it can’t take any out.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Further reading
+
+- [Metric types](https://prometheus.io/docs/concepts/metric_types/), from Prometheus: counters, gauges, histograms and summaries.
+- [Querying basics](https://prometheus.io/docs/prometheus/latest/querying/basics/), from Prometheus: PromQL from the beginning.
+- [Histograms and summaries](https://prometheus.io/docs/practices/histograms/), from Prometheus: buckets and a percentile’s error.
+- [The RED Method](https://grafana.com/blog/2018/08/02/the-red-method-how-to-instrument-your-services/), from Grafana Labs, and [The USE Method](https://www.brendangregg.com/usemethod.html), by Brendan Gregg.
+- [Metrics](https://opentelemetry.io/docs/concepts/signals/metrics/), from OpenTelemetry: how they’re created and sent.
+- [Provisioning](https://grafana.com/docs/grafana/latest/administration/provisioning/), from Grafana: data sources and dashboards from files.
