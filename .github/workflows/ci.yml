@@ -145,29 +145,32 @@ jobs:
   # own: no step reads another's files), so a PR that does not touch projects/ passes in seconds;
   # pushes to main, manual runs and the weekly run check every step.
   #
-  # Since Phase 10 one leg per language runs in parallel (each on its own runner, with its own
-  # PostgreSQL and Redis), because the two languages together no longer fit in one 60-minute job.
-  # The required check "guided projects (node 26)" is the job below, which waits for both legs.
+  # The steps are split into legs that run in parallel, each on its own runner with its own
+  # PostgreSQL and Redis: one per language and group of phases, 8 in all. A step's time grows with
+  # the course (each step also runs the tests of the earlier ones), so the late phases weigh most.
+  # Measured on the first full run of Phase 10 (PR 49, 2026-10-25), in seconds of install, tests,
+  # Docker and production files, tienda-api / shop-api: phases 3 to 6, 306 / 420; 7 and 8, 243 /
+  # 335; 9, 460 / 586; 10, 716 / 787. One leg per language took 33 and 40 minutes then; split this
+  # way (PR 50), the slowest legs were phase 10's: 15m31s and 16m43s. The last group has no upper
+  # end, so a new phase's steps are checked from the start, in that leg; give the phase its own row
+  # when that leg grows too slow. The required check "guided projects (node 26)" is the job below,
+  # which waits for every leg.
   projects:
-    name: guided projects (node 26, ${{ matrix.project }})
+    name: guided projects (node 26, ${{ matrix.project }}, ${{ matrix.phases.name }})
     runs-on: ubuntu-24.04
     strategy:
-      # A failure in one language does not hide the other's result.
+      # A failure in one leg does not hide the others' results.
       fail-fast: false
       matrix:
         project: [tienda-api, shop-api]
-    # Every step: from 13 to 21 minutes since Phase 7 (each step also runs the tests of the earlier
-    # ones, one file at a time because they share the test database). With Phase 8 a full run of
-    # both languages took 29m16s (2026-10-17), about 25 minutes of it the install-and-tests step, and
-    # each new step adds its own tests to that. Phase 9 added five steps per language (a worker,
-    # Mailpit and a queue check each), estimated at 41 to 47 minutes for both languages together;
-    # Phase 10 adds five more (42 to 46), whose tests grow with the contract and the traces.
-    # Those numbers are estimates, not measurements: nothing has been timed since Phase 8. With a
-    # language per leg, each leg should take about half of a combined run (estimated 30 to 40
-    # minutes), so 60 leaves room. The trace check at the end of the Compose step looks at the
-    # clock and skips itself when the leg is already past 40 minutes. Update this with the first
-    # real run of Phase 10.
-    timeout-minutes: 60
+        # Steps by number: Phase 3 starts at 01, Phase 7 at 32, Phase 9 at 37 and Phase 10 at 42.
+        phases:
+          - { name: phases 3-6, first: 1, last: 31 }
+          - { name: phases 7-8, first: 32, last: 36 }
+          - { name: phase 9, first: 37, last: 41 }
+          - { name: phase 10+, first: 42, last: 99 }
+    # The slowest leg took under 17 minutes (see above); 30 leaves room.
+    timeout-minutes: 30
     # From Phase 5 the steps keep their data in PostgreSQL 18, the version the lessons install, and
     # from Phase 7 the rate limiter's Redis store is tested against Redis 8. Pinned by digest, like
     # the Actions. Their ports are published on the runner only.
@@ -204,14 +207,19 @@ jobs:
           # so the diff against it is exactly what the PR changes.
           fetch-depth: 2
 
-      # The steps to check, one per line, in $RUNNER_TEMP/steps: only this leg's language. In a
-      # pull request, the step folders it changes that still exist, or every step if it changes
-      # this workflow. A leg whose language the PR does not touch has no steps and passes at once.
+      # The steps to check, one per line, in $RUNNER_TEMP/steps: only this leg's language and
+      # phases. In a pull request, the step folders it changes that still exist, or every step if
+      # it changes this workflow. A leg whose steps the PR does not touch passes at once.
       - name: steps to check
         env:
           EVENT: ${{ github.event_name }}
           PROJECT: ${{ matrix.project }}
+          FIRST: ${{ matrix.phases.first }}
+          LAST: ${{ matrix.phases.last }}
         run: |
+          # The step number of a folder like projects/tienda-api/04-servidor-http/, without the zero
+          # that would make the shell read it as octal.
+          number() { n="$(basename "$1")"; n="${n%%-*}"; echo $((10#$n)); }
           all() { printf '%s\n' "projects/$PROJECT"/[0-9][0-9]-*/; }
           if [ "$EVENT" != pull_request ]; then
             all
@@ -225,7 +233,10 @@ jobs:
               printf '%s\n' "$changed" | { grep -oE "^projects/$PROJECT/[0-9][0-9]-[^/]+/" || true; } |
                 sort -u | while IFS= read -r step; do if [ -d "$step" ]; then echo "$step"; fi; done
             fi
-          fi > "$RUNNER_TEMP/steps"
+          fi | while IFS= read -r step; do
+            n="$(number "$step")"
+            if [ "$n" -ge "$FIRST" ] && [ "$n" -le "$LAST" ]; then echo "$step"; fi
+          done > "$RUNNER_TEMP/steps"
           echo "Steps to check: $(grep -c . "$RUNNER_TEMP/steps" || true)"
           cat "$RUNNER_TEMP/steps"
 
@@ -328,13 +339,13 @@ jobs:
           # The promise of the traces (Phase 10, lesson 4): a payment is one trace from the API to
           # the worker. A fresh stack with the observability file, order 21 paid through the gateway
           # script, and Jaeger's v3 API polled (at most 60 seconds) until a trace of tienda-api holds
-          # a span of tienda-trabajador. It is skipped when the leg is past 40 minutes. The stack
+          # a span of tienda-trabajador. It is skipped when the leg is past 25 minutes. The stack
           # is removed here, with both files, so Jaeger, Prometheus and Grafana do not stay behind.
           traces_reach_jaeger() {
             (
               cd "$1" || exit 1
               elapsed=$(($(date +%s) - $(cat "$RUNNER_TEMP/start")))
-              if [ "$elapsed" -gt 2400 ]; then
+              if [ "$elapsed" -gt 1500 ]; then
                 echo "skipped the trace check: the leg has run for $((elapsed / 60)) minutes"
                 exit 0
               fi
@@ -517,8 +528,8 @@ jobs:
           fi
 
   # The check branch protection requires, with the name it had when it was a single job. A matrix
-  # leg's name carries its language, so this job gives the pair a name that does not change.
-  # `always()` makes it run even when a leg failed, and it passes only if both legs succeeded.
+  # leg's name carries its language and phases, so this job gives the legs a name that does not
+  # change. `always()` makes it run even when a leg failed, and it passes only if every leg succeeded.
   # Legs are never skipped (a pull request that touches no guided project gives a leg an empty
   # list of steps, and it passes), so "skipped" and "cancelled" count as failures here: a skipped
   # leg would mean the checks did not run.
@@ -530,7 +541,7 @@ jobs:
     timeout-minutes: 5
     permissions: {}
     steps:
-      - name: both legs passed
+      - name: every leg passed
         env:
           RESULT: ${{ needs.projects.result }}
         run: |
