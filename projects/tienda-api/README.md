@@ -1,6 +1,6 @@
 # La API de la tienda de Ana y Luis
 
-El proyecto guiado de [Backend desde cero](https://backenddesdecero.com/): empieza en la Fase 3, «Tu primer servidor», sigue en la Fase 4, «Diseño de APIs», en la Fase 5, «Bases de datos», en la Fase 6, «Autenticación, autorización y seguridad», en la Fase 7, «Docker y contenedores», en la Fase 8, «Despliegue e infraestructura», y en la Fase 9, «Arquitectura y escalado». Cada carpeta es el proyecto tal y como queda al final de una lección: si te atascas, compara tu código con el de la carpeta de esa lección.
+El proyecto guiado de [Backend desde cero](https://backenddesdecero.com/): empieza en la Fase 3, «Tu primer servidor», sigue en la Fase 4, «Diseño de APIs», en la Fase 5, «Bases de datos», en la Fase 6, «Autenticación, autorización y seguridad», en la Fase 7, «Docker y contenedores», en la Fase 8, «Despliegue e infraestructura», en la Fase 9, «Arquitectura y escalado», y en la Fase 10, «Calidad y observabilidad». Cada carpeta es el proyecto tal y como queda al final de una lección: si te atascas, compara tu código con el de la carpeta de esa lección.
 
 | Carpeta             | Lección                         |
 | ------------------- | ------------------------------- |

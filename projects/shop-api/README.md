@@ -1,6 +1,6 @@
 # The API for Ana and Luis's shop
 
-The guided project for [Backend from Scratch](https://backenddesdecero.com/en/): it starts in Phase 3, "Your first server", carries on in Phase 4, "API design", in Phase 5, "Databases", in Phase 6, "Authentication, authorization and security", in Phase 7, "Docker and containers", in Phase 8, "Deployment and infrastructure", and in Phase 9, "Architecture and scaling". Each folder is the project as it stands at the end of a lesson: if you get stuck, compare your code with the folder for that lesson.
+The guided project for [Backend from Scratch](https://backenddesdecero.com/en/): it starts in Phase 3, "Your first server", carries on in Phase 4, "API design", in Phase 5, "Databases", in Phase 6, "Authentication, authorization and security", in Phase 7, "Docker and containers", in Phase 8, "Deployment and infrastructure", in Phase 9, "Architecture and scaling", and in Phase 10, "Quality and observability". Each folder is the project as it stands at the end of a lesson: if you get stuck, compare your code with the folder for that lesson.
 
 | Folder               | Lesson                             |
 | -------------------- | ---------------------------------- |
