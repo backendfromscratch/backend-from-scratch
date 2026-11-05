@@ -437,7 +437,8 @@ test(
       await sleep(200);
       await network.reopen();
       await assert.rejects(nextEvent(reader, 5000), /The stream has closed/);
-      assert.match(api.output(), /Redis is answering again/);
+      // The log comes another way, the process's output, and can arrive a little later.
+      await waitFor(() => api.output().includes('Redis is answering again'), 2000, 'the log');
     } finally {
       await stop(api.process);
       network.cut();
