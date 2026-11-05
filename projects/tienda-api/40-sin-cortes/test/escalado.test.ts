@@ -414,7 +414,8 @@ test(
       await dormir(200);
       await red.abrir();
       await assert.rejects(siguienteEvento(lector, 5000), /El flujo se ha cerrado/);
-      assert.match(api.salida(), /Redis contesta otra vez/);
+      // El log llega por otro camino, la salida del proceso, y puede llegar un poco después.
+      await esperar(() => api.salida().includes('Redis contesta otra vez'), 2000, 'el log');
     } finally {
       await parar(api.proceso);
       red.cortar();
