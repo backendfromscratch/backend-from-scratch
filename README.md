@@ -69,13 +69,14 @@ pnpm build     # static site in web/dist/
 Before a pull request, run the same checks as CI:
 
 ```sh
-pnpm format:check && pnpm check && pnpm knip && pnpm test && pnpm build && pnpm test:e2e
+pnpm format:check && pnpm check && pnpm knip && pnpm test && pnpm build && pnpm test:e2e && pnpm test:visual
 ```
 
 - `pnpm check` runs the type checks.
 - `pnpm knip` looks for unused code.
 - `pnpm test` runs the tests.
-- `pnpm test:e2e` checks accessibility with axe-core on every page of the built site. The first time, run `pnpm --filter web exec playwright install chromium`.
+- `pnpm test:e2e` checks accessibility with axe-core on every page of the built site, and that the search, the language links and the theme button work. The first time, run `pnpm --filter web exec playwright install chromium`.
+- `pnpm test:visual` compares a few pages with their screenshots, inside Playwright's Docker image (you need Docker). After a change in the design you meant to make, `pnpm test:visual --update-snapshots` takes them again.
 
 The build fails on purpose if a link is broken, a glossary term is missing, a text is missing in one language or an SEO rule breaks.
 
@@ -110,7 +111,7 @@ docs/           the style guide for writing lessons
 
 GitHub Actions checks every pull request in two jobs:
 
-- **The site:** format, types, unused code, tests, build and accessibility.
+- **The site:** format, types, unused code, tests, build, accessibility, the site's flows and screenshots.
 - **The guided project:** in Node 26 against PostgreSQL and Redis, split by language and group of phases into 8 jobs in parallel. Each step is installed, type-checked and tested. The steps with a `Dockerfile` also get their image built and their Compose stack started.
 
 A pull request checks only the steps it changes; pushes to `main` and a weekly run check them all.
