@@ -71,13 +71,26 @@ jobs:
         env:
           TERRAFORM_IMAGE: hashicorp/terraform:1.16.6@sha256:bfffc1ded5fbf0a17beaaf22eb4793980abdb19d0761ff6a3a0efb2ab4d9b316 # 1.16.6
         run: |
+          # init downloads the providers, and the third-party ones (kreuzwerker/docker,
+          # hetznercloud/hcloud) keep their signatures on GitHub Releases: a 504 from github.com
+          # failed this step twice in an hour (2026-11-05). Up to three tries, 20 seconds apart.
+          init() {
+            for try in 1 2 3; do
+              docker run --rm -v "$1":/tf -w /tf "$TERRAFORM_IMAGE" init -backend=false -input=false && return 0
+              if [ "$try" -lt 3 ]; then
+                echo "terraform init failed (try $try of 3); trying again in 20 seconds"
+                sleep 20
+              fi
+            done
+            return 1
+          }
           failed=""
           for dir in web/public/practicas/terraform/*/; do
             echo "::group::terraform $dir"
             work="$(mktemp -d)"
             cp "$dir"*.tf "$work/"
             if ! docker run --rm -v "$work":/tf -w /tf "$TERRAFORM_IMAGE" fmt -check -diff ||
-              ! docker run --rm -v "$work":/tf -w /tf "$TERRAFORM_IMAGE" init -backend=false -input=false ||
+              ! init "$work" ||
               ! docker run --rm -v "$work":/tf -w /tf "$TERRAFORM_IMAGE" validate; then
               failed="$failed $dir"
             fi
@@ -89,7 +102,7 @@ jobs:
               paid="$(mktemp -d)"
               cp "$example" "$paid/main.tf"
               if ! docker run --rm -v "$paid":/tf -w /tf "$TERRAFORM_IMAGE" fmt -check -diff ||
-                ! docker run --rm -v "$paid":/tf -w /tf "$TERRAFORM_IMAGE" init -backend=false -input=false ||
+                ! init "$paid" ||
                 ! docker run --rm -v "$paid":/tf -w /tf "$TERRAFORM_IMAGE" validate; then
                 failed="$failed ${example}"
               fi
