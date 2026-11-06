@@ -308,18 +308,18 @@ test('with a slow Redis, each round marks what has arrived and the next one goes
     (await outbox()).filter((row) => row.sent_at !== null).map((row) => row.data.order.id);
 
   let rounds = 0;
-  let before = 0;
-  while (before < 50) {
-    assert.ok(++rounds <= 5, `${before} of 50 after ${rounds - 1} rounds`);
+  let marked = 0;
+  while (marked < 50) {
+    assert.ok(++rounds <= 5, `${marked} of 50 after ${rounds - 1} rounds`);
     const relayed = await relay(50, slow);
     const now = (await sentOnes()).length;
     // Each round moves forward, and marks exactly what reached the queue in that round.
     assert.ok(relayed > 0, `round ${rounds} marked none`);
-    assert.equal(now, before + relayed);
+    assert.equal(now, marked + relayed);
     // What hasn't reached the queue is never marked as sent.
     for (const id of await sentOnes())
       assert.ok(inQueue.has(id), `${id} marked without being in the queue`);
-    before = now;
+    marked = now;
   }
   assert.ok(rounds >= 2, 'with 100 ms per event, 50 do not fit in one round');
 });
