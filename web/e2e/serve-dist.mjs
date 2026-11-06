@@ -21,7 +21,13 @@ const types = {
 };
 
 createServer(async (request, response) => {
-  const path = normalize(decodeURIComponent(new URL(request.url ?? '/', 'http://x').pathname));
+  let path;
+  try {
+    path = normalize(decodeURIComponent(new URL(request.url ?? '/', 'http://x').pathname));
+  } catch {
+    // A malformed address (a % not followed by two hex digits): an error for that request only.
+    return response.writeHead(400).end();
+  }
   let file = join(root, path);
   // Nothing outside dist/ (normalize has already resolved any ../ in the path).
   if (!file.startsWith(root)) return response.writeHead(403).end();

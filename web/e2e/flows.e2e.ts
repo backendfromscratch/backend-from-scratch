@@ -65,7 +65,9 @@ test('the link after a lesson opens an issue with the lesson filled in', async (
     );
     expect(url.searchParams.get('template')).toBe(template);
     expect(url.searchParams.get('lesson')).toBe(`https://backenddesdecero.com${path}`);
-    expect(url.searchParams.get('title')).toMatch(/^\[.+\] $/);
+    // The title of this lesson, the one on its page, in brackets: the reader writes after it.
+    const title = (await page.locator('h1#_top').textContent())?.trim();
+    expect(url.searchParams.get('title')).toBe(`[${title}] `);
   }
   // Only after a lesson: not on the home page.
   await page.goto('/');
