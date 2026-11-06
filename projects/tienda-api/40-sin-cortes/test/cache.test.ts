@@ -462,10 +462,30 @@ async function pedir(
 const stockEnLaApi = async (id: number) =>
   ((await (await pedir('GET', `/v2/productos/${id}`)).json()) as { stock: number }).stock;
 
-/** La caché vacía, con la API ya arrancada y usándola. */
+/**
+ * La caché vacía, con la API ya arrancada y usándola. El test anterior puede dejar un guardado de
+ * camino (la API guarda sin esperar), y en una máquina cargada llegaría a Redis después del
+ * FLUSHDB: una clave que nadie espera. Por eso, antes, un producto que no existe: la API lo pide a
+ * la caché por su única conexión, y Redis ejecuta las órdenes de una conexión en orden, así que
+ * cuando llega el 404 cualquier guardado anterior ya está hecho. Ese producto no se guarda.
+ * Después, FLUSHDB. Si en ese momento la API da la caché por lenta (200 ms), el 404 llega de
+ * PostgreSQL sin esperar a Redis: por eso, después del FLUSHDB, otra vez, y se repite hasta que la
+ * caché sigue vacía.
+ */
 async function vaciarCache() {
   await tienda();
-  await redis.flushDb();
+  const noExiste = async () =>
+    assert.equal((await pedir('GET', '/v2/productos/999999')).status, 404);
+  await hastaQue(
+    async () => {
+      await noExiste();
+      await redis.flushDb();
+      await noExiste();
+      return (await claves()).length === 0;
+    },
+    5000,
+    'la caché vacía',
+  );
 }
 
 type Precio = { precioCentimos: number };
