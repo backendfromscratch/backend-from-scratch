@@ -477,8 +477,7 @@ const stockInApi = async (id: number) =>
  */
 async function emptyCache() {
   await shop();
-  const missing = async () =>
-    assert.equal((await send('GET', '/v2/products/999999')).status, 404);
+  const missing = async () => assert.equal((await send('GET', '/v2/products/999999')).status, 404);
   await eventually(
     async () => {
       await missing();
