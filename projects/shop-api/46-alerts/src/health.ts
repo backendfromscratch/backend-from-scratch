@@ -7,10 +7,11 @@ import { pingRedis } from './rate-limits.ts';
 
 export type Result = 'ok' | 'failing' | 'not-configured';
 
-// One PING at a time. With Redis frozen, each PING stays waiting in its connection's command queue
-// until Redis comes back: a new one on every call to /health/ready would pile up, one for each time
-// the probe asks. So, while one is still unanswered, the next call waits on that same one (with
-// check's limit). Like the gauges in metrics.ts.
+// One question at a time. With a frozen dependency, each question stays waiting: a PING, in its
+// connection's command queue until Redis comes back; a SELECT 1, holding a connection from the
+// pool. A new one on every call to /health/ready would pile up, one for each time the probe asks,
+// and the pool's would take connections away from the requests. So, while one is still unanswered,
+// the next call waits on that same one (with check's limit). Like the gauges in metrics.ts.
 function oneAtATime(ask: () => Promise<unknown>): () => Promise<unknown> {
   let inFlight: Promise<unknown> | undefined;
   return () =>
@@ -18,6 +19,7 @@ function oneAtATime(ask: () => Promise<unknown>): () => Promise<unknown> {
       inFlight = undefined;
     }));
 }
+const queryDb = oneAtATime(() => pool.query('SELECT 1'));
 const pingQueue = oneAtATime(() => pingRedis());
 const pingCache = oneAtATime(() => cache.ping());
 
@@ -26,11 +28,11 @@ const pingCache = oneAtATime(() => cache.ping());
 // 'not-configured' if the shop works without it (without REDIS_URL, the limits go in memory and the
 // jobs are done in the API; without CACHE_URL, there is no cache). In an object, so the tests can
 // change one.
-//   db: SELECT 1, through the same pool as the requests.
+//   db: SELECT 1, through the same pool as the requests, one at a time.
 //   queue: a PING to the queue's Redis (REDIS_URL), through the limits' connection, one at a time.
 //   cache: a PING to the cache's Redis (CACHE_URL), one at a time.
 export const checks = {
-  db: (): Promise<unknown> | 'not-configured' => pool.query('SELECT 1'),
+  db: (): Promise<unknown> | 'not-configured' => queryDb(),
   queue: (): Promise<unknown> | 'not-configured' =>
     config.REDIS_URL ? pingQueue() : 'not-configured',
   cache: (): Promise<unknown> | 'not-configured' =>

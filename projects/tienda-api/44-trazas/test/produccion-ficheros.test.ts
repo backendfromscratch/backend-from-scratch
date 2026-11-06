@@ -108,6 +108,10 @@ test('la imagen de la API, de migrar y del trabajador es la misma: build y ${IMA
     assert.ok(lineas.includes('    build: .'), nombre);
     assert.ok(lineas.includes('    image: ${IMAGEN:-tienda-api}'), nombre);
   }
+  // Desde la Fase 10, la API y el trabajador, cada uno con su nombre en trazas y métricas, como en
+  // compose.observabilidad.yaml. Sin él, OpenTelemetry los llamaría unknown_service:node a los dos.
+  assert.ok((await ancla()).includes('      OTEL_SERVICE_NAME: tienda-api'));
+  assert.ok((await servicio('trabajador')).includes('      OTEL_SERVICE_NAME: tienda-trabajador'));
 });
 
 test('producción: Redis guarda la cola en disco, sin Mailpit, y SMTP_URL solo de .env', async () => {

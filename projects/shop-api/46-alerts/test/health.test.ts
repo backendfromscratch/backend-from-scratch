@@ -15,8 +15,6 @@ import { useDb } from './db.ts';
 
 useDb();
 
-const never = () => new Promise<never>(() => {});
-
 test('GET /health/live: 200, without asking anybody', async () => {
   const res = await app.request('/health/live');
   assert.equal(res.status, 200);
@@ -47,7 +45,12 @@ test("GET /health/ready: 200 with what answers; what isn't configured doesn't co
 });
 
 test("GET /health/ready: 503 with db: failing, in under 1 s, if PostgreSQL doesn't answer", async (t) => {
-  t.mock.method(pool, 'query', never);
+  // A frozen PostgreSQL: its SELECT 1 doesn't answer until it is released, when the test ends. If
+  // it weren't, it would stay in flight, and the next tests would wait on that same one (one at a
+  // time).
+  const { promise: frozen, resolve: release } = Promise.withResolvers<unknown>();
+  t.after(() => release({ rows: [] }));
+  const query = t.mock.method(pool, 'query', () => frozen);
   const before = performance.now();
   const res = await app.request('/health/ready');
   assert.ok(performance.now() - before < 1000, `${performance.now() - before} ms`);
@@ -55,6 +58,10 @@ test("GET /health/ready: 503 with db: failing, in under 1 s, if PostgreSQL doesn
   const body = await res.json();
   assert.equal(body.status, 'failing');
   assert.equal(body.checks.db, 'failing');
+  // Another question while it is still frozen: it waits on the same SELECT 1, it doesn't start
+  // another.
+  assert.equal((await app.request('/health/ready')).status, 503);
+  assert.equal(query.mock.callCount(), 1);
 });
 
 test("GET /health/ready: 503 if the queue's Redis fails", async (t) => {
