@@ -471,12 +471,24 @@ const stockInApi = async (id: number) =>
  * on its way (the API stores without waiting), and on a busy machine it would reach Redis after the
  * FLUSHDB: a key nobody expects. So, first, a product that doesn't exist: the API asks the cache
  * for it on its only connection, and Redis runs a connection's commands in order, so when the 404
- * arrives any earlier store is done. That product isn't stored. Then, FLUSHDB.
+ * arrives any earlier store is done. That product isn't stored. Then, FLUSHDB. If the API takes
+ * the cache as slow at that moment (200 ms), the 404 comes from PostgreSQL without waiting for
+ * Redis: so it is asked again after the FLUSHDB, and repeated until the cache stays empty.
  */
 async function emptyCache() {
   await shop();
-  assert.equal((await send('GET', '/v2/products/999999')).status, 404);
-  await redis.flushDb();
+  const missing = async () =>
+    assert.equal((await send('GET', '/v2/products/999999')).status, 404);
+  await eventually(
+    async () => {
+      await missing();
+      await redis.flushDb();
+      await missing();
+      return (await keys()).length === 0;
+    },
+    5000,
+    'the cache empty',
+  );
 }
 
 type Price = { priceCents: number };

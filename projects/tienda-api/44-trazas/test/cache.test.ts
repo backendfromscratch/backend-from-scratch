@@ -468,12 +468,24 @@ const stockEnLaApi = async (id: number) =>
  * FLUSHDB: una clave que nadie espera. Por eso, antes, un producto que no existe: la API lo pide a
  * la caché por su única conexión, y Redis ejecuta las órdenes de una conexión en orden, así que
  * cuando llega el 404 cualquier guardado anterior ya está hecho. Ese producto no se guarda.
- * Después, FLUSHDB.
+ * Después, FLUSHDB. Si en ese momento la API da la caché por lenta (200 ms), el 404 llega de
+ * PostgreSQL sin esperar a Redis: por eso, después del FLUSHDB, otra vez, y se repite hasta que la
+ * caché sigue vacía.
  */
 async function vaciarCache() {
   await tienda();
-  assert.equal((await pedir('GET', '/v2/productos/999999')).status, 404);
-  await redis.flushDb();
+  const noExiste = async () =>
+    assert.equal((await pedir('GET', '/v2/productos/999999')).status, 404);
+  await hastaQue(
+    async () => {
+      await noExiste();
+      await redis.flushDb();
+      await noExiste();
+      return (await claves()).length === 0;
+    },
+    5000,
+    'la caché vacía',
+  );
 }
 
 type Precio = { precioCentimos: number };
