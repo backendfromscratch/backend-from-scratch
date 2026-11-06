@@ -7,10 +7,12 @@ import { pingRedis } from './limites.ts';
 
 export type Resultado = 'ok' | 'falla' | 'sin-configurar';
 
-// Un PING a la vez. Con Redis congelado, cada PING se queda esperando en la cola de órdenes de su
-// conexión hasta que Redis vuelva: uno nuevo en cada llamada a /salud/lista se iría acumulando, uno
-// por cada vez que pregunte la sonda. Así, mientras haya uno sin contestar, la siguiente llamada
-// espera a ese mismo (con el límite de comprobar). Como los indicadores de metricas.ts.
+// Una pregunta a la vez. Con una dependencia congelada, cada pregunta se queda esperando: un PING,
+// en la cola de órdenes de su conexión hasta que Redis vuelva; un SELECT 1, con una conexión del
+// pool ocupada. Una nueva en cada llamada a /salud/lista se iría acumulando, una por cada vez que
+// pregunte la sonda, y las del pool les quitarían conexiones a las peticiones. Así, mientras haya
+// una sin contestar, la siguiente llamada espera a esa misma (con el límite de comprobar). Como los
+// indicadores de metricas.ts.
 function unoALaVez(pregunta: () => Promise<unknown>): () => Promise<unknown> {
   let enMarcha: Promise<unknown> | undefined;
   return () =>
@@ -18,6 +20,7 @@ function unoALaVez(pregunta: () => Promise<unknown>): () => Promise<unknown> {
       enMarcha = undefined;
     }));
 }
+const consultaBd = unoALaVez(() => pool.query('SELECT 1'));
 const pingCola = unoALaVez(() => pingRedis());
 const pingCache = unoALaVez(() => cache.ping());
 
@@ -25,11 +28,11 @@ const pingCache = unoALaVez(() => cache.ping());
 // Una por dependencia. Cada una devuelve una promesa que se cumple si contesta, o 'sin-configurar'
 // si la tienda funciona sin ella (sin REDIS_URL, los límites van en memoria y los trabajos se hacen
 // en la API; sin CACHE_URL, no hay caché). En un objeto, para que los tests puedan cambiar una.
-//   bd: SELECT 1, por el mismo pool que las peticiones.
+//   bd: SELECT 1, por el mismo pool que las peticiones, uno a la vez.
 //   cola: un PING al Redis de la cola (REDIS_URL), por la conexión de los límites, uno a la vez.
 //   cache: un PING al Redis de la caché (CACHE_URL), uno a la vez.
 export const comprobaciones = {
-  bd: (): Promise<unknown> | 'sin-configurar' => pool.query('SELECT 1'),
+  bd: (): Promise<unknown> | 'sin-configurar' => consultaBd(),
   cola: (): Promise<unknown> | 'sin-configurar' =>
     config.REDIS_URL ? pingCola() : 'sin-configurar',
   cache: (): Promise<unknown> | 'sin-configurar' =>

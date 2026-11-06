@@ -14,8 +14,6 @@ import { usarBd } from './bd.ts';
 
 usarBd();
 
-const nunca = () => new Promise<never>(() => {});
-
 test('GET /salud/viva: 200, sin preguntar a nadie', async () => {
   const res = await app.request('/salud/viva');
   assert.equal(res.status, 200);
@@ -46,7 +44,11 @@ test('GET /salud/lista: 200 con lo que contesta; lo que no está configurado no 
 });
 
 test('GET /salud/lista: 503 con bd: falla, en menos de 1 s, si PostgreSQL no contesta', async (t) => {
-  t.mock.method(pool, 'query', nunca);
+  // Un PostgreSQL congelado: su SELECT 1 no contesta hasta que se suelta, al acabar el test. Si no
+  // se soltara, seguiría en marcha, y los tests siguientes esperarían a ese mismo (uno a la vez).
+  const { promise: congelado, resolve: soltar } = Promise.withResolvers<unknown>();
+  t.after(() => soltar({ rows: [] }));
+  const consulta = t.mock.method(pool, 'query', () => congelado);
   const antes = performance.now();
   const res = await app.request('/salud/lista');
   assert.ok(performance.now() - antes < 1000, `${performance.now() - antes} ms`);
@@ -54,6 +56,9 @@ test('GET /salud/lista: 503 con bd: falla, en menos de 1 s, si PostgreSQL no con
   const cuerpo = await res.json();
   assert.equal(cuerpo.estado, 'falla');
   assert.equal(cuerpo.comprobaciones.bd, 'falla');
+  // Otra pregunta mientras sigue congelado: espera al mismo SELECT 1, no lanza otro.
+  assert.equal((await app.request('/salud/lista')).status, 503);
+  assert.equal(consulta.mock.callCount(), 1);
 });
 
 test('GET /salud/lista: 503 si el Redis de la cola falla', async (t) => {

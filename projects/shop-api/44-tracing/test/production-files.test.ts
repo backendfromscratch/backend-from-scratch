@@ -108,6 +108,10 @@ test("the API's, migrate's and the worker's image is the same: build and ${IMAGE
     assert.ok(lines.includes('    build: .'), name);
     assert.ok(lines.includes('    image: ${IMAGE:-shop-api}'), name);
   }
+  // Since Phase 10, the API and the worker, each with its own name in traces and metrics, as in
+  // compose.observability.yaml. Without it, OpenTelemetry would call both unknown_service:node.
+  assert.ok((await anchor()).includes('      OTEL_SERVICE_NAME: shop-api'));
+  assert.ok((await service('worker')).includes('      OTEL_SERVICE_NAME: shop-worker'));
 });
 
 test('production: Redis keeps the queue on disk, no Mailpit, and SMTP_URL only from .env', async () => {
