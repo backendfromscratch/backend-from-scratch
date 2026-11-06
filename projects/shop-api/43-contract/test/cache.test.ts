@@ -466,9 +466,16 @@ async function send(
 const stockInApi = async (id: number) =>
   ((await (await send('GET', `/v2/products/${id}`)).json()) as { stock: number }).stock;
 
-/** The cache emptied, with the API already started and using it. */
+/**
+ * The cache emptied, with the API already started and using it. The previous test can leave a store
+ * on its way (the API stores without waiting), and on a busy machine it would reach Redis after the
+ * FLUSHDB: a key nobody expects. So, first, a product that doesn't exist: the API asks the cache
+ * for it on its only connection, and Redis runs a connection's commands in order, so when the 404
+ * arrives any earlier store is done. That product isn't stored. Then, FLUSHDB.
+ */
 async function emptyCache() {
   await shop();
+  assert.equal((await send('GET', '/v2/products/999999')).status, 404);
   await redis.flushDb();
 }
 
