@@ -13,6 +13,10 @@ export const collections = {
         // Links the page to its translation when their routes differ (/fase-0/que-es-dns ↔
         // /en/phase-0/what-is-dns). It is the same in both languages. See src/lib/translations.ts.
         translationKey: z.string().optional(),
+        // A scene lesson: an animated scene next to the text, played part by part as it is read
+        // (docs/specs/2026-11-20-visual-lessons-design.md). Its choreography is
+        // src/scenes/lessons/<translationKey>.ts, and the text marks each part with <Scene id="…" />.
+        scenes: z.boolean().optional(),
         // Required header of each lesson (see isLessonId and overrides/PageTitle.astro).
         lesson: z
           .object({
@@ -79,6 +83,25 @@ export const collections = {
         // The link at the end of each lesson to report a problem on GitHub (lib/contact.ts).
         'lesson.feedback': z.string(),
         'lesson.feedbackLink': z.string(),
+        // The scene column of a scene lesson (ScenePanel.astro). {speed}, {n}, {title}, {text} and {scene}
+        // are filled in with lib/fill.ts.
+        'scenes.label': z.string(),
+        'scenes.prev': z.string(),
+        'scenes.next': z.string(),
+        'scenes.pause': z.string(),
+        'scenes.resume': z.string(),
+        'scenes.replay': z.string(),
+        'scenes.speed': z.string(),
+        'scenes.speedSlow': z.string(),
+        'scenes.speedNormal': z.string(),
+        'scenes.speedFast': z.string(),
+        'scenes.split': z.string(),
+        'scenes.splitHint': z.string(),
+        'scenes.splitValue': z.string(),
+        'scenes.fold': z.string(),
+        'scenes.unfold': z.string(),
+        'scenes.paused': z.string(),
+        'scenes.dot': z.string(),
       }),
     }),
   }),

@@ -12,6 +12,13 @@ describe('explorerCollapsed', () => {
     expect(explorerCollapsed('')).toBe(false);
     expect(explorerCollapsed('true')).toBe(false);
   });
+
+  it('starts it folded on a scene lesson in a window under 75rem, unless the reader chose', () => {
+    expect(explorerCollapsed(null, true, false)).toBe(true);
+    expect(explorerCollapsed('shown', true, false)).toBe(false);
+    expect(explorerCollapsed(null, true, true)).toBe(false);
+    expect(explorerCollapsed(null, false, false)).toBe(false);
+  });
 });
 
 describe('toggledExplorer', () => {
