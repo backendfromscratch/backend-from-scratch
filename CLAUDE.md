@@ -174,11 +174,18 @@ src/scenes/                     scene lessons (docs/specs/2026-11-20-visual-less
                                 names, a query through the resolver and its cache, the records, a TTL keeping an old address
                                 and `dig`: «DNS»), crypto/ (your browser and the server, someone on the café's wifi, the
                                 padlocks and seals, a key pair, the TLS handshake, the certificate chain and its checks, what
-                                HTTPS leaves visible and badssl.com: «TLS y HTTPS») and people.ts; actors.test.ts checks that
-                                an actor name shared by two worlds gets the same rule in both (every world's CSS is global)
+                                HTTPS leaves visible and badssl.com: «TLS y HTTPS»), assistant/ (Phase 11: Carmen's browser
+                                with the shop's assistant, the shop and the model's API, and beside them a leaked key's DevTools,
+                                the checks before the model and Redis's counter, the request and response cards, the cost meter,
+                                the fake model, your terminal, the API's stream events, the browser's reader, nginx, the
+                                shop's tools, a tool's definition, the orders and what the model reads), analogies/ (each
+                                Phase 11 lesson's analogy: the counter and the phone translation service of lesson 1, the
+                                interpreters of lesson 2, the call center of lesson 3) and people.ts; actors.test.ts checks that an actor
+                                name shared by two worlds gets the same rule in both, and that no two worlds share a view name
+                                (every world's CSS is global)
   lessons/                      one choreography per scene lesson, named by its translationKey (from-url-to-page.ts,
                                 what-is-backend.ts, client-server.ts, protocols.ts, tcp-ip-model.ts, ip-ports-sockets.ts,
-                                tcp-vs-udp.ts, dns.ts, tls-https.ts), each with its client entry (<key>.astro: a script that imports it and starts
+                                tcp-vs-udp.ts, dns.ts, tls-https.ts, model-apis.ts, streaming.ts, tool-use.ts), each with its client entry (<key>.astro: a script that imports it and starts
                                 the engine, rendered by ScenePanel, so a page bundles only its own lesson)
 src/styles/theme.css            "code editor" theme: the --ide-* tokens, the single source of colour (tokens.test.ts checks contrast)
 src/styles/diagrams.css         styles for the diagrams generated from mermaid blocks
