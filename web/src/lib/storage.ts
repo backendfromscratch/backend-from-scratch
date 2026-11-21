@@ -13,6 +13,15 @@ export const FOLDERS_KEY = 'ide-folders';
 /** 'collapsed' if the reader has hidden the side panel (explorer and outline) on a computer. */
 export const EXPLORER_KEY = 'ide-explorer';
 
+/** The width of a scene lesson's text column, in px, if the reader moved the line (ScenePanel.astro). */
+export const SCENE_SPLIT_KEY = 'ide-scene-split';
+
+/** The scenes' speed: 'slow', 'normal' or 'fast' (src/scenes/core/timing.ts). */
+export const SCENE_SPEED_KEY = 'ide-scene-speed';
+
+/** 'folded' if the reader folded the scene into its bar on a phone. */
+export const SCENE_FOLD_KEY = 'ide-scene-folded';
+
 export interface SafeStorage {
   get(key: string): string | null;
   set(key: string, value: string): void;

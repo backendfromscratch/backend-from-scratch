@@ -51,6 +51,7 @@ A public, bilingual (Spanish and English) website with a backend course organise
 - Phase 9 design (decided by Claude on 2026-10-20 under the author's delegation; measure first with autocannon, BullMQ on the existing Redis with a worker from the same image, Mailpit for the confirmation email, a second Redis for the cache, Redis pub/sub for SSE with several copies, two named API copies and a rolling `desplegar.sh` for zero downtime, CAP with a Redis replica, and the transactional outbox): `docs/specs/2026-10-20-phase-9-design.md`.
 - Phase 10 design (decided by Claude on 2026-10-23 and 2026-10-24 under the author's delegation; tests with `node:test` written from an empty file, end-to-end tests over HTTP against the shop in Compose, contract tests with Ajv against the committed OpenAPI snapshot and a response validator in production, `VALIDAR_RESPUESTAS` (`no`, `registrar` or `fallar`); OpenTelemetry traces to Jaeger, metrics to Prometheus and Grafana, logs kept as JSON on stdout with the trace id, in an opt-in `compose.observabilidad.yaml`, with no `grafana/otel-lgtm` (the author agreed: too big for their disk and for a default 2 GiB Docker); `/salud/viva` and `/salud/lista`, the login limiters failing closed and account creation failing open with a 200 ms bound on Redis, Grafana alerting to Mailpit, and a simulated incident with a blameless postmortem): `docs/specs/2026-10-23-phase-10-design.md`.
 - Phase 2 design (approved on 2026-10-12; eight lessons from the side that answers, practiced with `nc`, the course's own site and the VM's nginx, and a CORS lab): `docs/specs/2026-10-12-phase-2-design.md`.
+- Visual lessons, «scenes» (decided by Claude on 2026-11-20 under the author's delegation, after the author tried the prototype; pilot built the same day): one design for the whole site, with scenes only in the lessons where a mechanism moves (all of Phase 0 but the introduction, Phase 11, chosen lessons of the rest). In a scene lesson (`scenes: true`) the editor area splits: the scene on the left, sticky, and the text on the right, with a line between them the reader can drag; the part being read plays its scene. A camera moves the actors only with transforms (CLS 0 for the whole visit), the text says everything the scene shows, and the scenes' CSS and JavaScript load only on scene lessons. Pilot: «De la URL a la página». Rollout and the rules for writing one: `docs/specs/2026-11-20-visual-lessons-design.md` (§10) and `docs/style-guide.md`, "Scenes".
 - Name and domain: «Backend desde cero» / "Backend from Scratch", on `backenddesdecero.com`, a single domain for both languages (decided on 2026-10-03; analysis in `docs/research/2026-10-03-languages-and-names.md`). Spanish is the main language and domain.
 - Technical names in English: GitHub organisation `backendfromscratch`, repository and package `backend-from-scratch` (decided on 2026-10-08). The site's public name follows each reader's language.
 - Audience: everyone. No lesson assumes any programming knowledge (decided on 2026-10-03; consequences in `docs/specs/2026-10-03-seo-design.md`, §2.3).
@@ -94,9 +95,9 @@ docker run --rm -v "$PWD/projects/tienda-api/04-servidor-http":/p -w /p node:26 
 ```
 
 - **The build fails on purpose** if an internal link is broken or crosses languages (`starlight-links-validator`), if a mermaid block can't be drawn, if a `<Term>` has no glossary entry, if an `<Analogy>` has no `limits`, if a UI string is missing in one language or if an SEO audit rule breaks. Fix the cause; don't disable the check.
-- Tests live next to the code (`x.ts` → `x.test.ts`). The ones that render a playground in a simulated document are named `*.dom.test.tsx`, start with `// @vitest-environment happy-dom` and use `web/src/playgrounds/dom-test.ts`.
-- Browser tests live in `web/e2e/` and are named `*.e2e.ts`, so Vitest does not pick them up. They run axe-core (WCAG 2.2 A and AA, plus "Label in Name") on every page of the sitemap and on the states that only appear after doing something (`states.e2e.ts`: the labs, a quiz answered, the glossary popover, the open explorer, the phone menu), in dark and light. A violation that is not ours to fix goes in the `known` list of `e2e/axe.ts`, with its reason. `flows.e2e.ts` checks that the site's own parts work: the search in each language, the «ES · EN» links, the theme button, the link to report a lesson and the 404. The first time, `pnpm --filter web exec playwright install chromium`.
-- **Screenshots** (`pnpm test:visual`, `web/e2e/site.visual.ts` with its own `playwright.visual.config.ts`): the home page, a lesson, the glossary and the 404, dark and light, desktop and phone, compared with `web/e2e/screenshots/`. They run inside Playwright's Docker image (`web/e2e/playwright-image.txt`, pinned by digest, served by `e2e/serve-dist.mjs`), because fonts and rendering change from one system to another. After a change in the design you meant to make, `pnpm test:visual --update-snapshots` and commit the new images. When Playwright is updated, update the image too: `e2e/playwright-image.test.ts` fails until both versions match.
+- Tests live next to the code (`x.ts` → `x.test.ts`). Vitest keeps a module cache between runs (`node_modules/.vitest-cache`), so a test that expands `import.meta.glob` does not see files added later: list the folder with `readdirSync` and import by file URL instead (as `src/content/scenes.test.ts` does). The ones that render a playground in a simulated document are named `*.dom.test.tsx`, start with `// @vitest-environment happy-dom` and use `web/src/playgrounds/dom-test.ts`.
+- Browser tests live in `web/e2e/` and are named `*.e2e.ts`, so Vitest does not pick them up. They run axe-core (WCAG 2.2 A and AA, plus "Label in Name") on every page of the sitemap and on the states that only appear after doing something (`states.e2e.ts`: the labs, a quiz answered, the glossary popover, the open explorer, the phone menu, a scene playing, paused and folded), in dark and light. A violation that is not ours to fix goes in the `known` list of `e2e/axe.ts`, with its reason. `flows.e2e.ts` checks that the site's own parts work: the search in each language, the «ES · EN» links, the theme button, the link to report a lesson and the 404. `scenes.e2e.ts` checks the scene lessons: scrolling changes the scene, the controls, the line between scene and text, the fold on a phone, and that reading each scene lesson of the build from top to bottom keeps the CLS under 0.01 on a computer and a phone. The first time, `pnpm --filter web exec playwright install chromium`.
+- **Screenshots** (`pnpm test:visual`, `web/e2e/site.visual.ts` with its own `playwright.visual.config.ts`): the home page, a lesson, the glossary, the 404 and the pilot scene lesson (with reduced motion, so its first scene is a still diagram), dark and light, desktop and phone, compared with `web/e2e/screenshots/`. They run inside Playwright's Docker image (`web/e2e/playwright-image.txt`, pinned by digest, served by `e2e/serve-dist.mjs`), because fonts and rendering change from one system to another. After a change in the design you meant to make, `pnpm test:visual --update-snapshots` and commit the new images. When Playwright is updated, update the image too: `e2e/playwright-image.test.ts` fails until both versions match.
 - prettier doesn't touch `.md` or `.mdx` files (`.prettierignore`): content formatting is set by `docs/style-guide.md`.
 - **CI** (`.github/workflows/ci.yml`): on every PR and every push to `main` it runs `format:check`, zizmor (the workflows), `check`, `knip`, `test`, `build`, `test:e2e` and `test:visual` (uploading the screenshot differences when they don't match), and `terraform fmt` and `validate` on the practice files in `web/public/practicas/terraform/`, and `docker compose config` on those in `web/public/practicas/replicas/`; a second job, a matrix of 8 legs in parallel (each language, `tienda-api` and `shop-api`, by group of phases: 3–6, 7–8, 9 and 10 onwards, each leg on its own runner), installs, type-checks and tests the steps of `projects/` (builds their Docker images, runs Compose, where the steps with a worker also pay an order, restart Redis and wait for the email in Mailpit; checks with `docker compose config` that each step's observability override, steps 44 onwards, merges with `compose.yaml`; in one step, `tienda-api/46-alertas`, brings the stack up with the override, pays an order and waits for a trace with the worker's span in Jaeger, skipped when the leg is past 25 minutes; and checks the production files of steps 35 onwards with nginx, shellcheck, systemd-analyze and actionlint): on a PR, only the steps it changes (all of them if it changes `ci.yml`); on pushes to `main`, manual runs and every Monday, all of them (30-minute limit per leg; a new phase's steps fall into the last group until it gets a row of its own in the matrix). A last job, "guided projects (node 26)", passes only when every leg passes: it is the required check, with the name the single job had. It doesn't deploy. Actions are pinned by commit SHA (with the version in a comment); Dependabot updates them.
 - **Supply chain** (`pnpm-workspace.yaml`): pnpm installs no version younger than 7 days and refuses versions published with weaker guarantees. If an urgent security fix is newer, add its exact version to `minimumReleaseAgeExclude`. Design in `docs/specs/2026-10-02-site-and-phase-0-design.md`, §7.
@@ -120,7 +121,7 @@ docker run --rm -v "$PWD/projects/tienda-api/04-servidor-http":/p -w /p node:26 
 
 ## Site architecture (`web/`)
 
-Astro generates static HTML. Starlight provides the base of a documentation site (routes from files, menu, Pagefind search and languages), and the editor layout is built by replacing some of its components (`components/overrides/`). Everything expensive happens at build time: the diagrams, the social images and the SEO audit. The browser only runs the layout's scripts, Starlight's (search and theme) and the playgrounds' React islands.
+Astro generates static HTML. Starlight provides the base of a documentation site (routes from files, menu, Pagefind search and languages), and the editor layout is built by replacing some of its components (`components/overrides/`). Everything expensive happens at build time: the diagrams, the social images and the SEO audit. The browser only runs the layout's scripts, Starlight's (search and theme), the playgrounds' React islands and, on scene lessons, the scene engine.
 
 Paths relative to `web/`:
 
@@ -130,8 +131,9 @@ src/content.config.ts           schemas: docs (`lesson` header, `translationKey`
 src/content/docs/               MDX pages: Spanish at the root (fase-0/…) and English in en/ (en/phase-0/…)
 src/content/glossary/           one YAML per term and language (es/port.yaml, en/port.yaml)
 src/content/i18n/               our own UI strings (es.json, en.json)
-src/content/*.test.ts           content tests: lesson order, UI keys defined and used, the voice (forbidden words, author notes)
-                                and the glossary (acronyms, and a term's lesson and related terms the same in both languages)
+src/content/*.test.ts           content tests: lesson order, UI keys defined and used, the voice (forbidden words, author notes),
+                                the glossary (acronyms, and a term's lesson and related terms the same in both languages) and the
+                                scene lessons (scenes.test.ts: each one's cues match its module, the same in both languages)
 src/data/phases.ts              the 12 phases: title, summary, status and planned lessons
 src/data/playgrounds.ts         labs and playgrounds, for the /playgrounds/ page
 src/data/site.ts                public URL, site name in each language and the content license
@@ -143,11 +145,40 @@ src/integrations/               our own Astro integrations: drop-fallbacks (dele
 src/components/                 lessons (Term, TryIt, Analogy, SelfCheck, Quiz with QuizQuestion and QuizOption), general pages (PhaseList, PlaygroundList, GlossaryList, CodeLens),
                                 AcronymLine (what a glossary acronym stands for, in Term and GlossaryList), ProjectCode (a file or a
                                 region of a guided project, as a code block: lessons never paste project code)
-                                and layout (Outline, Minimap, ExplorerToggle; LessonIntro, the lesson header, from overrides/PageTitle.astro)
-src/components/overrides/       replacements for Starlight components, registered in astro.config.ts: Header, Sidebar, PageTitle, LanguageSelect,
+                                and layout (Outline, Minimap, ExplorerToggle; LessonIntro, the lesson header, from overrides/PageTitle.astro).
+                                Scene lessons: Scene (a cue in the text; it also brings the scenes' CSS) and ScenePanel (the scene column,
+                                rendered by overrides/TwoColumnContent.astro instead of the minimap)
+src/components/overrides/       replacements for Starlight components, registered in astro.config.ts: Head (preloads the two fonts every page draws, so
+                                they never swap in after the first paint: CLS), Header, Sidebar, PageTitle, LanguageSelect,
                                 TwoColumnContent, PageSidebar, Pagination, Footer, SiteTitle and ThemeSelect
 src/components/diagrams/        diagrams Mermaid doesn't draw well, in HTML and CSS (Encapsulation, NatTranslation, DataToScreen)
 src/playgrounds/<name>/         one playground per folder: pure logic, React UI, strings.ts (es/en), CSS and tests
+src/scenes/                     scene lessons (docs/specs/2026-11-20-visual-lessons-design.md), no React:
+  core/                         the engine: pure timing, geometry, cues and split (with tests); run.ts (a scene's own clock: pause,
+                                speed, cancel); stage.ts (the camera: each view laid out on an invisible copy, actors moved with
+                                transforms); director.ts (what a choreography calls: d.fly, d.caption, d.note…); boot.ts (the cues,
+                                scroll, controls, the draggable line and the fold); types.ts, icons.ts and scenes.css
+  worlds/                       the actors a lesson draws, each with its .astro, state and routes (.ts), strings.ts and CSS:
+                                network/ (browser, router, DNS servers, server; TimeBar.astro, its instrument), town/ (the pilot's
+                                analogy; the shop's customers and the phone call of lessons 2 and 3), apps/ (the ticket and
+                                weather apps of «Qué es el backend»), restaurant/ (its analogy), hosts/ (browser, server, a
+                                computer's programs and ports, `nc` in a terminal, a laptop: «Modelo cliente-servidor»),
+                                protocol/ (Chrome, your terminal's runs, example.com, the RFCs and a list of protocols: «Qué es
+                                un protocolo»), layers/ (stacks of layers, routers, the envelopes, a letter, OSI and `curl -sv`:
+                                «El modelo TCP/IP»), nat/ (your laptop, phone and router with its NAT table, example.com and its
+                                sockets, a route table and an office building: «IP, puertos y sockets»), transport/ (a client
+                                and a server with their TCP states, the client's unacknowledged copy and what the server's
+                                application has read or holds back, the table of uses and the ports `nc -vz` knocks on:
+                                «TCP frente a UDP»), names/ (HOSTS.TXT and its copies, the hotel's front desk, the tree of
+                                names, a query through the resolver and its cache, the records, a TTL keeping an old address
+                                and `dig`: «DNS»), crypto/ (your browser and the server, someone on the café's wifi, the
+                                padlocks and seals, a key pair, the TLS handshake, the certificate chain and its checks, what
+                                HTTPS leaves visible and badssl.com: «TLS y HTTPS») and people.ts; actors.test.ts checks that
+                                an actor name shared by two worlds gets the same rule in both (every world's CSS is global)
+  lessons/                      one choreography per scene lesson, named by its translationKey (from-url-to-page.ts,
+                                what-is-backend.ts, client-server.ts, protocols.ts, tcp-ip-model.ts, ip-ports-sockets.ts,
+                                tcp-vs-udp.ts, dns.ts, tls-https.ts), each with its client entry (<key>.astro: a script that imports it and starts
+                                the engine, rendered by ScenePanel, so a page bundles only its own lesson)
 src/styles/theme.css            "code editor" theme: the --ide-* tokens, the single source of colour (tokens.test.ts checks contrast)
 src/styles/diagrams.css         styles for the diagrams generated from mermaid blocks
 src/lib/                        pure logic, no DOM, with tests:
@@ -159,8 +190,9 @@ src/lib/                        pure logic, no DOM, with tests:
   glossary.ts                   glossary ids, alphabetical order, the lesson that explains each term and what an acronym stands for
   explorer.ts, outline.ts       file explorer and page outline
   minimap.ts, theme.ts          minimap, and the theme button's choice
-  explorer-panel.ts             whether the side panel starts hidden
+  explorer-panel.ts             whether the side panel starts hidden (folded by default on a scene lesson under 75rem)
   reading.ts                    reading minutes
+  scroll-regions.ts             a wide table or diagram that scrolls sideways gets keyboard access (TwoColumnContent.astro)
   quiz.ts                       the quiz: score, sections to review and the heading each question links to
   contact.ts                    the link at the end of each lesson: a GitHub issue with the lesson form already filled in
   term-punctuation.ts           Sätteri plugin: a glossary term and the punctuation glued to it stay on one line
@@ -192,8 +224,9 @@ public/                         copied as is: favicon.svg, robots.txt, _headers 
                                 and replicas/, Phase 9's Compose file with a Redis primary and a replica, in es/ and en/, served as text)
 scripts/                        one-off generators run by hand: generate-access-log.ts (`practice:log`)
 e2e/                            browser tests with Playwright against the built site: axe.ts (helpers and known violations),
-                                pages.e2e.ts (every page), states.e2e.ts (labs and other states) and flows.e2e.ts (search,
-                                languages, theme, report link, 404); config in playwright.config.ts. The screenshots:
+                                pages.e2e.ts (every page), states.e2e.ts (labs and other states), flows.e2e.ts (search,
+                                languages, theme, report link, 404) and scenes.e2e.ts (scene lessons and their CLS, with the
+                                helpers in scene.ts); config in playwright.config.ts. The screenshots:
                                 site.visual.ts, screenshots/, visual.sh, serve-dist.mjs and playwright-image.txt (and its
                                 test), with playwright.visual.config.ts
 ```

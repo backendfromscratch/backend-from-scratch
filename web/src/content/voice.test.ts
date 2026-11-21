@@ -45,9 +45,25 @@ function projectFiles(): { path: string; locale: Locale; text: string }[] {
   );
 }
 
+/**
+ * The scenes' strings (src/scenes/): each lesson's captions and each world's labels. A file holds
+ * both languages, so it is checked against both lists.
+ */
+function sceneFiles(): { path: string; text: string }[] {
+  const scenes = fileURLToPath(new URL('../scenes/', import.meta.url));
+  return readdirSync(scenes, { recursive: true, encoding: 'utf8' })
+    .filter((name) => /^lessons\/.+\.ts$|\/strings\.ts$/.test(name) && !name.endsWith('.test.ts'))
+    .map((name) => ({ path: name, text: readFileSync(scenes + name, 'utf8') }));
+}
+
 describe('voice', () => {
   it.each(files())('$path has none of the forbidden words', ({ locale, text }) => {
     expect(text).not.toMatch(forbidden[locale]);
+  });
+
+  it.each(sceneFiles())('scenes/$path has none of the forbidden words', ({ text }) => {
+    expect(text).not.toMatch(forbidden.es);
+    expect(text).not.toMatch(forbidden.en);
   });
 
   it.each(projectFiles())('projects/$path has none of the forbidden words', ({ locale, text }) => {

@@ -57,6 +57,7 @@ export default defineConfig({
         styleOverrides: { borderRadius: '0.375rem' },
       },
       components: {
+        Head: './src/components/overrides/Head.astro',
         PageTitle: './src/components/overrides/PageTitle.astro',
         TwoColumnContent: './src/components/overrides/TwoColumnContent.astro',
         PageSidebar: './src/components/overrides/PageSidebar.astro',
