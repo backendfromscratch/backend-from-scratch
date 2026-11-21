@@ -148,7 +148,8 @@ src/components/                 lessons (Term, TryIt, Analogy, SelfCheck, Quiz w
                                 and layout (Outline, Minimap, ExplorerToggle; LessonIntro, the lesson header, from overrides/PageTitle.astro).
                                 Scene lessons: Scene (a cue in the text; it also brings the scenes' CSS) and ScenePanel (the scene column,
                                 rendered by overrides/TwoColumnContent.astro instead of the minimap)
-src/components/overrides/       replacements for Starlight components, registered in astro.config.ts: Header, Sidebar, PageTitle, LanguageSelect,
+src/components/overrides/       replacements for Starlight components, registered in astro.config.ts: Head (preloads the two fonts every page draws, so
+                                they never swap in after the first paint: CLS), Header, Sidebar, PageTitle, LanguageSelect,
                                 TwoColumnContent, PageSidebar, Pagination, Footer, SiteTitle and ThemeSelect
 src/components/diagrams/        diagrams Mermaid doesn't draw well, in HTML and CSS (Encapsulation, NatTranslation, DataToScreen)
 src/playgrounds/<name>/         one playground per folder: pure logic, React UI, strings.ts (es/en), CSS and tests
