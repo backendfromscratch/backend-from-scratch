@@ -24,6 +24,11 @@ export interface AnalogiesStrings {
   onLine: string;
   theirs: string;
   others: string;
+  /** Lesson 4: your phone, a friend's and a laptop, each with its charger. */
+  devices: readonly [string, string, string];
+  /** Lesson 5: a supermarket's aisles (two of them named by the text) and its entrance. */
+  aisles: readonly [string, string];
+  entrance: string;
 }
 
 export const strings: Record<Locale, AnalogiesStrings> = {
@@ -44,6 +49,9 @@ export const strings: Record<Locale, AnalogiesStrings> = {
     onLine: 'al teléfono',
     theirs: 'sus pedidos',
     others: 'los de otro',
+    devices: ['tu móvil', 'el de un amigo', 'un portátil'],
+    aisles: ['ropa de invierno', 'playa'],
+    entrance: 'entrada',
   },
   en: {
     counter: 'counter',
@@ -62,5 +70,8 @@ export const strings: Record<Locale, AnalogiesStrings> = {
     onLine: 'on the line',
     theirs: 'their orders',
     others: 'someone else’s',
+    devices: ['your phone', 'a friend’s', 'a laptop'],
+    aisles: ['winter clothes', 'beach'],
+    entrance: 'entrance',
   },
 };

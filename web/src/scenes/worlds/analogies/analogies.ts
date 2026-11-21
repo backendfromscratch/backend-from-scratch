@@ -2,7 +2,8 @@
  * The analogies world: each Phase 11 lesson's analogy, one scene each. Lesson 1: the shop's counter
  * and the phone translation service it pays with its card. Lesson 2: a talk with simultaneous and
  * consecutive interpreting, and a listener who leaves. Lesson 3: a call center, where the warehouse
- * checks who is on the line. Nothing persists from one scene to the
+ * checks who is on the line. Lesson 4: phones and a laptop whose chargers fit only their own, until
+ * USB-C. Lesson 5: a supermarket arranged by what things are. Nothing persists from one scene to the
  * next (like the town of «De la URL a la página»): `reset` puts every tally and sign back. Its markup
  * is Analogies.astro; its labels, strings.ts.
  */
@@ -28,18 +29,28 @@ export function internalRoute(d: Pick<D, 'pt'>, back = false): Point[] {
   return back ? arc.reverse() : arc;
 }
 
+/** A charger carried from its place to a device's port: an arc from the plug up to the port. */
+export function plugRoute(d: Pick<D, 'pt'>, plug: number, port: number): Point[] {
+  const a = d.pt(`#an-plug-${plug}`, 't');
+  const b = d.pt(`#an-port-${port}`);
+  return curve(a, b, -Math.min(50, Math.hypot(b.x - a.x, b.y - a.y) * 0.4));
+}
+
 export const analogies: World<unknown> = {
   id: 'analogies',
   views: {
     phoneline: ['frontdesk', 'interp'],
     interpreting: ['speaker', 'booth', 'audience'],
     switchboard: ['caller', 'operator', 'warehouse'],
+    usbc: ['chargers'],
+    aisles: ['market'],
   },
-  zoom: { phoneline: 1.6, interpreting: 1.6, switchboard: 1.6 },
+  zoom: { phoneline: 1.6, interpreting: 1.6, switchboard: 1.6, usbc: 2, aisles: 1.8 },
 
   reset(root) {
     root.querySelectorAll('.an-cell, .an-room').forEach((part) => part.classList.remove('is-on'));
     root.querySelector('#an-audience')?.classList.remove('is-gone');
+    root.querySelector('#an-chargers')?.classList.remove('is-usbc');
     const mode = root.querySelector('#an-mode');
     if (mode) mode.textContent = '';
     root.querySelectorAll('.an-mark').forEach((mark) => {

@@ -178,14 +178,23 @@ src/scenes/                     scene lessons (docs/specs/2026-11-20-visual-less
                                 with the shop's assistant, the shop and the model's API, and beside them a leaked key's DevTools,
                                 the checks before the model and Redis's counter, the request and response cards, the cost meter,
                                 the fake model, your terminal, the API's stream events, the browser's reader, nginx, the
-                                shop's tools, a tool's definition, the orders and what the model reads), analogies/ (each
-                                Phase 11 lesson's analogy: the counter and the phone translation service of lesson 1, the
-                                interpreters of lesson 2, the call center of lesson 3) and people.ts; actors.test.ts checks that an actor
+                                shop's tools, a tool's definition, the orders and what the model reads), mcp/ (the agents,
+                                services and MCP bus, the host with its MCP client, an MCP client and the shop as an MCP server
+                                with its tools, the JSON-RPC message, the API's two copies, a tool's registration and its two
+                                doors, the table of keys: «MCP», which also uses assistant/'s model, shop, tools and terminal),
+                                vectors/ (the catalogue by name, the model of embeddings, the map of products, not to scale
+                                and each language's own, with vectors.test.ts keeping the text's order of distances, two
+                                arrows, the models volume, the worker, the products table, HNSW's floors, PostgreSQL with its
+                                outbox, the queue, docker stats and the table of searches: «Embeddings», which also uses
+                                assistant/'s chat, shop and terminal), analogies/ (each Phase 11 lesson's analogy: the
+                                counter and the phone translation service of lesson 1, the interpreters of lesson 2, the call
+                                center of lesson 3, the chargers and USB-C of lesson 4, the supermarket of lesson 5) and
+                                people.ts; actors.test.ts checks that an actor
                                 name shared by two worlds gets the same rule in both, and that no two worlds share a view name
                                 (every world's CSS is global)
   lessons/                      one choreography per scene lesson, named by its translationKey (from-url-to-page.ts,
                                 what-is-backend.ts, client-server.ts, protocols.ts, tcp-ip-model.ts, ip-ports-sockets.ts,
-                                tcp-vs-udp.ts, dns.ts, tls-https.ts, model-apis.ts, streaming.ts, tool-use.ts), each with its client entry (<key>.astro: a script that imports it and starts
+                                tcp-vs-udp.ts, dns.ts, tls-https.ts, model-apis.ts, streaming.ts, tool-use.ts, mcp.ts, embeddings.ts), each with its client entry (<key>.astro: a script that imports it and starts
                                 the engine, rendered by ScenePanel, so a page bundles only its own lesson)
 src/styles/theme.css            "code editor" theme: the --ide-* tokens, the single source of colour (tokens.test.ts checks contrast)
 src/styles/diagrams.css         styles for the diagrams generated from mermaid blocks
