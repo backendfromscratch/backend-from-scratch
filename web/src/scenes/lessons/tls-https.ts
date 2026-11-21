@@ -155,7 +155,7 @@ const lesson: LessonModule<CryptoState> = {
     },
     {
       id: 'asymmetric',
-      view: 'pair',
+      view: 'keys',
       kind: 'tls',
       chip: { es: 'dos llaves', en: 'two keys' },
       title: { es: 'Dos llaves', en: 'Two keys' },

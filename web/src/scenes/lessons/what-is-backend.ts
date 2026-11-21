@@ -460,7 +460,7 @@ const lesson: LessonModule<AppsState> = {
     },
     {
       id: 'try',
-      view: 'curl',
+      view: 'request',
       kind: 'http',
       chip: { es: 'curl', en: 'curl' },
       title: { es: 'Un backend real, sin frontend', en: 'A real backend, no frontend' },

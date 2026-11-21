@@ -104,7 +104,7 @@ export const apps: World<AppsState> = {
     purchase: ['phone', 'backend', 'db', 'pay', 'mail'],
     trust: ['phone', 'backend', 'pay'],
     stack: ['phone', 'backend', 'db'],
-    curl: ['terminal', 'weather'],
+    request: ['terminal', 'weather'],
   },
   zoom: {
     tickets: 1.4,
@@ -113,7 +113,7 @@ export const apps: World<AppsState> = {
     purchase: 1.35,
     trust: 1.4,
     stack: 1.4,
-    curl: 1.4,
+    request: 1.4,
   },
 
   reset() {},
