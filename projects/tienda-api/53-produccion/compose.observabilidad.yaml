@@ -1,0 +1,145 @@
+# Las trazas y las métricas de la tienda (Fase 10, lecciones 4 y 5), aparte: compose.yaml solo arranca
+# la tienda, como en la Fase 9, y este fichero le añade Jaeger, que recibe las trazas y las enseña,
+# Prometheus, que guarda las métricas, y Grafana, que las dibuja. Se usan los dos:
+#   docker compose -f compose.yaml -f compose.observabilidad.yaml up -d --build --wait
+# Compose junta los dos ficheros: los servicios nuevos se añaden, y lo que se dice aquí de api y
+# trabajador se suma a lo de compose.yaml. Para no escribirlo cada vez, en tu .env:
+#   COMPOSE_FILE=compose.yaml:compose.observabilidad.yaml
+# Y entonces basta con docker compose up -d --build --wait. Jaeger, en http://localhost:16686;
+# Prometheus, en http://localhost:9090; Grafana, en http://localhost:3100 (sin contraseña: solo se
+# abre desde tu ordenador). Las alertas de Grafana llegan por correo a Mailpit, en
+# http://localhost:8025 (lección 6).
+
+services:
+  # #region jaeger
+  # Jaeger 2, fijada por su digest: recibe las trazas por OTLP (el protocolo de OpenTelemetry, en
+  # el 4318 por HTTP) y las enseña en su web, en el 16686. Las guarda en memoria: se pierden al
+  # pararlo, y para practicar basta. El 4318 no se publica: solo lo usan la API y el trabajador,
+  # dentro de la red de Compose. La web, solo en tu ordenador (127.0.0.1).
+  jaeger:
+    image: jaegertracing/jaeger:2.22.0@sha256:836b967b5abcf1f7758066aa6b348619267a2f1459f72d472840570f9bd88a17
+    # Con su configuración, no la de la imagen: la misma, pero con un tope de trazas en memoria
+    # (observabilidad/jaeger.yaml).
+    command: ['--config', '/etc/jaeger/config.yaml']
+    volumes:
+      - ./observabilidad/jaeger.yaml:/etc/jaeger/config.yaml:ro
+    ports:
+      - '127.0.0.1:16686:16686'
+    # Sano cuando su comprobación de salud (en el 13133) dice que sí. La imagen trae wget.
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:13133/status']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  # #endregion jaeger
+
+  # #region prometheus
+  # Prometheus, fijada por su digest: guarda las métricas, y las recibe por OTLP, el mismo protocolo
+  # que las trazas, en /api/v1/otlp/v1/metrics. Esa entrada viene apagada: --web.enable-otlp-receiver
+  # la enciende. Con la configuración que trae la imagen basta, porque nadie va a «rascar» (scrape)
+  # la API: la API manda. Las métricas, en un volumen, para que sobrevivan a un reinicio; su web y
+  # su API, solo en tu ordenador.
+  prometheus:
+    image: prom/prometheus:v3.15.0@sha256:efd719c99d83b060d9daefdcf00360461adf279f45ef5391f8d111892118753e
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.enable-otlp-receiver'
+    ports:
+      - '127.0.0.1:9090:9090'
+    volumes:
+      - prometheus-datos:/prometheus
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:9090/-/ready']
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  # #endregion prometheus
+
+  # #region grafana
+  # Grafana, fijada por su digest (la -slim: lleva Prometheus y Jaeger, y es la mitad de grande).
+  # Todo lo que sabe viene de ficheros: de dónde leer (provisioning/datasources), el panel de la
+  # tienda (paneles/tienda.json, que provisioning/dashboards busca en /var/lib/grafana/paneles) y,
+  # desde la lección 6, las alertas (provisioning/alerting: las reglas, a quién avisar y cómo).
+  # Sin contraseña: GF_AUTH_ANONYMOUS_ENABLED entra como administrador, y es lo que hay que hacer en
+  # un Grafana que solo se abre en 127.0.0.1. En un servidor, jamás. Puerto 3100: el 3000 es de la API.
+  grafana:
+    image: grafana/grafana:13.2.4-slim@sha256:e1b9840daaea5ebbe9ac585257ed88cf7ea569d28d5058231b0778f8898ef736
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: 'true'
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: 'true'
+      # Memoria: por defecto Grafana instala 18 plugins al arrancar y levanta 13 procesos más (unos
+      # 500 MiB en reposo), y en un Docker de 2 GiB (lo normal en Colima) el sistema lo mataba. Solo
+      # se instala el de Prometheus, lo único que usa la tienda (los paneles y las alertas son del
+      # propio Grafana), y los demás se desactivan: unos 250 MiB en reposo.
+      GF_PLUGINS_PREINSTALL_SYNC: prometheus
+      GF_PLUGINS_DISABLE_PLUGINS: elasticsearch,grafana-advisor-app,grafana-exploretraces-app,grafana-lokiexplore-app,grafana-metricsdrilldown-app,grafana-postgresql-datasource,grafana-pyroscope-app,grafana-pyroscope-datasource,influxdb,jaeger,loki,mssql,mysql,opentsdb,stackdriver,tempo,zipkin
+      # Aun así, con su web abierta crecía hasta unos 600 MiB. GOMEMLIMIT le pide al recolector de
+      # memoria de Go que limpie antes de pasar de 250 MiB; es un límite blando: si de verdad necesita
+      # más, lo usa. Medido el 2026-10-24, con npm run carga y el panel abierto: 327 MiB como mucho,
+      # en vez de 595, y 320 con el editor de un panel, en vez de 643.
+      GOMEMLIMIT: 250MiB
+      # #region correo
+      # Los correos de las alertas (lección 6), por SMTP a Mailpit (compose.yaml), dentro de la red
+      # de Compose: llegan a http://localhost:8025. Mailpit no cifra, así que sin STARTTLS. La
+      # dirección de Grafana, para que los enlaces del correo abran tu Grafana.
+      GF_SMTP_ENABLED: 'true'
+      GF_SMTP_HOST: mailpit:1025
+      GF_SMTP_FROM_ADDRESS: alertas@tienda.example
+      GF_SMTP_FROM_NAME: Alertas de la tienda
+      GF_SMTP_STARTTLS_POLICY: NoStartTLS
+      GF_SERVER_ROOT_URL: http://localhost:3100
+      # #endregion correo
+    ports:
+      - '127.0.0.1:3100:3000'
+    volumes:
+      - ./observabilidad/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observabilidad/grafana/paneles:/var/lib/grafana/paneles:ro
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '--spider', 'http://127.0.0.1:3000/api/health']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      jaeger:
+        condition: service_healthy
+      # Sin healthcheck propio: basta con que haya arrancado.
+      mailpit:
+        condition: service_started
+  # #endregion grafana
+
+  # #region api-y-trabajador
+  # La API y el trabajador mandan sus trazas a Jaeger y sus métricas a Prometheus
+  # (src/instrumentacion.ts). Con OTEL_EXPORTER_OTLP_TRACES_ENDPOINT y
+  # OTEL_EXPORTER_OTLP_METRICS_ENDPOINT, la URL entera, tal cual: cada señal tiene la suya, porque
+  # Prometheus no recibe en la misma ruta que Jaeger. OTEL_SERVICE_NAME: quién es cada uno, en
+  # Jaeger y en Prometheus (la etiqueta job). Arrancan cuando los dos están sanos, para no perder
+  # lo primero que mandan.
+  api:
+    environment:
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: http://prometheus:9090/api/v1/otlp/v1/metrics
+      OTEL_SERVICE_NAME: tienda-api
+    depends_on:
+      jaeger:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+
+  trabajador:
+    environment:
+      OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: http://jaeger:4318/v1/traces
+      OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: http://prometheus:9090/api/v1/otlp/v1/metrics
+      OTEL_SERVICE_NAME: tienda-trabajador
+    depends_on:
+      jaeger:
+        condition: service_healthy
+      prometheus:
+        condition: service_healthy
+  # #endregion api-y-trabajador
+
+volumes:
+  prometheus-datos:
