@@ -41,8 +41,9 @@ export function falloDelModelo(error: unknown): Fallo | undefined {
   if (error instanceof Anthropic.APIUserAbortError) {
     return { estado: 503, reintentarEn: ESPERA_POR_DEFECTO, detalle: 'El modelo no contesta' };
   }
-  // 429: la cuenta de la tienda ha hecho demasiadas peticiones (o ha llegado a su límite de gasto).
-  // El límite es de la tienda, no del cliente: por eso no se le responde un 429, sino un 503.
+  // 429: la cuenta de la tienda ha hecho demasiadas peticiones (o, según la documentación, ha llegado
+  // al tope de gasto de su nivel; el límite de gasto que pones en la Console da un 400, que aquí acaba
+  // en un 500). El límite es de la tienda, no del cliente: por eso no se le responde un 429, sino un 503.
   if (error instanceof Anthropic.RateLimitError) {
     return {
       estado: 503,

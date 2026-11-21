@@ -41,8 +41,9 @@ export function modelFailure(error: unknown): Failure | undefined {
   if (error instanceof Anthropic.APIUserAbortError) {
     return { status: 503, retryAfter: DEFAULT_WAIT, detail: 'The model is not answering' };
   }
-  // 429: the shop's account has made too many requests (or reached its spend limit). The limit is
-  // the shop's, not the customer's: that's why the customer gets a 503, not a 429.
+  // 429: the shop's account has made too many requests (or, according to the docs, reached its tier's
+  // spend cap; the spend limit you set in the Console gives a 400, which ends up as a 500 here). The
+  // limit is the shop's, not the customer's: that's why the customer gets a 503, not a 429.
   if (error instanceof Anthropic.RateLimitError) {
     return {
       status: 503,
