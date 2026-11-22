@@ -200,7 +200,7 @@ From Phase 3 the reader writes code. These rules keep every line a lesson shows 
 - **The project is in the reader's language:** identifiers, routes (`/productos`), data, messages and comments. Environment variables keep their usual English names (`PORT`, `LOG_LEVEL`, `ADMIN_TOKEN`), because hosting platforms read them by those names.
 - **Short blocks, explained piece by piece:** 5 to 20 lines per block, and after it, what each new piece does, like the commands of Phase 1 («Palabra a palabra»). A longer file is shown in regions.
 - **Running it:** the server's own output and the `curl` against it go in `<TryIt>` blocks, captured from a real run (Node 26 in Docker for the outputs; `node:26` image). Say which Node version, and that the reader's numbers (times, ids, dates) may differ.
-- **Install exact versions** (`npm install hono@4.13.13`): the steps' `.npmrc` waits 7 days for new versions (`min-release-age=7`), runs no install scripts and saves exact versions. The first lesson that installs a package explains why.
+- **Install exact versions** (`npm install hono@4.13.18`): the steps' `.npmrc` waits 7 days for new versions (`min-release-age=7`), runs no install scripts and saves exact versions. The first lesson that installs a package explains why.
 - **No «Y si programas:»** in the phases that teach code (from Phase 3): programming is the subject.
 
 ## Translation
