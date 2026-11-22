@@ -74,7 +74,7 @@ A public, bilingual (Spanish and English) website with a backend course organise
 
 ## Commands
 
-From the repo root. Node 22 (`.nvmrc`) and pnpm, with the version pinned in `packageManager` (`package.json`).
+From the repo root. Node 22 (`.nvmrc`; Astro 7.4 needs 22.23.4 or newer, so an older Node 22 stops `pnpm dev` and `pnpm build`: `nvm install 22`) and pnpm, with the version pinned in `packageManager` (`package.json`).
 
 ```sh
 pnpm install                 # dependencies for the whole workspace

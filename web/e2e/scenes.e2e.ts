@@ -368,8 +368,9 @@ for (const path of withScenes) {
       test.slow();
       await page.setViewportSize(size);
       await watchShifts(page);
-      // Eight times faster (boot.ts, testRate): every scene plays to its end in a few seconds.
-      await page.goto(`${path}?scene-rate=8`);
+      // Sixteen times faster (boot.ts, testRate): every scene plays to its end in one or two seconds,
+      // and a lesson of fourteen scenes is read in about 20 (it was 36 at 8, 2026-11-22).
+      await page.goto(`${path}?scene-rate=16`);
       await scenesReady(page);
       const ids = await cueIds(page);
       for (const [i, id] of ids.entries()) {
