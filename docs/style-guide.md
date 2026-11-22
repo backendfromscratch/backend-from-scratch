@@ -268,6 +268,16 @@ A scene lesson draws what the text explains next to it: as the reader scrolls, t
   - `<Scene end />` before the parts with no scene (in the pilot, «Ya lo has visto»);
   - the text is not rewritten for the scenes, except to give a part its own heading when it needs its own scene.
 - **The choreography:** `web/src/scenes/lessons/<translationKey>.ts`, one module for both languages, with every visible string as `{ es, en }`. Each scene has its `id`, its `view`, its colour (`kind`: `dns`, `tcp`, `tls`, `http` or `muted`), the `chip` and `title` of the scene bar, the persistent state at its `start` and `end` (so any scene can be the first one seen), and `play(d)`, which uses the director (`d.caption`, `d.fly`, `d.note`, `d.show`…). Next to it, `<translationKey>.astro` is its client entry: a `<script>` that imports the module and calls `boot(lesson)`, copied from any other lesson's (a content test checks that it exists), so the page downloads only its own lesson's module.
+- **Colours (`kind`):** the kinds are named after protocols, and Phase 0 uses them that way, but since Phase 11 they say what a scene is about:
+
+  | Kind | What it marks |
+  |---|---|
+  | `http` | HTTP messages between the browser, the server and other services (the default) |
+  | `tls` | secrets and permissions: keys, sessions, roles, an authorization check, a budget |
+  | `tcp` | what the server runs itself: its jobs, its tools, checks that pass |
+  | `dns` | what is counted or measured: tokens, cost, vectors, a search |
+  | `muted` | what is dropped, refused or not paid; the problem and analogy scenes |
+
 - **Pace:** a beginner follows it at normal speed. The engine keeps each caption up at least `800 + 240 × words` ms; a caption is one sentence of about a dozen words, and a scene lasts 10 to 25 seconds.
 - **Nothing on the page moves (CLS):**
   - an actor never changes size: what appears inside it fades in on room it already had (`d.show` and the class `is-on`), or is absolutely positioned;
@@ -276,7 +286,9 @@ A scene lesson draws what the text explains next to it: as the reader scrolls, t
   - a view is a grid in the world's CSS, on `.scene-layout`, with versions for narrow stages (620 and 430 px wide) and short ones (360 px tall, a phone) where it does not fit.
 - **A part that only one view needs is an actor of its own**, shown in that view (a router's NAT table, a server's sockets): inside another actor it keeps its room in every view, and makes them all smaller.
 - **An actor's name is global:** every world's CSS is loaded on every scene lesson, so `[data-actor='server'] { grid-area: srv; }` reaches every world with a `server`. Reuse a name only with the same rule (`web/src/scenes/worlds/actors.test.ts` checks it), or give the actor a name of its own. **A view's name is global too** (`.scene-stage[data-view='pair'] .scene-layout` lays out every world's `pair`): no two worlds may share one, and the same test checks it. **A narrow or short stage's override goes after the rule it overrides:** with the same specificity the later rule wins, so a `@container` block placed before the base rule never applies; the same test checks it.
-- **Look at every view on a phone** (390 × 844 and 360 × 640): the camera shrinks a view that does not fit, so its smallest type should stay around 9 px (8 px at worst on the small phone). A view under that gets a composition with fewer columns for narrow stages.
+- **Look at every view on a phone** (390 × 844 and 360 × 640): the camera shrinks a view that does not fit, so its smallest type should stay around 9 px (8 px at worst on the small phone). A view under that gets a composition with fewer columns for narrow stages. Plan it before drawing: on 360 × 640 a view fits in about 27em wide by 15.5em tall (the board's em) before its smallest text falls under 8 px; on 390 × 844 the width binds first.
+- **On a short stage, leave an actor out** rather than shrink the whole view: an actor the scene can do without on a phone gets `display: none` in the view's 360 px-tall query, and the module sends its messages from the nearest actor that stays.
+- **Worlds shared by several lessons:** a lesson may draw actors from two or three worlds (Phase 11 uses `assistant`'s chat, shop and model in six lessons). A view may list another world's actors, and its layout lives in the world that defines the view; a world with state prefixes its keys (`ai…`, `vx…`, `op…`) so the lesson can merge the states into one. A part only one lesson needs is better in a world of its own (`rag`, `ops`) than growing a shared one.
 - **Worlds:** the actors are HTML boxes in the world's `.astro`, with SVG only for shapes (people, a router, buildings); their labels are in the world's `strings.ts` (`es` and `en` of the same type); colours come only from `--ide-*` tokens, the scenery ones too (`--ide-skin-*`, `--ide-hair-*`, `--ide-wood`…).
 - **Tests:** a world's state and routes have unit tests; `web/e2e/scenes.e2e.ts` reads every scene lesson of the build from top to bottom on a computer and a phone and fails above a CLS of 0.01; the pilot also checks the controls, the line between scene and text and the fold on a phone.
 
