@@ -497,10 +497,12 @@ test('a repeated notification arrives with the same X-Event-Id', { skip: noRedis
     // BullMQ no longer remembers the job (the last 1000 done are gone, say), and the event is
     // relayed again: the company receives the notification twice, with the same X-Event-Id, and
     // by it knows it is the same one.
-    const done = (await queue.getJobs(['completed'])).find(
-      (j) => j.data.type === 'payment-notice',
-    )!;
-    await waitFor(async () => (await done.getState()) === 'completed', 5000, 'done');
+    // The company gets the notification before BullMQ marks the job as done (it marks it when the
+    // 204 comes back): wait until it is among the done ones.
+    const noticeJob = async () =>
+      (await queue.getJobs(['completed'])).find((j) => j.data.type === 'payment-notice');
+    await waitFor(async () => (await noticeJob()) !== undefined, 5000, 'done');
+    const done = (await noticeJob())!;
     await done.remove();
     await pool.query('UPDATE outbox_events SET sent_at = NULL WHERE id = $1', [notice.id]);
     assert.equal(await relay(50, toTestQueue), 1);

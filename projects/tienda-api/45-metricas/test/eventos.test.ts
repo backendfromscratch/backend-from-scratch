@@ -505,8 +505,12 @@ test('un aviso repetido llega con el mismo X-Id-Evento', { skip: sinRedis }, asy
     // BullMQ ya no recuerda el trabajo (los 1000 últimos hechos se han ido, por ejemplo), y el
     // evento se reparte otra vez: la empresa recibe el aviso dos veces, con el mismo X-Id-Evento,
     // y por él sabe que es el mismo.
-    const hecho = (await cola.getJobs(['completed'])).find((t) => t.data.tipo === 'aviso-de-pago')!;
-    await esperar(async () => (await hecho.getState()) === 'completed', 5000, 'hecho');
+    // La empresa recibe el aviso antes de que BullMQ apunte el trabajo como hecho (lo apunta al
+    // volver el 204): se espera a que esté entre los hechos.
+    const hechoDelAviso = async () =>
+      (await cola.getJobs(['completed'])).find((t) => t.data.tipo === 'aviso-de-pago');
+    await esperar(async () => (await hechoDelAviso()) !== undefined, 5000, 'hecho');
+    const hecho = (await hechoDelAviso())!;
     await hecho.remove();
     await pool.query('UPDATE eventos_salientes SET enviado_en = NULL WHERE id = $1', [aviso.id]);
     assert.equal(await repartir(50, aLaColaDeTests), 1);
