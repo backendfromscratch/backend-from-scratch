@@ -239,7 +239,11 @@ test('npm run modelo-falso arranca con el escenario que se le pide y contesta si
         return true;
       });
     }
-    assert.equal(salida.match(/← 429 rate_limit_error, retry-after: 3/g)?.length, 2);
+    // La línea de cada petición llega por la salida del proceso, y la respuesta, por HTTP: son dos
+    // caminos, y la respuesta puede llegar antes. Se espera a la segunda línea (2 s como mucho).
+    const lineas = () => salida.match(/← 429 rate_limit_error, retry-after: 3/g)?.length ?? 0;
+    for (let ms = 0; lineas() < 2 && ms < 2000; ms += 20) await dormir(20);
+    assert.equal(lineas(), 2);
   } finally {
     proceso.kill('SIGTERM');
   }

@@ -234,7 +234,11 @@ test('npm run fake-model starts with the scenario it is asked for and always ans
         return true;
       });
     }
-    assert.equal(output.match(/← 429 rate_limit_error, retry-after: 3/g)?.length, 2);
+    // Each request's line comes through the process's output, and the answer over HTTP: two paths,
+    // and the answer can arrive first. Wait for the second line (2 s at most).
+    const lines = () => output.match(/← 429 rate_limit_error, retry-after: 3/g)?.length ?? 0;
+    for (let ms = 0; lines() < 2 && ms < 2000; ms += 20) await sleep(20);
+    assert.equal(lines(), 2);
   } finally {
     child.kill('SIGTERM');
   }
