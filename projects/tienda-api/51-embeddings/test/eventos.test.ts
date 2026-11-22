@@ -433,7 +433,13 @@ test('si la API se cae después de pagar, el correo llega igual', { skip: sinRed
       'el correo, hecho',
     );
     assert.equal(await (await cola.getJob(`correo-${id}`))!.getState(), 'completed');
-    assert.ok((await salientes())[0]!.enviado_en instanceof Date);
+    // El repartidor apunta la fila como enviada después de poner el trabajo en la cola (al menos
+    // una vez), y el trabajo puede acabar antes de ese COMMIT: se espera a la marca.
+    await esperar(
+      async () => (await salientes())[0]!.enviado_en instanceof Date,
+      5000,
+      'la fila, marcada como enviada',
+    );
     assert.match(trabajador.salida(), new RegExp(`"pedidoId":${id}[,}].*sin SMTP_URL`));
     // Y se apaga bien: el repartidor para, como el trabajador.
     trabajador.proceso.kill('SIGTERM');

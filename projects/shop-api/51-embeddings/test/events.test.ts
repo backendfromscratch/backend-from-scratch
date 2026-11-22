@@ -421,7 +421,13 @@ test(
         'the email, done',
       );
       assert.equal(await (await queue.getJob(`email-${id}`))!.getState(), 'completed');
-      assert.ok((await outbox())[0]!.sent_at instanceof Date);
+      // The relayer marks the row as sent after putting the job in the queue (at least once),
+      // and the job can finish before that COMMIT: wait for the mark.
+      await waitFor(
+        async () => (await outbox())[0]!.sent_at instanceof Date,
+        5000,
+        'the row, marked as sent',
+      );
       assert.match(worker.output(), new RegExp(`"orderId":${id}[,}].*no SMTP_URL`));
       // And it shuts down properly: the relayer stops, like the worker.
       worker.child.kill('SIGTERM');
