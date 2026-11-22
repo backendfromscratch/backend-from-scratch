@@ -183,7 +183,9 @@ export const vectors: World<VectorsState> = {
     root
       .querySelectorAll('.vx-room.is-on, .vx-dot.is-on')
       .forEach((room) => room.classList.remove('is-on'));
-    root.querySelectorAll('.is-lit').forEach((part) => part.classList.remove('is-lit'));
+    root
+      .querySelectorAll('.is-lit, .is-scan')
+      .forEach((part) => part.classList.remove('is-lit', 'is-scan'));
     root
       .querySelectorAll('.vx-node')
       .forEach((node) => node.classList.remove('is-path', 'is-best', 'is-missed'));
@@ -191,6 +193,8 @@ export const vectors: World<VectorsState> = {
     root.querySelector('#vx-lines')?.replaceChildren();
     const arrow = root.querySelector<HTMLElement>('#vx-arrow');
     if (arrow) arrow.style.transform = arrowAngle(ARROW_REST);
+    // The model's download bar: its CSS fills it when the volume is full (apply), not an inline transform.
+    root.querySelector<HTMLElement>('#vx-fill')?.style.removeProperty('transform');
   },
 
   apply(root, s, lang) {

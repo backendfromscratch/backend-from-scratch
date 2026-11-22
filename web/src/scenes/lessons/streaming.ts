@@ -160,12 +160,15 @@ const lesson: LessonModule<AssistantState> = {
         await ask(d);
         await relay(d, 6, (i) => {
           d.set({ aiAnswer: grown(i, 6) });
+          // Not awaited, so the pieces keep coming: leaving the scene cancels it, and that is no error.
           if (i === 0)
-            void d.note(
-              d.pt('chat', 't'),
-              { es: 'primer texto', en: 'first text' },
-              { where: 'above', look: 'tag', kind: 'http', ttl: 1600 },
-            );
+            void d
+              .note(
+                d.pt('chat', 't'),
+                { es: 'primer texto', en: 'first text' },
+                { where: 'above', look: 'tag', kind: 'http', ttl: 1600 },
+              )
+              .catch(() => {});
         });
         await d.caption({
           es: 'Con streaming, manda cada trozo en cuanto llega',
@@ -319,8 +322,8 @@ const lesson: LessonModule<AssistantState> = {
           shop(d).events.text,
         );
         await d.caption({
-          es: 'Solo pasan los trozos de texto, como eventos texto',
-          en: 'Only the pieces of text go through, as text events',
+          es: 'Solo pasan los trozos de texto, como eventos «texto»',
+          en: 'Only the pieces of text go through, as “text” events',
         });
         await d.fly(route(d, 'model', 'api', RES), 'message_delta', 'http', {
           small: true,
@@ -328,8 +331,8 @@ const lesson: LessonModule<AssistantState> = {
         });
         await d.fly(route(d, 'api', 'chat', RES), shop(d).events.end, 'tcp', { arrive: 'chat' });
         await d.caption({
-          es: 'Los tokens y por qué ha parado llegan juntos al final, en fin',
-          en: 'The tokens and why it stopped arrive together at the end, in end',
+          es: 'Los tokens y por qué ha parado llegan juntos al final, en «fin»',
+          en: 'The tokens and why it stopped arrive together at the end, in “end”',
         });
         await d.caption({
           es: 'Si cambias de modelo o de proveedor, cambias esta función, y el frontend ni se entera',
@@ -373,12 +376,12 @@ const lesson: LessonModule<AssistantState> = {
         await d.fly(route(d, 'api', 'chat', RES), 'event: error', 'http', { arrive: 'chat' });
         d.set({ aiNote: 'error' });
         await d.caption({
-          es: 'Si falla después, el 200 ya ha salido: llega un evento error, y el flujo se cierra',
-          en: 'If it fails after, the 200 has already gone: an error event arrives, and the stream closes',
+          es: 'Si falla después, el 200 ya ha salido: llega un evento «error», y el flujo se cierra',
+          en: 'If it fails after, the 200 has already gone: an “error” event arrives, and the stream closes',
         });
         await d.caption({
-          es: 'Sin fin, y con parte del texto ya en la pantalla de Carmen',
-          en: 'With no end, and part of the text already on Carmen’s screen',
+          es: 'Sin «fin», y con parte del texto ya en la pantalla de Carmen',
+          en: 'With no “end”, and part of the text already on Carmen’s screen',
         });
       },
     },
@@ -477,8 +480,8 @@ const lesson: LessonModule<AssistantState> = {
         await event(3, SEGMENTS);
         await d.show('#ai-ev-4');
         await d.caption({
-          es: `Con ${t.events.text}, añade el trozo; con ${t.events.end}, termina`,
-          en: `With ${t.events.text}, it adds the piece; with ${t.events.end}, it finishes`,
+          es: `Con «${t.events.text}», añade el trozo; con «${t.events.end}», termina`,
+          en: `With “${t.events.text}”, it adds the piece; with “${t.events.end}”, it finishes`,
         });
         await d.caption({
           es: 'Reconectar no conviene: volver a pedir es volver a preguntar, y a pagar',
@@ -585,8 +588,8 @@ const lesson: LessonModule<AssistantState> = {
         );
         mark(d, '#ai-run-2', true);
         await d.caption({
-          es: 'La tienda: un evento texto por trozo y, al final, fin; ni rastro de los de la API',
-          en: 'The shop: a text event per piece and, at the end, end; no trace of the API’s',
+          es: 'La tienda: un evento «texto» por trozo y, al final, «fin»; ni rastro de los de la API',
+          en: 'The shop: a “text” event per piece and, at the end, “end”; no trace of the API’s',
         });
         await d.type('#ai-cmd-3', 'curl -N --max-time 2 …');
         await d.fly(route(d, 'shell', 'api', REQ), shop(d).route, 'http', { arrive: 'api' });

@@ -147,13 +147,13 @@ export const strings: Record<Locale, VectorsStrings> = {
     pg: { products: 'productos', outbox: 'outbox', event: 'vector-de-producto' },
     queue: { title: 'cola', sub: 'repartidor y cola', job: 'vector-de-producto' },
     memory: {
-      title: 'docker stats · Docker en 2 GB',
+      title: 'docker stats',
       rows: [
         ['API', 193, 492],
         ['trabajador', 152, 532],
       ],
       unit: 'MiB',
-      killed: 'otro proceso: el sistema mata la API (137)',
+      killed: 'Docker en 2 GB: el sistema mata la API (137)',
     },
     words: {
       head: ['', 'ILIKE', 'texto completo', 'embeddings'],
@@ -231,13 +231,13 @@ export const strings: Record<Locale, VectorsStrings> = {
     pg: { products: 'products', outbox: 'outbox', event: 'product-vector' },
     queue: { title: 'queue', sub: 'relayer and queue', job: 'product-vector' },
     memory: {
-      title: 'docker stats · Docker at 2 GB',
+      title: 'docker stats',
       rows: [
         ['API', 188, 566],
         ['worker', 151, 532],
       ],
       unit: 'MiB',
-      killed: 'one more process: the system kills the API (137)',
+      killed: 'Docker at 2 GB: the system kills the API (137)',
     },
     words: {
       head: ['', 'ILIKE', 'full text', 'embeddings'],

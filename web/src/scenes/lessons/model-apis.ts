@@ -428,8 +428,8 @@ const lesson: LessonModule<AssistantState> = {
         await d.fly(route(d, 'api', 'model', REQ), '500 tokens', 'dns', { arrive: 'model' });
         meterRow(d, 1);
         await d.caption({
-          es: '500 tokens de entrada, entre instrucciones y conversación, a 0,10 $ el millón',
-          en: '500 input tokens, instructions and conversation, at $0.10 per million',
+          es: 'Imagina 500 tokens de entrada, entre instrucciones y conversación, a 0,10 $ el millón',
+          en: 'Imagine 500 input tokens, instructions and conversation, at $0.10 per million',
         });
         await d.fly(route(d, 'model', 'api', RES), '150 tokens', 'dns', { arrive: 'api' });
         meterRow(d, 2);
@@ -521,7 +521,7 @@ const lesson: LessonModule<AssistantState> = {
         await d.fly(route(d, 'model', 'api', RES), '529', 'muted', { arrive: 'api' });
         await d.caption({
           es: 'Repite solo lo pasajero: un 429, un 529, otro 5xx o un corte de red',
-          en: 'It only repeats what’s passing: a 429, a 529, another 5xx or a network cut',
+          en: 'It only repeats what’s temporary: a 429, a 529, another 5xx or a network cut',
         });
         await waits();
         await attempt(2);

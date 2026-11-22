@@ -598,7 +598,7 @@ const lesson: LessonModule<AssistantState> = {
         });
         await d.caption({
           es: 'La defensa: dar por hecho que al modelo lo pueden convencer, y que no sirva de nada',
-          en: 'The defence: assume the model can be talked into it, and make that useless',
+          en: 'The defense: assume the model can be talked into it, and make that useless',
         });
       },
     },
