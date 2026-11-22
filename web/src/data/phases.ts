@@ -128,7 +128,8 @@ export const phases: Phase[] = [
   },
   {
     number: 11,
-    status: 'coming-soon',
+    status: 'available',
+    lessonCount: 7,
     title: { es: 'Backend para IA y agentes', en: 'Backend for AI and agents' },
     summary: {
       es: 'APIs de modelos desde el servidor, streaming, tool use, MCP, búsqueda semántica con embeddings y RAG, e IA en producción.',
