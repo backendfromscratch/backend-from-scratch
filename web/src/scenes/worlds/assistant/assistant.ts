@@ -33,6 +33,8 @@ export interface AssistantState {
   aiRedisDown: boolean;
   /** The orders' database not answering (lesson 3). */
   aiOrdersDown: boolean;
+  /** The shop's checks include the daily budget (lesson 7). */
+  aiBudget: boolean;
 }
 
 export const INITIAL: AssistantState = {
@@ -44,6 +46,7 @@ export const INITIAL: AssistantState = {
   aiCount: 0,
   aiRedisDown: false,
   aiOrdersDown: false,
+  aiBudget: false,
 };
 
 /** The limit of the shop's limiter: 20 questions per customer every 10 minutes. */
@@ -245,6 +248,7 @@ export const assistant: World<AssistantState> = {
       ?.style.setProperty('--fill', String(Math.min(1, s.aiCount / LIMIT)));
     root.querySelector('#ai-redis')?.classList.toggle('is-down', s.aiRedisDown);
     root.querySelector('#ai-orders')?.classList.toggle('is-down', s.aiOrdersDown);
+    root.querySelector('#ai-gate-budget')?.classList.toggle('is-on', s.aiBudget);
   },
 
   wires(d) {

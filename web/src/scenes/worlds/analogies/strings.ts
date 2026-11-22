@@ -29,6 +29,17 @@ export interface AnalogiesStrings {
   /** Lesson 5: a supermarket's aisles (two of them named by the text) and its entrance. */
   aisles: readonly [string, string];
   entrance: string;
+  /** Lesson 6: an open-book exam: the notes and their chapters, and the exam with two answers. */
+  notes: string;
+  chapters: readonly [string, string, string, string];
+  exam: string;
+  answers: readonly [string, string];
+  /** Lesson 7: a cafeteria paid with a card with a daily balance, and its kitchen. */
+  till: string;
+  dish: string;
+  balance: string;
+  kitchen: string;
+  broth: string;
 }
 
 export const strings: Record<Locale, AnalogiesStrings> = {
@@ -52,6 +63,15 @@ export const strings: Record<Locale, AnalogiesStrings> = {
     devices: ['tu móvil', 'el de un amigo', 'un portátil'],
     aisles: ['ropa de invierno', 'playa'],
     entrance: 'entrada',
+    notes: 'apuntes',
+    chapters: ['tema 1', 'tema 2', 'tema 3', 'tema 4'],
+    exam: 'examen',
+    answers: ['según el tema 4…', 'no lo sé'],
+    till: 'caja',
+    dish: 'plato',
+    balance: 'saldo de hoy',
+    kitchen: 'cocina',
+    broth: 'caldo',
   },
   en: {
     counter: 'counter',
@@ -73,5 +93,14 @@ export const strings: Record<Locale, AnalogiesStrings> = {
     devices: ['your phone', 'a friend’s', 'a laptop'],
     aisles: ['winter clothes', 'beach'],
     entrance: 'entrance',
+    notes: 'notes',
+    chapters: ['chapter 1', 'chapter 2', 'chapter 3', 'chapter 4'],
+    exam: 'exam',
+    answers: ['according to chapter 4…', 'I don’t know'],
+    till: 'register',
+    dish: 'dish',
+    balance: 'today’s balance',
+    kitchen: 'kitchen',
+    broth: 'broth',
   },
 };

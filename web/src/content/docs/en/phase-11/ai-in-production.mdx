@@ -13,6 +13,7 @@ lesson:
     - "Write evals that check what an assistant does, not its words, and explain why they don’t go in CI and the tests use a fake model."
     - "Follow a call to the model in the log, the metrics and the traces, without taking the customer’s conversation out of the shop."
   prerequisites: [rag, queues, metrics]
+scenes: true
 ---
 
 import Term from '~/components/Term.astro';
@@ -20,14 +21,19 @@ import TryIt from '~/components/TryIt.astro';
 import Analogy from '~/components/Analogy.astro';
 import ProjectCode from '~/components/ProjectCode.astro';
 import Quiz from '~/components/Quiz.astro';
+import Scene from '~/components/Scene.astro';
 import QuizQuestion from '~/components/QuizQuestion.astro';
 import QuizOption from '~/components/QuizOption.astro';
+
+<Scene id="problem" />
 
 ## The problem
 
 Imagine the assistant has been running for a month. The Console's bill comes out at three times what you expected, and you don't know why: more customers, longer conversations, a program asking all night? A customer writes that it “takes forever to start answering.” And yesterday you changed a sentence in the instructions: does it answer better or worse?
 
 In the rest of the shop, a request costs almost nothing and always answers the same. **A question to the model has a price, takes seconds and never answers the same way twice.** This lesson gives the shop what it needs: knowing how much it costs, capping it, measuring the wait and checking that it works.
+
+<Scene id="analogy" />
 
 ## The analogy
 
@@ -46,6 +52,8 @@ In the kitchen, the broth is made once for all the morning's soups: each dish co
 </div>
 
 </Analogy>
+
+<Scene id="bill" />
 
 ## How it really works
 
@@ -68,6 +76,8 @@ For example, reading 2,000 tokens without cache and writing 150: (2,000 × 0.10 
 
 **One question can be several calls**: with a tool, the second round reads everything from the first one again, plus what the tool returned ([lesson 3](/en/phase-11/tool-use-function-calling/#the-model-runs-nothing-it-asks)). A greeting is one short call; twenty messages with two searches, three long ones. Counting questions doesn't tell you what each customer spends.
 
+<Scene id="brakes" />
+
 ### Two brakes: questions and tokens
 
 `POST /v2/assistant` has two brakes, and both are checked **before** calling the model:
@@ -78,6 +88,8 @@ For example, reading 2,000 tokens without cache and writing 150: (2,000 × 0.10 
 | Budget | Tokens per customer per day (UTC) | 100,000 (`DAILY_TOKEN_BUDGET`) | `429` `budget-exhausted`, with `Retry-After` until 00:00 UTC |
 
 The first one, from [lesson 1](/en/phase-11/ai-model-apis/#who-can-ask-and-how-many-times), brakes whoever asks very fast; the second, what the shop really pays for: tokens.
+
+<Scene id="budget" />
 
 ### The budget: checked before, charged after
 
@@ -93,9 +105,13 @@ Each customer has a count per day in Redis, `budget:<customer>:<day>`, that only
 
 100,000 tokens are about 20 questions, as an estimate, and 5 cents of a dollar a day at most. The two copies of the API from [Phase 9](/en/phase-9/horizontal-scaling/) add to the same count. The metrics don't carry the customer: that would be one series per customer, without end (Phase 10's [cardinality](/en/phase-10/prometheus-grafana-metrics/#cardinality-every-label-multiplies)).
 
+<Scene id="closed" />
+
 ### If Redis doesn't answer, the budget closes
 
 Each check waits 200 ms for Redis at most. If it doesn't answer, `503` `budget-unchecked`, with `Retry-After: 5`: **it closes**, like the sign-in limits from [Phase 10](/en/phase-10/health-checks-alerts/#failing-well-the-three-fixes-phase-9-left), because uncounted questions are exactly the spending it exists to brake. If Redis fails when charging, after the call, the answer arrives anyway, already paid for, and the log warns about the tokens that weren't recorded.
+
+<Scene id="cache" />
 
 ### Prompt caching: pay once for what's always the same
 
@@ -109,6 +125,8 @@ Every question starts the same way: the tools and the instructions. With <Term i
 - **What breaks it without warning:** any change before the mark, like the time in the instructions or the tools in a different order.
 
 Before the mark there are about 1,600 tokens, estimated without calling the API: above the minimum. Whether the cache actually hits, we haven't checked: look at your `usage`, in “Try it.” The saving is less than two ten-thousandths of a dollar per call; with a 50,000-token prompt or an expensive model, it changes the bill.
+
+<Scene id="ttft" />
 
 ### The time to first token
 
@@ -124,6 +142,8 @@ The <Term id="time-to-first-token">time to first token</Term> is moved by:
 
 [Lesson 2](/en/phase-11/streaming-ai-responses-sse/)'s streaming makes the answer start sooner, not finish sooner: that's why this number is watched.
 
+<Scene id="queue" />
+
 ### Long work, to the queue
 
 Ana, the owner, wants the model to write a product's description, and nobody is waiting in front of the screen. The route records the request and answers right away, `202`, without calling the model:
@@ -135,6 +155,8 @@ The <Term id="worker">worker</Term> writes it with [BullMQ's retries](/en/phase-
 <ProjectCode file="shop-api/53-production/src/assistant/description.ts" region="check-description" />
 
 **What a model writes is one more input**, and it goes through the same schema as a description written by hand. If it isn't valid, the job fails and the queue repeats it; if the model refuses, it doesn't, because repeating wouldn't fix it.
+
+<Scene id="evals" />
 
 ### Evals: tests for what doesn't always answer the same
 
@@ -159,6 +181,8 @@ Nearly all the graders are code: exact, always the same and free. “Says it doe
 
 `npm run evals` runs the cases against the real model, inside the process, to see which tools it asks for, and ends with a table: each case, whether it passes, its tokens and its cost.
 
+<Scene id="judge" />
+
 ### The model as judge, and its limits
 
 Whether a gift recommendation makes sense isn't something code can look at. For that, **another model reads the question, the answer and a short rubric**, and says whether the answer meets it, with structured outputs (the API guarantees a JSON with `meets` and `reason`). It's a <Term id="llm-as-judge">model as judge</Term> (*LLM-as-a-judge*):
@@ -166,6 +190,8 @@ Whether a gift recommendation makes sense isn't something code can look at. For 
 <ProjectCode file="shop-api/53-production/evals/cases.ts" region="with-judge" />
 
 It has its limits: **it makes mistakes too**, and not always the same ones; here **it's the same model as the assistant**, which tends to approve answers like its own; and **it costs tokens**. That's why a single case uses it, with a rubric that can be checked, and a failure from the judge is looked at by hand.
+
+<Scene id="ci" />
 
 ### Why the evals don't go in CI
 
@@ -177,6 +203,8 @@ What goes in CI is the tests, with the fake model from [lesson 1](/en/phase-11/a
 
 **Free, keyless, always the same and able to fail on purpose**, with a `429` or a cut. `test/evals.test.ts` runs the twelve cases with it, with good answers that must pass and bad ones that must fail: that way the graders keep working without a key. That the fake model doesn't drift from the real API is watched by `test/fake-model.test.ts`, with the SDK itself, and by the evals.
 
+<Scene id="trace" />
+
 ### The trace and the dashboard: the span the SDK makes
 
 In Jaeger, each call to the model is an `anthropic.messages.create` <Term id="span">span</Term> inside the request's. **The shop doesn't create it; the SDK does**, with the trace provider from [Phase 10](/en/phase-10/opentelemetry-tracing/):
@@ -187,6 +215,8 @@ In Jaeger, each call to the model is an `anthropic.messages.create` <Term id="sp
 - **Without the conversation** (`contentMode: 'metadata_only'`): [a trace doesn't carry what the log doesn't carry](/en/phase-10/opentelemetry-tracing/#what-never-goes-into-a-span), written in the code so an environment variable can't change it.
 
 The new metrics, `shop_ai_tokens_total` (by `model` and `kind`), `shop_ai_cost_dollars_total` and `shop_ai_time_to_first_token_seconds`, draw two charts on Grafana's “The shop” dashboard: **the AI's cost in the last hour** and the p50 and p95 of the **time to first token**.
+
+<Scene id="try" />
 
 ## Try it
 
@@ -372,6 +402,8 @@ rm carmen.txt
 ### On your server
 
 [Phase 8](/en/phase-8/ci-cd-github-actions/)'s timer deploys the step as always. With your `ANTHROPIC_API_KEY` in the server's `.env`, each customer has their budget in the Redis that `api-a` and `api-b` share (to change it, `DAILY_TOKEN_BUDGET`), and the Console's spend limit keeps braking the whole account. The evals run on your computer, before deploying.
+
+<Scene end />
 
 ## You have already seen it
 

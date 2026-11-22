@@ -186,15 +186,25 @@ src/scenes/                     scene lessons (docs/specs/2026-11-20-visual-less
                                 and each language's own, with vectors.test.ts keeping the text's order of distances, two
                                 arrows, the models volume, the worker, the products table, HNSW's floors, PostgreSQL with its
                                 outbox, the queue, docker stats and the table of searches: «Embeddings», which also uses
-                                assistant/'s chat, shop and terminal), analogies/ (each Phase 11 lesson's analogy: the
+                                assistant/'s chat, shop and terminal), rag/ (the help's returns page as Markdown, the table
+                                of its 16 chunks, a chunk's text, the top-k, the assistant's rules, the search results, the
+                                JSON answer with its sources and the evals of hallucinations, with rag.test.ts keeping the
+                                text's searches, threshold and sources: «RAG», which also uses assistant/'s chat, shop, model
+                                and terminal and vectors/' worker), ops/ (the four kinds of tokens and their prices,
+                                Carmen's daily budget in Redis, the request's parts and the API's prompt cache, the histogram
+                                of the time to first token, Ana, the twelve evals and their judge, and the trace with its
+                                span's attributes, with ops.test.ts adding up the text's example: «IA en producción», which
+                                also uses assistant/'s chat, shop, checks, Redis, model, fake model and terminal and vectors/'
+                                worker), analogies/ (each Phase 11 lesson's analogy: the
                                 counter and the phone translation service of lesson 1, the interpreters of lesson 2, the call
-                                center of lesson 3, the chargers and USB-C of lesson 4, the supermarket of lesson 5) and
-                                people.ts; actors.test.ts checks that an actor
+                                center of lesson 3, the chargers and USB-C of lesson 4, the supermarket of lesson 5, the
+                                open-book exam of lesson 6, the cafeteria and its kitchen of lesson 7) and people.ts; actors.test.ts checks that an actor
                                 name shared by two worlds gets the same rule in both, and that no two worlds share a view name
                                 (every world's CSS is global)
   lessons/                      one choreography per scene lesson, named by its translationKey (from-url-to-page.ts,
                                 what-is-backend.ts, client-server.ts, protocols.ts, tcp-ip-model.ts, ip-ports-sockets.ts,
-                                tcp-vs-udp.ts, dns.ts, tls-https.ts, model-apis.ts, streaming.ts, tool-use.ts, mcp.ts, embeddings.ts), each with its client entry (<key>.astro: a script that imports it and starts
+                                tcp-vs-udp.ts, dns.ts, tls-https.ts, model-apis.ts, streaming.ts, tool-use.ts, mcp.ts, embeddings.ts,
+                                rag.ts, ai-in-production.ts), each with its client entry (<key>.astro: a script that imports it and starts
                                 the engine, rendered by ScenePanel, so a page bundles only its own lesson)
 src/styles/theme.css            "code editor" theme: the --ide-* tokens, the single source of colour (tokens.test.ts checks contrast)
 src/styles/diagrams.css         styles for the diagrams generated from mermaid blocks

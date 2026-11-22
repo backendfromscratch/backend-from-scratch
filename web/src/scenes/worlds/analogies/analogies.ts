@@ -3,7 +3,7 @@
  * and the phone translation service it pays with its card. Lesson 2: a talk with simultaneous and
  * consecutive interpreting, and a listener who leaves. Lesson 3: a call center, where the warehouse
  * checks who is on the line. Lesson 4: phones and a laptop whose chargers fit only their own, until
- * USB-C. Lesson 5: a supermarket arranged by what things are. Nothing persists from one scene to the
+ * USB-C. Lesson 5: a supermarket arranged by what things are. Lesson 6: an open-book exam. Lesson 7: a cafeteria card with a daily balance, and the kitchen's broth. Nothing persists from one scene to the
  * next (like the town of «De la URL a la página»): `reset` puts every tally and sign back. Its markup
  * is Analogies.astro; its labels, strings.ts.
  */
@@ -44,11 +44,28 @@ export const analogies: World<unknown> = {
     switchboard: ['caller', 'operator', 'warehouse'],
     usbc: ['chargers'],
     aisles: ['market'],
+    notes: ['exam'],
+    lunch: ['canteen', 'kitchen'],
   },
-  zoom: { phoneline: 1.6, interpreting: 1.6, switchboard: 1.6, usbc: 2, aisles: 1.8 },
+  zoom: {
+    phoneline: 1.6,
+    interpreting: 1.6,
+    switchboard: 1.6,
+    usbc: 2,
+    aisles: 1.8,
+    notes: 1.8,
+    lunch: 1.7,
+  },
 
   reset(root) {
     root.querySelectorAll('.an-cell, .an-room').forEach((part) => part.classList.remove('is-on'));
+    root
+      .querySelectorAll('.an-tab, .an-q')
+      .forEach((part) => part.classList.remove('is-lit', 'is-scan'));
+    const balance = root.querySelector<HTMLElement>('#an-balance');
+    if (balance) balance.style.transform = '';
+    const till = root.querySelector('#an-till-status');
+    if (till) till.textContent = '';
     root.querySelector('#an-audience')?.classList.remove('is-gone');
     root.querySelector('#an-chargers')?.classList.remove('is-usbc');
     const mode = root.querySelector('#an-mode');
