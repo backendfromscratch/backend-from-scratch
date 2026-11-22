@@ -1,0 +1,2 @@
+ALTER TABLE "claves_api" DROP CONSTRAINT "claves_api_rol_check";--> statement-breakpoint
+ALTER TABLE "claves_api" ADD CONSTRAINT "claves_api_rol_check" CHECK ("claves_api"."rol" IN ('reparto', 'admin', 'catalogo'));

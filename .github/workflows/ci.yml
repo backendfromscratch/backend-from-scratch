@@ -26,8 +26,10 @@ jobs:
   checks:
     name: format, types, tests and build
     runs-on: ubuntu-24.04
-    # 150 pages and their accessibility checks in two themes: more than 10 minutes since Phase 6.
-    timeout-minutes: 20
+    # 150 pages and their accessibility checks in two themes: more than 10 minutes since Phase 6. With
+    # Phase 11 (2026-11-22), the browser tests alone take about 17 minutes on GitHub's runner: its 16
+    # pages, and reading each of its 14 scene lessons to the end on a computer and a phone.
+    timeout-minutes: 30
     steps:
       # Actions are pinned by commit SHA, not by tag: a tag can be moved to malicious code (the
       # tj-actions/changed-files attack, 2025) and a SHA cannot. Dependabot keeps them up to date.
@@ -176,7 +178,7 @@ jobs:
   # pushes to main, manual runs and the weekly run check every step.
   #
   # The steps are split into legs that run in parallel, each on its own runner with its own
-  # PostgreSQL and Redis: one per language and group of phases, 8 in all. A step's time grows with
+  # PostgreSQL and Redis: one per language and group of phases, 10 in all. A step's time grows with
   # the course (each step also runs the tests of the earlier ones), so the late phases weigh most.
   # Measured on the first full run of Phase 10 (PR 49, 2026-10-25), in seconds of install, tests,
   # Docker and production files, tienda-api / shop-api: phases 3 to 6, 306 / 420; 7 and 8, 243 /
@@ -193,20 +195,27 @@ jobs:
       fail-fast: false
       matrix:
         project: [tienda-api, shop-api]
-        # Steps by number: Phase 3 starts at 01, Phase 7 at 32, Phase 9 at 37 and Phase 10 at 42.
+        # Steps by number: Phase 3 starts at 01, Phase 7 at 32, Phase 9 at 37, Phase 10 at 42 and
+        # Phase 11 at 47. From step 51 the steps need pgvector, so the legs from 51 test against the
+        # pgvector image (PostgreSQL 18 with the extension) and the others against plain PostgreSQL.
+        # Phase 11 has two legs: in one it took 23 to 30 minutes (2026-11-22), seven steps with an
+        # image each and, in step 51, the real embedding model.
         phases:
           - { name: phases 3-6, first: 1, last: 31 }
           - { name: phases 7-8, first: 32, last: 36 }
           - { name: phase 9, first: 37, last: 41 }
-          - { name: phase 10+, first: 42, last: 99 }
+          - { name: phase 10, first: 42, last: 46 }
+          - { name: phase 11 to step 50, first: 47, last: 50 }
+          - { name: phase 11 from step 51, first: 51, last: 99, pgvector: true }
     # The slowest leg took under 17 minutes (see above); 30 leaves room.
     timeout-minutes: 30
     # From Phase 5 the steps keep their data in PostgreSQL 18, the version the lessons install, and
     # from Phase 7 the rate limiter's Redis store is tested against Redis 8. Pinned by digest, like
-    # the Actions. Their ports are published on the runner only.
+    # the Actions. Their ports are published on the runner only. The legs from step 51 use the
+    # pgvector image, the one those steps' compose.yaml uses (pgvector 0.8.7 for PostgreSQL 18).
     services:
       postgres:
-        image: postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336 # 18
+        image: ${{ matrix.phases.pgvector && 'pgvector/pgvector:0.8.7-pg18-trixie@sha256:ab49524d18df7200b74ac9a475e1db6297fc1eb57da4c214c63d10ecc4b754fa' || 'postgres:18@sha256:74935e72241653ca55e0414067e6d8763aceb8a810eb51b452253ec3dcfc4336' }}
         env:
           POSTGRES_PASSWORD: postgres
         ports:
@@ -293,14 +302,23 @@ jobs:
       # installs exactly the lockfile, and each step's .npmrc turns off install scripts. The Redis
       # store's tests use database 1 of the Redis service (without the variable they are skipped).
       # The loops read the list on descriptor 3: on standard input, npm or docker could eat the rest
-      # of it and skip steps without a word.
+      # of it and skip steps without a word. In the legs from step 51, the pgvector extension is
+      # created before each step as postgres: the test roles are not superusers (as the reader's are
+      # not), and a step's tests can drop the schema, extension included, when they reset it.
       - name: install, types and tests of every step
         env:
           REDIS_URL_TESTS: redis://127.0.0.1:6379/1
+          PGVECTOR: ${{ matrix.phases.pgvector }}
         run: |
           failed=""
           while IFS= read -r step <&3; do
             echo "::group::$step"
+            if [ "$PGVECTOR" = "true" ]; then
+              for db in tienda_test shop_test; do
+                PGPASSWORD=postgres psql -h 127.0.0.1 -U postgres -d "$db" -v ON_ERROR_STOP=1 -q \
+                  -c "CREATE EXTENSION IF NOT EXISTS vector"
+              done
+            fi
             if ! (cd "$step" && npm ci && { [ "$(npm pkg get scripts.check)" = "{}" ] || npm run check; } && npm test); then
               failed="$failed $step"
             fi
@@ -310,6 +328,32 @@ jobs:
             echo "::error::These steps failed:$failed"
             exit 1
           fi
+
+      # Phase 11: the embedding model the lessons use, for real, in one step of one language
+      # (tienda-api's 51-embeddings, when this leg checks it). `npm test` uses a fake embedder, so
+      # this is the only place the real model runs: it checks that «algo para el frío» ranks warm
+      # clothes first. The model's files (about 135 MB) are cached between runs. Skipped past 25
+      # minutes, like the trace check.
+      - name: cache of the embedding model
+        if: matrix.project == 'tienda-api' && matrix.phases.pgvector
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: projects/tienda-api/51-embeddings/modelos
+          key: embeddings-paraphrase-multilingual-MiniLM-L12-v2-q8-2c4055b12046f11709e9df2c122e59ffbdc2f900
+
+      - name: the real embedding model
+        if: matrix.project == 'tienda-api' && matrix.phases.pgvector
+        run: |
+          if ! grep -qx "projects/tienda-api/51-embeddings/" "$RUNNER_TEMP/steps"; then
+            echo "skipped: this run does not check projects/tienda-api/51-embeddings"
+            exit 0
+          fi
+          elapsed=$(($(date +%s) - $(cat "$RUNNER_TEMP/start")))
+          if [ "$elapsed" -gt 1500 ]; then
+            echo "skipped the real embedding model: the leg has run for $((elapsed / 60)) minutes"
+            exit 0
+          fi
+          cd projects/tienda-api/51-embeddings && npm run probar-embeddings
 
       # From Phase 7: every step with a Dockerfile builds its image, as the lessons do; and the
       # Docker Compose step brings up the whole shop (API, PostgreSQL and Redis; from Phase 9 also the
@@ -330,7 +374,16 @@ jobs:
           while IFS= read -r step <&3; do
             [ -f "$step/Dockerfile" ] || continue
             echo "::group::docker build $step"
-            docker build "$step" || failed="$failed $step"
+            image="check-$(basename "$step")"
+            docker build -t "$image" "$step" || failed="$failed $step"
+            # From step 51 the Dockerfile deletes the parts of Transformers.js's runtime Linux does
+            # not use (the other platforms' binaries, the browser engine): loading it in the built
+            # image checks that nothing it needs went with them.
+            if grep -q '"@huggingface/transformers"' "$step/package.json" &&
+              ! docker run --rm --entrypoint node "$image" --input-type=module \
+                -e "await import('onnxruntime-node'); await import('@huggingface/transformers')"; then
+              failed="$failed $step(transformers)"
+            fi
             echo "::endgroup::"
           done 3< "$RUNNER_TEMP/steps"
           # From Phase 9, a paid order queues an email that a worker sends through Mailpit. The

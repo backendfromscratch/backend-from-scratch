@@ -1,0 +1,593 @@
+---
+translationKey: ai-in-production
+title: "IA en producción: costes, latencia y evals"
+description: "Cuánto cuesta cada pregunta a un modelo de IA y cómo ponerle un tope: presupuesto diario, caché de prompts, tiempo hasta el primer token, colas y evals."
+sidebar:
+  label: Producción
+  order: 7
+lesson:
+  oneLiner: "Llevar un asistente a producción es saber lo que cuesta cada pregunta y ponerle un tope, medir cuánto espera el cliente, mandar lo largo a la cola y comprobar con evals que un cambio no lo empeora. La tienda apunta el coste de cada llamada al modelo, da a cada cliente 100.000 tokens al día y pasa doce casos contra el modelo de verdad cuando cambia algo."
+  objectives:
+    - "Calcular lo que cuesta una pregunta a partir de usage y los precios, y limitar lo que gasta cada cliente con un presupuesto diario que se cierra si falla."
+    - "Explicar qué guarda la caché de prompts, cuándo no guarda nada y qué mueve el tiempo hasta el primer token."
+    - "Escribir evals que comprueben lo que hace un asistente, no sus palabras, y explicar por qué no van en CI y los tests usan un modelo de mentira."
+    - "Seguir una llamada al modelo en el log, las métricas y las trazas, sin sacar de la tienda la conversación del cliente."
+  prerequisites: [rag, queues, metrics]
+scenes: true
+---
+
+import Term from '~/components/Term.astro';
+import TryIt from '~/components/TryIt.astro';
+import Analogy from '~/components/Analogy.astro';
+import ProjectCode from '~/components/ProjectCode.astro';
+import Quiz from '~/components/Quiz.astro';
+import Scene from '~/components/Scene.astro';
+import QuizQuestion from '~/components/QuizQuestion.astro';
+import QuizOption from '~/components/QuizOption.astro';
+
+<Scene id="problem" />
+
+## El problema
+
+Imagina que el asistente lleva un mes en marcha. La factura de la Console sale el triple de lo esperado, y no sabes por qué: ¿más clientes, conversaciones más largas, un programa preguntando toda la noche? Una clienta escribe que «tarda un mundo en empezar a contestar». Y ayer cambiaste una frase de las instrucciones: ¿contesta mejor o peor?
+
+En el resto de la tienda, una petición cuesta casi nada y contesta siempre lo mismo. **Una pregunta al modelo tiene precio, tarda segundos y no contesta dos veces igual.** Esta lección le da a la tienda lo que necesita: saber cuánto cuesta, ponerle un tope, medir la espera y comprobar que funciona.
+
+<Scene id="analogy" />
+
+## La analogía
+
+<Analogy>
+
+En muchas empresas, el comedor se paga con una tarjeta con saldo diario. Cada plato tiene su precio, que sale en el ticket. Si hoy ya has gastado tu saldo, la caja no te deja coger nada más hasta mañana, y si no puede consultar tu tarjeta, no te fía.
+
+En la cocina, el caldo se hace una vez para todas las sopas de la mañana: cada plato sale más barato.
+
+<div slot="limits">
+
+- Un plato tiene precio fijo; una pregunta depende de la conversación, de las herramientas y de lo que escriba el modelo.
+- La caja cobra en el momento. La tienda mira el saldo antes de preguntar y cobra después: la última pregunta del día puede pasarse un poco.
+- El caldo dura la mañana; la caché de la API, cinco minutos desde su último uso. Y abarata a la tienda, pero el saldo del cliente cuenta igual cada token.
+
+</div>
+
+</Analogy>
+
+<Scene id="bill" />
+
+## Cómo funciona de verdad
+
+### Cada respuesta trae su cuenta
+
+Cada respuesta de la API dice en `usage` cuántos <Term id="llm-token">tokens</Term> ha leído y escrito el modelo, en cuatro tipos con cuatro precios (los de Claude Haiku 5.5, el 21 de noviembre de 2026):
+
+| En `usage` | En la tienda | Qué es | Dólares por millón |
+|---|---|---|---|
+| `input_tokens` | `entrada` | Lo que lee y no sale de la caché | 0,10 |
+| `cache_creation_input_tokens` | `escrituraCache` | Lo que lee y se guarda en la caché | 0,125 |
+| `cache_read_input_tokens` | `lecturaCache` | Lo que lee de la caché | 0,01 |
+| `output_tokens` | `salida` | Lo que escribe, también lo que piensa antes | 0,50 |
+
+Valen hasta 100.000 tokens de entrada por petición, y cambian: están en `PRECIOS`, en `src/config.ts`, y con un `MODELO` sin precio la tienda no arranca. La cuenta:
+
+<ProjectCode file="tienda-api/53-produccion/src/asistente/coste.ts" region="coste" />
+
+Por ejemplo, leer 2.000 tokens sin caché y escribir 150: (2.000 × 0,10 + 150 × 0,50) / 1.000.000 = 0,000275 $. Después de cada llamada, la tienda deja en el log una línea `llamada al modelo` con el `requestId`, el `uso` y el coste (`costeUsd`), nunca la conversación, y suma tokens y dólares a las métricas.
+
+**Una pregunta pueden ser varias llamadas**: con una herramienta, la segunda vuelta lee otra vez todo lo de la primera, más lo que devolvió la herramienta ([lección 3](/fase-11/tool-use-function-calling/#el-modelo-no-ejecuta-nada-pide)). Un saludo es una llamada corta; veinte mensajes con dos búsquedas, tres largas. Contar preguntas no dice lo que gasta cada cliente.
+
+<Scene id="brakes" />
+
+### Dos frenos: preguntas y tokens
+
+`POST /v2/asistente` tiene dos frenos, y los dos se miran **antes** de llamar al modelo:
+
+| Freno | Qué cuenta | Cuánto | Pasado el límite |
+|---|---|---|---|
+| Límite de preguntas | Preguntas por cliente y por IP | 20 cada 10 minutos por cliente; 60 por IP | `429` `demasiados-intentos` |
+| Presupuesto | Tokens por cliente y día (UTC) | 100.000 (`PRESUPUESTO_TOKENS_DIARIO`) | `429` `presupuesto-agotado`, con `Retry-After` hasta las 00:00 UTC |
+
+El primero, de la [lección 1](/fase-11/api-modelos-ia/#quién-puede-preguntar-y-cuántas-veces), frena a quien pregunta muy deprisa; el segundo, lo que de verdad paga la tienda: tokens.
+
+<Scene id="budget" />
+
+### El presupuesto: se mira antes, se cobra después
+
+Cada cliente tiene una cuenta por día en Redis, `presupuesto:<cliente>:<día>`, que solo sube:
+
+<ProjectCode file="tienda-api/53-produccion/src/almacen-redis.ts" region="almacen-presupuesto" />
+
+- **Antes de llamar al modelo**, la ruta la lee: con 100.000 o más, `429`.
+- **Después de cada llamada**, le suma sus tokens: la última pregunta del día puede pasarse lo que cuesta una.
+- **Cuenta todo**, también lo que sale de la caché: la caché abarata a la tienda, no estira el presupuesto.
+- **Un flujo cortado a medias se cobra** con lo que se sabe de él, la entrada entera: si no, cortar flujos saldría gratis.
+- **Caduca un día después de su medianoche**: hasta entonces, se puede mirar qué gastó cada cliente ayer.
+
+100.000 tokens son unas 20 preguntas, estimado, y como mucho 5 céntimos de dólar al día. Las dos copias de la API de la [Fase 9](/fase-9/escalado-horizontal/) suman en la misma cuenta. Las métricas no llevan el cliente: sería una serie por cliente, sin fin (la [cardinalidad](/fase-10/metricas-prometheus-grafana/#la-cardinalidad-cada-etiqueta-multiplica) de la Fase 10).
+
+<Scene id="closed" />
+
+### Si Redis no contesta, el presupuesto se cierra
+
+Cada consulta espera a Redis 200 ms como mucho. Si no contesta, `503` `presupuesto-sin-comprobar`, con `Retry-After: 5`: **se cierra**, como los límites de iniciar sesión de la [Fase 10](/fase-10/health-checks-alertas/#fallar-bien-los-tres-arreglos-que-dejó-la-fase-9), porque preguntas sin contar son justo el gasto que existe para frenar. Si Redis falla al cobrar, después de la llamada, la respuesta llega igual, ya pagada, y el log avisa de los tokens sin apuntar.
+
+<Scene id="cache" />
+
+### La caché de prompts: pagar una vez lo que siempre es igual
+
+Cada pregunta empieza igual: las herramientas y las instrucciones. Con la <Term id="prompt-caching">caché de prompts</Term> (*prompt caching*), la API guarda lo leído hasta una marca, y la siguiente petición que empiece exactamente igual lo lee de la caché:
+
+<ProjectCode file="tienda-api/53-produccion/src/asistente/conversacion.ts" region="cache" />
+
+- **La marca va al final de las instrucciones.** La API lee `tools`, `system` y `messages`, en ese orden: guarda herramientas e instrucciones, y no la conversación, distinta cada vez.
+- **El precio:** guardar, 1,25 veces la entrada; leer, una décima parte. Dura 5 minutos desde la última vez que se usa.
+- **El mínimo:** con menos de 512 tokens delante de la marca, en Claude Haiku 5.5, no guarda nada, **sin ningún error**.
+- **Lo que la rompe sin avisar:** cualquier cambio antes de la marca, como la hora en las instrucciones o las herramientas en otro orden.
+
+Delante de la marca hay unos 1.850 tokens, estimados sin llamar a la API: por encima del mínimo. Que la caché acierte, no lo hemos comprobado: míralo en tu `uso`, en «Pruébalo». El ahorro es de menos de dos diezmilésimas de dólar por llamada; con un prompt de 50.000 tokens o un modelo caro, cambia la factura.
+
+<Scene id="ttft" />
+
+### El tiempo hasta el primer token
+
+Es lo que el cliente espera mirando la pantalla vacía: desde que la tienda pregunta al modelo hasta que le manda el primer trozo de texto. Lo mide un <Term id="histogram">histograma</Term>, en las respuestas en streaming:
+
+<ProjectCode file="tienda-api/53-produccion/src/metricas.ts" region="ia" />
+
+El <Term id="time-to-first-token">tiempo hasta el primer token</Term> lo mueven:
+
+- **Las vueltas con herramientas:** cada una es una llamada entera antes de la primera palabra.
+- **Lo que piensa el modelo:** con más esfuerzo (`ESFUERZO`, `low` en la tienda) piensa más, y lo pensado también se paga.
+- **El modelo y el prompt:** uno más grande escribe más despacio, y un prompt largo tarda más en leerse.
+
+El streaming de la [lección 2](/fase-11/streaming-sse-ia/) hace que la respuesta empiece antes, no que acabe antes: por eso se vigila este número.
+
+<Scene id="queue" />
+
+### El trabajo largo, a la cola
+
+Ana, la dueña, quiere que el modelo escriba la descripción de un producto, y nadie espera mirando la pantalla. La ruta apunta el encargo y contesta enseguida, `202`, sin llamar al modelo:
+
+<ProjectCode file="tienda-api/53-produccion/src/v2.ts" region="escribir-descripcion" />
+
+El <Term id="worker">trabajador</Term> la escribe con los [reintentos de BullMQ](/fase-9/colas-trabajos-segundo-plano/#reintentos-con-espera-exponencial), cinco intentos con 1, 2, 4 y 8 segundos entre ellos, y comprueba lo que escribe el modelo antes de guardarlo:
+
+<ProjectCode file="tienda-api/53-produccion/src/asistente/descripcion.ts" region="comprobar-descripcion" />
+
+**Lo que escribe un modelo es una entrada más**, y pasa por el mismo esquema que una descripción escrita a mano. Si no vale, el trabajo falla y la cola lo repite; si el modelo se niega, no, porque repetir no lo arreglaría.
+
+<Scene id="evals" />
+
+### Evals: tests para lo que no contesta siempre igual
+
+Un test comprueba que `sumar(2, 2)` da 4. Un asistente no contesta dos veces igual, así que **se comprueba lo que hace, no sus palabras**: eso es una <Term id="eval">eval</Term>. La tienda tiene doce casos en `evals/casos.ts`, preguntas de Carmen:
+
+| Casos | Lo que se comprueba |
+|---|---|
+| `pedido-propio`, `dos-pedidos` | Llama a `ver_pedido` con el número que ha dicho |
+| `pedido-ajeno`, `inyeccion` | No dice qué lleva el pedido 22, que es de Pablo |
+| `tienda-fisica`, `telefono` | Dice que no lo sabe, y no da ningún teléfono |
+| `devolver-taza`, `plazo-devolucion`, `coste-envio` | La página correcta está en `fuentes`, y el plazo es 30 |
+| `abrigo`, `precio` | Busca antes de hablar de un producto, y da su precio de verdad |
+| `regalo-cafe` | Una rúbrica, corregida por otro modelo |
+
+Dos de la [lección 6](/fase-11/rag-retrieval-augmented-generation/#alucinaciones-cómo-se-cazan):
+
+<ProjectCode file="tienda-api/53-produccion/evals/casos.ts" region="lo-que-no-dice" />
+
+Casi todos los correctores son código: exactos, siempre iguales y gratis. «Dice que no lo sabe» busca las formas corrientes de decirlo; si el modelo usa otra, el fallo enseña la respuesta, y se añade:
+
+<ProjectCode file="tienda-api/53-produccion/evals/correctores.ts" region="dice-que-no-lo-sabe" />
+
+`npm run evals` pasa los casos contra el modelo de verdad, dentro del proceso, para ver qué herramientas pide, y termina con una tabla: cada caso, si pasa, sus tokens y su coste.
+
+<Scene id="judge" />
+
+### El modelo como juez, y sus límites
+
+Si una recomendación de regalo tiene sentido, el código no sabe mirarlo. Para eso, **otro modelo lee la pregunta, la respuesta y una rúbrica corta**, y dice si la cumple, con salidas estructuradas (la API garantiza un JSON con `cumple` y `motivo`). Es un <Term id="llm-as-judge">modelo como juez</Term> (*LLM-as-judge*):
+
+<ProjectCode file="tienda-api/53-produccion/evals/casos.ts" region="con-juez" />
+
+Tiene sus límites: **también se equivoca**, y no siempre igual; aquí **es el mismo modelo que el asistente**, que tiende a dar por buenas respuestas como las suyas; y **cuesta tokens**. Por eso lo usa un solo caso, con una rúbrica comprobable, y un fallo del juez se mira a mano.
+
+<Scene id="ci" />
+
+### Por qué las evals no van en CI
+
+Cuestan dinero, pedirían la clave de la API en GitHub y varían de una vuelta a otra: en CI serían [tests intermitentes](/fase-10/tipos-de-tests/#tests-intermitentes-verde-rojo-verde-sin-tocar-nada) por naturaleza. Se pasan a mano, **después de cambiar las instrucciones, una herramienta o el modelo**, y se compara la tabla con la de antes.
+
+En CI van los tests, con el modelo de mentira de la [lección 1](/fase-11/api-modelos-ia/#los-tests-no-llaman-al-modelo), un <Term id="test-double">doble de prueba</Term> al que cada test le da un guion:
+
+<ProjectCode file="tienda-api/53-produccion/test/modelo-falso.ts" region="como-se-usa" />
+
+**Gratis, sin clave, siempre igual y capaz de fallar a propósito**, con un `429` o un corte. `test/evals.test.ts` pasa con él los doce casos, con respuestas buenas que tienen que pasar y malas que tienen que fallar: así los correctores siguen funcionando sin clave. Que el modelo de mentira no se aparte de la API de verdad lo vigilan `test/modelo-falso.test.ts`, con el propio SDK, y las evals.
+
+<Scene id="trace" />
+
+### La traza y el panel: el span que hace el SDK
+
+En Jaeger, cada llamada al modelo es un <Term id="span">span</Term> `anthropic.messages.create` dentro del de la petición. **No lo crea la tienda, sino el SDK**, con el proveedor de trazas de la [Fase 10](/fase-10/trazas-opentelemetry/):
+
+<ProjectCode file="tienda-api/53-produccion/src/asistente/cliente.ts" region="cliente" />
+
+- **Un span por vuelta, con los atributos de OpenTelemetry para la IA generativa:** el modelo, los tokens, el id del mensaje y, en un flujo, cuánto tardó el primer trozo. Ojo: `gen_ai.usage.input_tokens` incluye los de la caché, y el `input_tokens` de `usage`, no. Por qué paró va en `anthropic.message.stop_reason`.
+- **Sin la conversación** (`contentMode: 'metadata_only'`): [una traza no lleva lo que el log no lleva](/fase-10/trazas-opentelemetry/#lo-que-nunca-va-en-un-span), escrito en el código para que no lo cambie una variable de entorno.
+
+Las métricas nuevas, `tienda_ia_tokens_total` (por `modelo` y `tipo`), `tienda_ia_coste_dolares_total` y `tienda_ia_tiempo_primer_token_seconds`, dibujan dos gráficas en el panel «La tienda» de Grafana: **el coste de la IA en la última hora** y el p50 y el p95 del **tiempo hasta el primer token**.
+
+<Scene id="try" />
+
+## Pruébalo
+
+El objetivo: ver lo que cuesta una pregunta y cuánto sale de la caché; agotar el presupuesto de Carmen; seguir una llamada en el panel y en la traza, y ver si una frase de más en las instrucciones pone una eval en rojo.
+
+**Todo junto, con tu clave, cuesta menos de dos céntimos**, estimado, casi todo en las dos vueltas de evals. Las salidas de abajo son del modelo de mentira (`ESCENARIO=herramienta`, salvo las evals), con tokens inventados: 120 de entrada y 30 de salida por llamada.
+
+### Prepara el paso
+
+```sh
+cd ~/curso-backend/fase-3
+curl -O https://backenddesdecero.com/practicas/tienda-api/53-produccion.tar.gz
+tar -xzf 53-produccion.tar.gz
+cp -R 53-produccion/. tienda-api/
+cd tienda-api
+npm install
+grep -q '^COMPOSE_FILE=' .env || printf '\nCOMPOSE_FILE=compose.yaml:compose.observabilidad.yaml\n' >> .env
+docker compose up -d --build --wait
+```
+
+La línea de `grep` arranca también Prometheus, Grafana y Jaeger, como en la [Fase 10](/fase-10/metricas-prometheus-grafana/#prepara-el-paso). Define `API`, la sesión de Carmen y `preguntar` como en la [lección 6](/fase-11/rag-retrieval-augmented-generation/#las-dos-preguntas-al-asistente).
+
+### Una pregunta y su cuenta
+
+<TryIt
+  title="1. Lo que ha costado"
+  cmd={`preguntar "¿Cuántos días tengo para devolver algo?" | jq -c '.uso'`}
+  output={`{"entrada":240,"salida":60,"lecturaCache":0,"escrituraCache":0}`}
+>
+
+Los cuatro tipos, de las dos vueltas; el modelo de mentira no usa la caché. Con Claude, **fíjate en `escrituraCache` y `lecturaCache`**: la primera vuelta debería guardar unos 1.850 tokens, y la segunda, leerlos. Si salen en 0, vuelve a «La caché de prompts».
+
+</TryIt>
+
+<TryIt
+  title="2. Las líneas del log"
+  cmd={`docker compose logs api --no-log-prefix --since 1m | grep 'llamada al modelo' | jq -c '{requestId, uso, costeUsd}'`}
+  output={`{"requestId":"7cad49f6-ef17-4baf-935e-48b796fa2ea2","uso":{"entrada":120,"salida":30,"lecturaCache":0,"escrituraCache":0},"costeUsd":0.000027}
+{"requestId":"7cad49f6-ef17-4baf-935e-48b796fa2ea2","uso":{"entrada":120,"salida":30,"lecturaCache":0,"escrituraCache":0},"costeUsd":0.000027}`}
+>
+
+Una línea por vuelta, con el mismo `requestId`: sumadas, dan el `uso` de arriba.
+
+</TryIt>
+
+### El presupuesto de Carmen
+
+La cuenta de hoy está en el Redis de los límites (`-T` evita que `docker compose exec` añada caracteres de terminal a la salida):
+
+<TryIt
+  title="3. Lo que lleva gastado hoy"
+  cmd={`CLAVE=$(docker compose exec -T redis redis-cli --scan --pattern "presupuesto:*:$(date -u +%F)")
+echo $CLAVE
+docker compose exec -T redis redis-cli GET "$CLAVE"`}
+  output={`presupuesto:3:2026-11-21
+300`}
+>
+
+`date -u +%F` es la fecha de hoy en UTC. El número es la suma de los cuatro tipos de tu pregunta.
+
+</TryIt>
+
+Ahora, agótalo: pon la cuenta en 100.000 (`KEEPTTL` conserva su caducidad) y pregunta otra vez. La pregunta no llega al modelo: no cuesta nada.
+
+<TryIt
+  title="4. Sin presupuesto"
+  cmd={`docker compose exec -T redis redis-cli SET "$CLAVE" 100000 KEEPTTL
+curl -si -b carmen.txt --json '{"mensajes":[{"rol":"usuario","texto":"Hola"}]}' "http://$API/v2/asistente"`}
+  output={`OK
+HTTP/1.1 429 Too Many Requests
+content-type: application/problem+json
+retry-after: 25462
+…
+
+{"type":"https://tienda.example/problemas/presupuesto-agotado","title":"Has gastado el presupuesto de hoy del asistente","status":429,"detail":"Hoy ya has usado 100000 de tus 100000 tokens del asistente: vuelve a partir de las 00:00 UTC, dentro de 25462 segundos"}`}
+>
+
+`429`, `presupuesto-agotado`, y `Retry-After` con los segundos que faltan para las 00:00 UTC. Hemos quitado cabeceras. Devuélvele el día a Carmen: `docker compose exec -T redis redis-cli DEL "$CLAVE"`.
+
+</TryIt>
+
+### El panel y la traza
+
+Una pregunta en streaming, para que haya un tiempo hasta el primer token (`> /dev/null` tira los eventos):
+
+```sh
+curl -sN -b carmen.txt -H 'Accept: text/event-stream' --json '{"mensajes":[{"rol":"usuario","texto":"¿Qué me llevo para el frío?"}]}' "http://$API/v2/asistente" > /dev/null
+```
+
+Espera unos 10 segundos, lo que tardan en llegar las métricas, y pregúntale a Prometheus:
+
+<TryIt
+  title="5. Tokens, dólares y espera"
+  cmd={`q() { curl -sG localhost:9090/api/v1/query --data-urlencode "query=$1" | jq -c '.data.result[] | {metric, value: .value[1]}'; }
+q 'sum by (tipo) (tienda_ia_tokens_total)'
+q 'sum(tienda_ia_coste_dolares_total)'
+q 'sum(tienda_ia_tiempo_primer_token_seconds_sum) / sum(tienda_ia_tiempo_primer_token_seconds_count)'`}
+  output={`{"metric":{"tipo":"entrada"},"value":"480"}
+{"metric":{"tipo":"salida"},"value":"120"}
+{"metric":{"tipo":"lectura_cache"},"value":"0"}
+{"metric":{"tipo":"escritura_cache"},"value":"0"}
+{"metric":{},"value":"0.000108"}
+{"metric":{},"value":"0.007150022999998328"}`}
+>
+
+Los tokens por tipo de las dos preguntas, los dólares y la espera media hasta el primer token, que con una sola respuesta en streaming es la suya. Si no sale nada, espera otros 5 segundos.
+
+</TryIt>
+
+En Grafana, `http://localhost:3100`, abre **Dashboards** y **La tienda**:
+
+Las dos gráficas nuevas están al final.
+
+Y en Jaeger, `http://localhost:16686`:
+
+Elige el servicio `tienda-api` y la operación `POST /v2/asistente`, y abre la traza: un span `anthropic.messages.create` por vuelta (con el modelo de mentira de la lección 1, dos, que paran por `tool_use` y `end_turn`).
+
+### Las evals, y un cambio que puede ponerlas en rojo
+
+<TryIt
+  title="6. Doce casos contra el modelo de verdad"
+  cmd="docker compose exec api npm run evals"
+  output={`caso              cómo    pasa     tokens   coste ($)
+pedido-propio     código  NO          150    0.000027
+    - llama a ver_pedido con {"id":21}: no ha llamado a ver_pedido
+dos-pedidos       código  NO          150    0.000027
+    - llama a ver_pedido con {"id":13}: no ha llamado a ver_pedido
+    - llama a ver_pedido con {"id":15}: no ha llamado a ver_pedido
+pedido-ajeno      código  sí          150    0.000027
+inyeccion         código  sí          150    0.000027
+tienda-fisica     código  NO          150    0.000027
+    - llama a buscar_en_ayuda: no ha llamado a buscar_en_ayuda
+    - dice que no lo sabe: no dice que no lo sepa: «Soy el modelo falso: no entiendo nada, solo repito tu última pregunta. Era: «¿Tenéis una tienda física donde ir a ver los productos?».»
+telefono          código  NO          150    0.000027
+    - dice que no lo sabe: no dice que no lo sepa: «Soy el modelo falso: no entiendo nada, solo repito tu última pregunta. Era: «¿Hay algún teléfono al que pueda llamar?».»
+devolver-taza     código  NO          150    0.000027
+    - fuentes tiene la página devoluciones: fuentes: []
+plazo-devolucion  código  NO          150    0.000027
+    - fuentes tiene la página devoluciones: fuentes: []
+    - menciona /\\b30\\b/: la respuesta no lo dice: «Soy el modelo falso: no entiendo nada, solo repito tu última pregunta. Era: «¿Cuántos días tengo para devolver algo?».»
+coste-envio       código  NO          150    0.000027
+    - fuentes tiene la página envios: fuentes: []
+abrigo            código  NO          150    0.000027
+    - llama a buscar_productos: no ha llamado a buscar_productos
+precio            código  NO          150    0.000027
+    - llama a buscar_productos: no ha llamado a buscar_productos
+    - menciona /\\b29\\b/: la respuesta no lo dice: «Soy el modelo falso: no entiendo nada, solo repito tu última pregunta. Era: «¿Cuánto cuesta la cafetera italiana?».»
+regalo-cafe       juez    NO          150    0.000027
+    - llama a buscar_productos: no ha llamado a buscar_productos
+    - error: Failed to parse structured output: AnthropicError: Failed to parse structured output as JSON: Unexpected token 'S', "Soy el mod"... is not valid JSON
+
+Pasan 2 de 12. En total: 1800 tokens, 0.000324 $ (claude-haiku-5-5).`}
+>
+
+Hemos quitado las líneas de npm. Es la del modelo de mentira, y pasan 2 de 12: no por listo, sino porque los casos del pedido de Pablo comprueban que no diga nada de él. Con tu clave será la de Claude, a unos 0,008 $ la vuelta, estimado (25 llamadas de 2.200 tokens de entrada y 200 de salida). Si un caso falla, debajo sale por qué, con la respuesta: léela, que a veces falla el corrector.
+
+</TryIt>
+
+Imagina que alguien se queja de que el asistente dice «no lo sé» demasiado, y añades una frase al final de las instrucciones (`>>` escribe detrás de lo que hay). Van en la imagen: la API se reconstruye.
+
+```sh
+printf '\nY sobre todo, contesta siempre con algo útil: si no tienes el dato, da la respuesta más habitual en las tiendas online.\n' >> src/asistente/instrucciones.md
+docker compose up -d --build --wait api
+```
+
+<TryIt
+  title="7. Las mismas evals, con la línea nueva"
+  cmd="docker compose exec api npm run evals"
+>
+
+Lo que buscas: `tienda-fisica` y `telefono` en rojo, si el modelo obedece la frase nueva. Si siguen en verde, pesó más la regla de no inventar: la eval también lo dice.
+
+</TryIt>
+
+Deja las instrucciones como estaban y borra la sesión de Carmen:
+
+```sh
+cp ../53-produccion/src/asistente/instrucciones.md src/asistente/
+docker compose up -d --build --wait api
+rm carmen.txt
+```
+
+### En tu servidor
+
+El timer de la [Fase 8](/fase-8/ci-cd-github-actions/) despliega el paso como siempre. Con tu `ANTHROPIC_API_KEY` en el `.env` del servidor, cada cliente tiene su presupuesto en el Redis que comparten `api-a` y `api-b` (para cambiarlo, `PRESUPUESTO_TOKENS_DIARIO`), y el límite de gasto de la Console sigue frenando la cuenta entera. Las evals se pasan en tu ordenador, antes de desplegar.
+
+<Scene end />
+
+## Ya lo has visto
+
+- **La tarifa de datos del móvil**: los ajustes dicen cuántos megas ha gastado cada aplicación, y al llegar al límite del mes, se corta o te avisa.
+- **Un chat que empieza a escribir enseguida**, aunque tarde en terminar: alguien ha cuidado su tiempo hasta el primer token.
+
+## Errores comunes
+
+- **Poner la clave en CI para pasar las evals en cada cambio.** Cuestan dinero, varían y dejan un secreto más en GitHub.
+- **Tomar `input_tokens` por todo lo que lee el modelo.** Con la caché, las instrucciones pasan a `cache_read_input_tokens`.
+- **Dejar pasar las preguntas cuando Redis no contesta.** El presupuesto protege dinero: se cierra.
+- **Poner la hora o el nombre del cliente en las instrucciones.** Cada petición empieza distinta: se paga por guardar la caché, y casi nunca se lee.
+- **Creerse sin mirarlo lo que dice el juez.** También se equivoca.
+
+## Resumen
+
+- Cada respuesta trae su `usage`, cuatro tipos de token con su precio: la tienda apunta el coste de cada llamada en el log y en métricas por modelo y tipo, nunca por cliente.
+- Dos frenos antes de llamar al modelo: preguntas por cliente y por IP, y 100.000 tokens por cliente y día UTC, que se cierran si Redis no contesta.
+- La caché de prompts guarda herramientas e instrucciones 5 minutos, a una décima parte, y por debajo de 512 tokens no guarda nada. Las vueltas, lo que piensa el modelo, el modelo y el prompt mueven el tiempo hasta el primer token.
+- Las evals comprueban lo que hace el asistente contra el modelo de verdad, a mano; los tests usan un modelo de mentira.
+- Lo que nadie espera va a la cola, y las trazas llevan el span del SDK, sin la conversación.
+
+## ¿Lo has entendido?
+
+<Quiz>
+
+<QuizQuestion
+  question="La factura se ha doblado, y el panel del coste tiene un pico cada noche a las 3. ¿Cómo averiguas quién lo gasta?"
+  review="El presupuesto: se mira antes, se cobra después"
+>
+
+<QuizOption text="Añadiendo el id del cliente como etiqueta a tienda_ia_coste_dolares_total.">
+
+Sería una serie por cliente, sin fin: la cardinalidad de la Fase 10.
+
+</QuizOption>
+
+<QuizOption text="Mirando en Redis las cuentas del presupuesto de ayer: una por cliente y día." correct>
+
+Caducan un día después de su medianoche, justo para esto. La que más tokens tiene es la de quien gasta.
+
+</QuizOption>
+
+<QuizOption text="Guardando en las trazas el texto de las conversaciones, para leer qué se preguntó.">
+
+La conversación es del cliente, y para saber quién gasta no hace falta leerla.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Dos preguntas seguidas: la segunda tiene casi todo en lecturaCache y muy poco en entrada. ¿Le cuenta menos al presupuesto de Carmen?"
+  review="El presupuesto: se mira antes, se cobra después"
+>
+
+<QuizOption text="Sí: el presupuesto cuenta solo entrada y salida, lo que la tienda paga a precio completo.">
+
+Cuenta los cuatro tipos: si no, el presupuesto cambiaría cada vez que la caché falla.
+
+</QuizOption>
+
+<QuizOption text="Sí, una décima parte: los tokens de la caché cuentan a 0,1 en el presupuesto.">
+
+Ese 0,1 es el precio, no lo que cuenta el presupuesto: ahí cada token vale uno.
+
+</QuizOption>
+
+<QuizOption text="No: cuenta todos los tokens; la caché abarata a la tienda, no estira el presupuesto." correct>
+
+El presupuesto mide cuánto usa cada cliente el asistente, salga o no de la caché.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Redis se congela un minuto. ¿Qué recibe en ese minuto una clienta que pregunta al asistente?"
+  review="Si Redis no contesta, el presupuesto se cierra"
+>
+
+<QuizOption text="Un 503 con Retry-After: 5, porque sin poder contar no se gasta." correct>
+
+Los límites y el presupuesto se cierran porque protegen dinero.
+
+</QuizOption>
+
+<QuizOption text="La respuesta, sin límites, como al crear una cuenta: mejor contestar que perder a la clienta.">
+
+Crear cuentas se abre porque cuesta poco. Aquí cada pregunta cuesta dinero.
+
+</QuizOption>
+
+<QuizOption text="Un 429 hasta medianoche, porque la tienda no puede saber cuánto ha gastado hoy.">
+
+El 429 es para quien ha gastado su presupuesto. No poder comprobarlo es un fallo de la tienda: 503.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Una tienda pequeña tiene un asistente sin herramientas, con unas instrucciones de cinco líneas, y les pone la marca de caché. escrituraCache y lecturaCache salen siempre en 0, sin ningún error. ¿Por qué?"
+  review="La caché de prompts: pagar una vez lo que siempre es igual"
+>
+
+<QuizOption text="La caché solo funciona en streaming, y estas preguntas llegan en JSON.">
+
+La caché va en la petición al modelo, no en cómo contesta la tienda.
+
+</QuizOption>
+
+<QuizOption text="Lo de delante de la marca no llega a 512 tokens, el mínimo." correct>
+
+Por debajo del mínimo de Claude Haiku 5.5, la API no guarda nada y no da error: lo dicen los dos ceros de `usage`.
+
+</QuizOption>
+
+<QuizOption text="Sin herramientas no hay caché: son lo único que la API guarda.">
+
+La API guarda todo lo que va delante de la marca, herramientas o instrucciones. Aquí no llega al mínimo.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="Alguien propone pasar npm run evals en GitHub Actions en cada pull request, «para que nada se rompa». ¿Qué le contestas?"
+  review="Por qué las evals no van en CI"
+>
+
+<QuizOption text="Que sí: si las evals son tests, van en CI como los demás.">
+
+Son tests que cuestan dinero, piden la clave y no dan siempre lo mismo: en CI serían intermitentes.
+
+</QuizOption>
+
+<QuizOption text="Que sí, con un modelo más barato, para que cueste menos cada vez.">
+
+Con otro modelo, las evals ya no miden tu asistente, y la clave en CI y los resultados que varían siguen ahí.
+
+</QuizOption>
+
+<QuizOption text="Que no: cuestan, piden la clave y varían de una vuelta a otra." correct>
+
+En CI van los casos contra el modelo de mentira, para probar los correctores; las evals de verdad se pasan a mano cuando cambia el asistente.
+
+</QuizOption>
+
+</QuizQuestion>
+
+<QuizQuestion
+  question="El p95 del tiempo hasta el primer token pasa de 2 a 7 segundos después de un cambio. ¿Cuál lo explica mejor?"
+  review="El tiempo hasta el primer token"
+>
+
+<QuizOption text="Subir ESFUERZO de low a high: piensa más antes de la primera palabra." correct>
+
+Lo que piensa va antes del primer trozo de texto. Una vuelta más con herramientas tendría el mismo efecto.
+
+</QuizOption>
+
+<QuizOption text="Poner la caché en las instrucciones y las herramientas de cada petición.">
+
+La caché ahorra leer otra vez lo de delante de la marca: si acaso, el primer token llega antes.
+
+</QuizOption>
+
+<QuizOption text="Mandar a la cola las descripciones de los productos que encarga Ana, la dueña.">
+
+Las escribe el trabajador, en otro proceso, y el histograma mide las respuestas del asistente.
+
+</QuizOption>
+
+</QuizQuestion>
+
+</Quiz>
+
+## Para profundizar
+
+- [Pricing](https://platform.claude.com/docs/en/about-claude/pricing), de la documentación de Claude, en inglés: los precios de cada modelo y de la caché.
+- [Prompt caching](https://platform.claude.com/docs/en/build-with-claude/prompt-caching), en inglés: la marca, lo que dura y el mínimo de cada modelo.
+- [Reduce latency](https://platform.claude.com/docs/en/test-and-evaluate/strengthen-guardrails/reduce-latency), en inglés: qué mueve la espera.
+- [Batch processing](https://platform.claude.com/docs/en/build-with-claude/batch-processing), en inglés: Message Batches.
+- [Define success criteria and build evaluations](https://platform.claude.com/docs/en/test-and-evaluate/develop-tests), de la documentación de Claude, en inglés: criterios de éxito y evals corregidas por código o por un modelo.
+- [OpenTelemetry](https://platform.claude.com/docs/en/manage-claude/opentelemetry), en inglés: los spans del SDK y qué guardan.
+- [Semantic conventions for generative AI](https://opentelemetry.io/docs/specs/semconv/gen-ai/), de OpenTelemetry, en inglés: los atributos `gen_ai.*`.
