@@ -34,7 +34,7 @@ export const satteriTermPunctuation = defineMdastPlugin({
     if (next?.type !== 'text') return;
     const glued = gluedPrefix(next.value);
     if (!glued) return;
-    ctx.setProperty(next, 'value', next.value.slice(glued.length));
+    ctx.setField(next, 'value', next.value.slice(glued.length));
     ctx.wrapNode(target, {
       type: 'mdxJsxTextElement',
       name: 'span',
