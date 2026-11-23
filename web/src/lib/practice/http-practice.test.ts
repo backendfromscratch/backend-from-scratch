@@ -4,7 +4,8 @@ import { describe, expect, it } from 'vitest';
 // The practice material of Phase 2, «HTTP a fondo» (spec docs/specs/2026-10-12-phase-2-design.md, §5):
 // two files the course's own site serves with and without CORS, and the nginx configuration of
 // Ana and Luis's shop for the practice VM, in Spanish and English. They were checked with nginx
-// 1.24.0 on Ubuntu 24.04 when written; these tests keep them from drifting apart.
+// 1.24.0 on Ubuntu 24.04 when written; these tests keep them from drifting apart. Lesson 4 also
+// shows, with curl, the security headers the site itself sends.
 
 const read = (path: string) =>
   readFileSync(new URL(`../../../public/${path}`, import.meta.url), 'utf8');
@@ -36,6 +37,21 @@ function headersFor(path: string) {
       .map((rule) => rule.headers),
   ) as Record<string, string>;
 }
+
+describe('the security headers lesson 4 teaches, sent by this site', () => {
+  it.each([
+    '/',
+    '/en/',
+    '/fase-2/cabeceras-http/',
+    '/_astro/common.css',
+    '/practicas/tienda-http.conf',
+  ])('adds HSTS, nosniff and Referrer-Policy to %s', (path) => {
+    const headers = headersFor(path);
+    expect(headers['strict-transport-security']).toMatch(/^max-age=\d+$/);
+    expect(headers['x-content-type-options']).toBe('nosniff');
+    expect(headers['referrer-policy']).toBe('strict-origin-when-cross-origin');
+  });
+});
 
 describe('the CORS practice files (lesson 6)', () => {
   it('lets any origin read cors-on.json', () => {
