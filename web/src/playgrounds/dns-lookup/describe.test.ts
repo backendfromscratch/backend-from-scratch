@@ -1,5 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { buildPath, explain, interpret, parseDohJson, suffixes, type RecordType } from './dns';
+import {
+  buildPath,
+  explain,
+  interpret,
+  parseDohJson,
+  suffixes,
+  type LookupResult,
+  type RecordType,
+} from './dns';
 import { minTtl, serversLabel, stepText, summary, zoneLabel } from './describe';
 import { recorded } from './fixtures';
 import { strings } from './strings';
@@ -126,19 +134,21 @@ describe('stepText', () => {
     );
   });
 
+  const brokenAlias: LookupResult = {
+    name: 'www.ejemplo.com',
+    type: 'A',
+    outcome: 'nxdomain',
+    status: 'NXDOMAIN',
+    path: [
+      { name: '.', servers: ['a.root-servers.net'] },
+      { name: 'com', servers: ['a.gtld-servers.net'] },
+      { name: 'ejemplo.com', servers: ['ns1.ejemplo.com'] },
+    ],
+    records: [{ name: 'www.ejemplo.com', type: 'CNAME', ttl: 60, data: 'roto.otra-cdn.net.' }],
+  };
+
   it('with an alias to another zone that does not exist, the resolver finds out separately', () => {
-    const steps = explain({
-      name: 'www.ejemplo.com',
-      type: 'A',
-      outcome: 'nxdomain',
-      status: 'NXDOMAIN',
-      path: [
-        { name: '.', servers: ['a.root-servers.net'] },
-        { name: 'com', servers: ['a.gtld-servers.net'] },
-        { name: 'ejemplo.com', servers: ['ns1.ejemplo.com'] },
-      ],
-      records: [{ name: 'www.ejemplo.com', type: 'CNAME', ttl: 60, data: 'roto.otra-cdn.net.' }],
-    });
+    const steps = explain(brokenAlias);
     expect(steps.map((step) => step.kind)).toEqual([
       'ask',
       'referral',
@@ -151,6 +161,31 @@ describe('stepText', () => {
       'www.ejemplo.com es un alias (CNAME) de roto.otra-cdn.net. Busca ese nombre.',
     );
     expect(stepText(steps[4]!, es).says).toBe('Busco ese nombre aparte: no existe (NXDOMAIN).');
+  });
+
+  // The name typed does exist: it is the alias's target that does not (it used to say otherwise).
+  it('with an alias whose target does not exist, the reply and the summary say the alias exists', () => {
+    const reply = explain(brokenAlias).at(-1)!;
+    expect(stepText(reply, es).says).toBe(
+      'Ese nombre es un alias de roto.otra-cdn.net, y roto.otra-cdn.net no existe. Lo apunto en mi caché un rato, por si vuelves a preguntar.',
+    );
+    expect(stepText(reply, en).says).toBe(
+      'That name is an alias of roto.otra-cdn.net, and roto.otra-cdn.net doesn’t exist. I’ll keep a note of that in my cache for a while, in case you ask again.',
+    );
+    expect(summary(brokenAlias, es)).toBe(
+      'www.ejemplo.com es un alias (CNAME) de roto.otra-cdn.net, que no existe (NXDOMAIN). Recorre los pasos para ver quién lo dice.',
+    );
+    expect(summary(brokenAlias, en)).toBe(
+      'www.ejemplo.com is an alias (CNAME) of roto.otra-cdn.net, which doesn’t exist (NXDOMAIN). Step through the trip to see who says so.',
+    );
+    // A name that does not exist, with no alias, keeps its sentences.
+    const missing = { ...brokenAlias, records: [] };
+    expect(stepText(explain(missing).at(-1)!, es).says).toBe(
+      'Ese nombre no existe. Lo apunto en mi caché un rato, por si vuelves a preguntar.',
+    );
+    expect(summary(missing, es)).toBe(
+      'Ese dominio no existe (NXDOMAIN). Recorre los pasos para ver quién lo dice.',
+    );
   });
 
   it('sorts MX by priority and removes the trailing dot of names', () => {
