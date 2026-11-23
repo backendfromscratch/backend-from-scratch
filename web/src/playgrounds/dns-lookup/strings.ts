@@ -39,7 +39,10 @@ export interface Strings {
   followAliasOutcome: Record<'nxdomain' | 'nodata', string>;
   final: Record<Exclude<Outcome, 'answer'>, string>;
   reply: Record<Outcome, string>;
+  /** The name asked for is an alias whose target does not exist: the name itself does. */
+  replyAliasNxdomain: string;
   summary: Record<Outcome, string>;
+  summaryAliasNxdomain: string;
   summaryOne: string;
   recordsTitle: string;
   columns: { name: string; type: string; ttl: string; data: string };
@@ -105,12 +108,16 @@ const es: Strings = {
     nodata: 'El nombre existe, pero no tiene registros {type}. También lo apunto en mi caché.',
     error: 'No he podido averiguarlo: un servidor del camino ha respondido con un error ({code}).',
   },
+  replyAliasNxdomain:
+    'Ese nombre es un alias de {target}, y {target} no existe. Lo apunto en mi caché un rato, por si vuelves a preguntar.',
   summary: {
     answer: 'Respuesta: {n} registros. Recorre los pasos para ver cómo se ha encontrado.',
     nxdomain: 'Ese dominio no existe (NXDOMAIN). Recorre los pasos para ver quién lo dice.',
     nodata: 'El dominio existe, pero no tiene registros {type} (NODATA).',
     error: 'El resolver no ha podido responder ({code}).',
   },
+  summaryAliasNxdomain:
+    '{name} es un alias (CNAME) de {target}, que no existe (NXDOMAIN). Recorre los pasos para ver quién lo dice.',
   summaryOne: 'Respuesta: 1 registro. Recorre los pasos para ver cómo se ha encontrado.',
   recordsTitle: 'Registros',
   columns: { name: 'Nombre', type: 'Tipo', ttl: 'TTL (s)', data: 'Valor' },
@@ -177,12 +184,16 @@ const en: Strings = {
     nodata: 'The name exists, but it has no {type} records. I’ll cache that too.',
     error: 'I couldn’t find out: a server along the way answered with an error ({code}).',
   },
+  replyAliasNxdomain:
+    'That name is an alias of {target}, and {target} doesn’t exist. I’ll keep a note of that in my cache for a while, in case you ask again.',
   summary: {
     answer: 'Answer: {n} records. Step through the trip to see how it was found.',
     nxdomain: 'That domain doesn’t exist (NXDOMAIN). Step through the trip to see who says so.',
     nodata: 'The domain exists, but it has no {type} records (NODATA).',
     error: 'The resolver couldn’t answer ({code}).',
   },
+  summaryAliasNxdomain:
+    '{name} is an alias (CNAME) of {target}, which doesn’t exist (NXDOMAIN). Step through the trip to see who says so.',
   summaryOne: 'Answer: 1 record. Step through the trip to see how it was found.',
   recordsTitle: 'Records',
   columns: { name: 'Name', type: 'Type', ttl: 'TTL (s)', data: 'Value' },

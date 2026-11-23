@@ -1,6 +1,6 @@
 /** Turns the path and the result into sentences in the page's language. */
 import { fill } from '../../lib/fill';
-import type { DnsRecord, LookupResult, PathStep } from './dns';
+import { aliasChain, type DnsRecord, type LookupResult, type PathStep } from './dns';
 import { RESOLVER } from './resolver';
 import type { Strings } from './strings';
 
@@ -122,17 +122,23 @@ export function stepText(
       return {
         from: resolver,
         to: t.you,
-        says: fill(t.reply[step.outcome], {
-          ttl: step.records.length > 0 ? minTtl(step.records) : 0,
-          type: step.type,
-          code: step.status,
-        }),
+        says: fill(
+          step.outcome === 'nxdomain' && step.alias ? t.replyAliasNxdomain : t.reply[step.outcome],
+          {
+            target: step.alias?.target ?? '',
+            ttl: step.records.length > 0 ? minTtl(step.records) : 0,
+            type: step.type,
+            code: step.status,
+          },
+        ),
       };
   }
 }
 
 /** A sentence with the result, to announce when the lookup finishes. */
 export function summary(result: LookupResult, t: Strings): string {
+  const alias = result.outcome === 'nxdomain' ? aliasChain(result.records) : null;
+  if (alias) return fill(t.summaryAliasNxdomain, { name: alias.name, target: alias.target });
   const template =
     result.outcome === 'answer' && result.records.length === 1
       ? t.summaryOne

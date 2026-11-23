@@ -87,7 +87,15 @@ export type PathStep =
       /** If the target is itself an alias: where the chain ends and what it passes through. */
       chain: { target: string; via: string[] } | null;
     }
-  | { kind: 'reply'; type: RecordType; outcome: Outcome; status: DnsStatus; records: DnsRecord[] };
+  | {
+      kind: 'reply';
+      type: RecordType;
+      outcome: Outcome;
+      status: DnsStatus;
+      records: DnsRecord[];
+      /** The name asked for is an alias: the whole chain, so a missing target is not taken for it. */
+      alias: Alias | null;
+    };
 
 /** Lowercase and without the trailing dot. The root, which can arrive as “” or as “.”, is always “.”. */
 export function normalizeName(name: string): string {
@@ -245,6 +253,11 @@ function aliasLinks(records: DnsRecord[]): AliasLink[] {
     .map((record) => ({ name: record.name, target: normalizeName(record.data) }));
 }
 
+/** The aliases of a response as one chain (the name asked for, the last target), or null if none. */
+export function aliasChain(records: DnsRecord[]): Alias | null {
+  return chainOf(aliasLinks(records));
+}
+
 /** A chain of aliases as one alias: the first name, the last target and those in between. */
 function chainOf(links: AliasLink[]): Alias | null {
   const first = links[0];
@@ -311,6 +324,7 @@ export function explain(result: LookupResult): PathStep[] {
     outcome: result.outcome,
     status: result.status,
     records: result.records,
+    alias: chainOf(links),
   });
   return steps;
 }
