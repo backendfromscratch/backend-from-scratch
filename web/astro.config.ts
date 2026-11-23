@@ -22,6 +22,10 @@ const fallbacks = new Set(
 export default defineConfig({
   // With `site`, Starlight generates each page's canonical URL, hreflang and og:url.
   site: siteUrl,
+  // Component styles scoped with `:where()`, which adds no specificity: what Starlight imposed until
+  // 0.43. Astro's default since then, attribute selectors, lets Starlight's own rules win over ours
+  // (the code blocks inside «Pruébalo» lost their margins on almost every lesson, 2026-11-23).
+  scopedStyleStrategy: 'where',
   vite: {
     // The SQL playground's worker loads PGlite, which splits itself into several files: only the
     // ES module format allows that in a worker. PGlite also asks not to be pre-bundled in dev.
