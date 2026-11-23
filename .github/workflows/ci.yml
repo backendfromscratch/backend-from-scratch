@@ -520,6 +520,15 @@ jobs:
           }
           # The throwaway .env never stays in a step, even if the script stops halfway.
           trap '[ -z "${step-}" ] || rm -f "$step/.env"' EXIT
+          # systemd comes from apt once per leg, in a local image, not once per step: Ubuntu's archive
+          # is sometimes slow (about 5 minutes per install on 2026-11-23, which took a leg of four
+          # steps past its 30 minutes). Built at the first step with units; tried again if it fails.
+          systemd_image=""
+          systemd_ready() {
+            [ -n "$systemd_image" ] && return 0
+            printf 'FROM %s\nRUN apt-get update -qq > /dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends systemd > /dev/null\n' \
+              "$UBUNTU_IMAGE" | docker build -q -t ci-systemd - > /dev/null && systemd_image=ci-systemd
+          }
           while IFS= read -r step <&3; do
             step="${step%/}"
             for compose in "$step"/compose.produc*.yaml; do [ -f "$compose" ] && break; done
@@ -586,12 +595,15 @@ jobs:
               # pinning a package version would break the job every time Ubuntu updates it.
               # The units go as arguments; "$@" is expanded by the container's shell, on purpose.
               # shellcheck disable=SC2016
-              try "systemd-analyze verify" docker run --rm -v "$PWD/$step":"$opt":ro \
-                -e DEBIAN_FRONTEND=noninteractive -w "$opt" "$UBUNTU_IMAGE" sh -ec '
-                  apt-get update -qq > /dev/null
-                  apt-get install -y -qq --no-install-recommends systemd > /dev/null
-                  printf "[Service]\nExecStart=/bin/true\n" > /etc/systemd/system/docker.service
-                  systemd-analyze verify --man=no "$@"' sh "${units[@]}"
+              if systemd_ready; then
+                try "systemd-analyze verify" docker run --rm -v "$PWD/$step":"$opt":ro \
+                  -w "$opt" "$systemd_image" sh -ec '
+                    printf "[Service]\nExecStart=/bin/true\n" > /etc/systemd/system/docker.service
+                    systemd-analyze verify --man=no "$@"' sh "${units[@]}"
+              else
+                echo "::error::$step: installing systemd in $UBUNTU_IMAGE failed"
+                bad=1
+              fi
             else
               echo "skipped systemd-analyze verify: no units"
             fi
