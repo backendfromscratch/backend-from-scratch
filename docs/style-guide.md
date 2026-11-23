@@ -227,12 +227,12 @@ The site imitates a code editor (spec: `docs/specs/2026-10-02-ide-theme-design.m
   - wide pieces use the whole page column, at most `--ide-page-width` (72rem): tables, `figure`, code blocks, `TryIt`, labs (`astro-island`) and the phase list. From 120rem of window, the column is centered in the editor.
   A new component that needs width is added to that list in `theme.css` ("Readable prose").
 - **Line numbers:** the title is 1 and the lesson's lead-in is 2. Pieces that scroll (tables, sequence and chain diagrams, labs) carry no number.
-- **Minimap:** it draws every word of the title, the lead-in and the content, like VS Code's. A scene lesson has no minimap: its scene takes that place ("Scenes"). What goes in `pre`, `code` or an Expressive Code block comes out green; if a new component shows code in some other way, add it to `wordKind` (`web/src/lib/minimap.ts`).
+- **Minimap:** it draws every word of the title, the lead-in and the content, like VS Code's. What goes in `pre`, `code` or an Expressive Code block comes out green; if a new component shows code in some other way, add it to `wordKind` (`web/src/lib/minimap.ts`).
 - **Side panel and header:**
   - there are no tabs (since 2026-10-11): the explorer only has folders, the phases and `recursos/` with playgrounds and the glossary (`explorerPages`, in `web/src/lib/explorer.ts`); the home page is the site title; the theme button and the «ES · EN» links are in the header (desktop) and in the menu (mobile);
-  - on a computer, the header button hides the whole side panel (`ExplorerToggle.astro`); anything new in the panel disappears with it. On a scene lesson in a window under 75rem the panel starts hidden, unless the reader chose otherwise;
-  - the page outline is in the explorer (`Outline.astro`) and starts collapsed: it marks the section whose heading has reached where a jump lands (`scroll-padding-top`), so if something fixed is added under the header, `scroll-padding-top` in `theme.css` changes too (a scene lesson's scene, on top on a phone, does it in `scenes.css`);
-  - what is remembered in the browser (`web/src/lib/storage.ts`): the theme (`starlight-theme`, from Starlight; `web/src/lib/theme.ts`), whether the outline is open (`ide-outline`), the folders opened or collapsed (`ide-folders`) whether the side panel is hidden (`ide-explorer`) and, on scene lessons, the text's width (`ide-scene-split`), the animation speed (`ide-scene-speed`) and whether the scene is folded on a phone (`ide-scene-folded`). A choice that changes the layout is applied before the first paint by an inline script, as `ide-explorer`'s and the scene's are: applied later, it would move the page (CLS).
+  - on a computer, the header button hides the whole side panel (`ExplorerToggle.astro`); anything new in the panel disappears with it;
+  - the page outline is in the explorer (`Outline.astro`) and starts collapsed: it marks the section whose heading has reached where a jump lands (`scroll-padding-top`), so if something fixed is added under the header, `scroll-padding-top` in `theme.css` changes too;
+  - what is remembered in the browser (`web/src/lib/storage.ts`): the theme (`starlight-theme`, from Starlight; `web/src/lib/theme.ts`), whether the outline is open (`ide-outline`), the folders opened or collapsed (`ide-folders`) and whether the side panel is hidden (`ide-explorer`). A choice that changes the layout is applied before the first paint by an inline script, as `ide-explorer`'s is: applied later, it would move the page (CLS).
 - **Headings:** title 28 px, `##` 22 px and `###` 18 px (24, 20 and 18 on mobile), with the prose at 18 px. They are set with `--sl-text-h1` to `--sl-text-h5` in `theme.css`; a new size goes there, not in a component.
 - **Playgrounds:** every new lab or playground is added to `web/src/data/playgrounds.ts` (level, lesson and texts in both languages) and to the `playgrounds.mdx` page of its phase, if it is the first of that phase. It always goes in the «Pruébalo» ("Try it") of its lesson: the link on the page points there.
 
@@ -254,43 +254,6 @@ A playground is a React component inside a lesson (Phase 0 spec, §6.4). The fir
   - with `prefers-reduced-motion`, nothing is animated.
 - **In the lesson:** `import X from '~/playgrounds/<name>/X';` and `<X client:visible lang="es" />`. `client:visible` makes React's JavaScript download only when the playground enters the screen.
 - **Tests:** besides the logic ones, one that renders the component with `react-dom/server` in both languages, and a case in `web/e2e/states.e2e.ts` that takes it through its states (results, errors) and checks each one with axe-core, in dark and light. The page scan alone only sees the playground before it is used.
-
-## Scenes
-
-A scene lesson draws what the text explains next to it: as the reader scrolls, the part being read plays its scene (blocks, people and the messages travelling between them). Design: `docs/specs/2026-11-20-visual-lessons-design.md`. The pilot is «De la URL a la página».
-
-- **Which lessons:** those whose text explains something that moves (messages between machines, a handshake, a queue, a cache). Not lessons about commands, the guided project's code or ideas with no mechanism. The candidates are in the spec, §10.
-- **The text says everything.** The scene illustrates the part being read and never carries something the text lacks: Google, the search, screen readers, print and readers who prefer less motion get the text. A number in a caption is in the text too.
-- **In the MDX:**
-  - `scenes: true` in the frontmatter, `import Scene from '~/components/Scene.astro';` and, after it, `import '~/scenes/lessons/<translationKey>.css';` (the CSS of the worlds the lesson draws, and no other world's);
-  - `<Scene id="…" />` alone on its line, right before the heading of the part it illustrates (the engine measures that heading);
-  - the ids are the same in both languages, in the same order, and match the lesson module's scenes (`src/content/scenes.test.ts` checks it);
-  - `<Scene end />` before the parts with no scene (in the pilot, «Ya lo has visto»);
-  - the text is not rewritten for the scenes, except to give a part its own heading when it needs its own scene.
-- **The choreography:** `web/src/scenes/lessons/<translationKey>.ts`, one module for both languages, with every visible string as `{ es, en }`. Each scene has its `id`, its `view`, its colour (`kind`: `dns`, `tcp`, `tls`, `http` or `muted`), the `chip` and `title` of the scene bar, the persistent state at its `start` and `end` (so any scene can be the first one seen), and `play(d)`, which uses the director (`d.caption`, `d.fly`, `d.note`, `d.show`…). Next to it, `<translationKey>.astro` is its client entry: a `<script>` that imports the module and calls `boot(lesson)`, copied from any other lesson's (a content test checks that it exists), so the page downloads only its own lesson's module. And `<translationKey>.css` imports the CSS of exactly the worlds the module draws (`@import '../worlds/<world>/<world>.css';`, the same content test checks it), so the page loads only those.
-- **Colours (`kind`):** the kinds are named after protocols, and Phase 0 uses them that way, but since Phase 11 they say what a scene is about:
-
-  | Kind | What it marks |
-  |---|---|
-  | `http` | HTTP messages between the browser, the server and other services (the default) |
-  | `tls` | secrets and permissions: keys, sessions, roles, an authorization check, a budget |
-  | `tcp` | what the server runs itself: its jobs, its tools, checks that pass |
-  | `dns` | what is counted or measured: tokens, cost, vectors, a search |
-  | `muted` | what is dropped, refused or not paid; the problem and analogy scenes |
-
-- **Pace:** a beginner follows it at normal speed. The engine keeps each caption up at least `800 + 240 × words` ms; a caption is one sentence of about a dozen words, and a scene lasts 10 to 25 seconds.
-- **Nothing on the page moves (CLS):**
-  - an actor never changes size: what appears inside it fades in on room it already had (`d.show` and the class `is-on`), or is absolutely positioned;
-  - a text that changes (a counter, a clock) has a fixed width;
-  - packets, notes and labels go over the stage (`d.fly`, `d.note`, `d.tag`), not inside the actors;
-  - a view is a grid in the world's CSS, on `.scene-layout`, with versions for narrow stages (620 and 430 px wide) and short ones (360 px tall, a phone) where it does not fit.
-- **A part that only one view needs is an actor of its own**, shown in that view (a router's NAT table, a server's sockets): inside another actor it keeps its room in every view, and makes them all smaller.
-- **An actor's name is shared by the worlds a lesson draws:** their CSS loads together on its pages, so `[data-actor='server'] { grid-area: srv; }` reaches each of them with a `server`. Between worlds drawn by the same lesson, reuse a name only with the same rule (`web/src/scenes/worlds/actors.test.ts` checks it), or give the actor a name of its own. **So is a view's name** (`.scene-stage[data-view='pair'] .scene-layout` lays out each of their `pair`s): two worlds drawn by the same lesson may not share one, and the same test checks it. Worlds that never share a lesson never share a page, and may use the same names. **A narrow or short stage's override goes after the rule it overrides:** with the same specificity the later rule wins, so a `@container` block placed before the base rule never applies; the same test checks it.
-- **Look at every view on a phone** (390 × 844 and 360 × 640): the camera shrinks a view that does not fit, so its smallest type should stay around 9 px (8 px at worst on the small phone). A view under that gets a composition with fewer columns for narrow stages. Plan it before drawing: on 360 × 640 a view fits in about 27em wide by 15.5em tall (the board's em) before its smallest text falls under 8 px; on 390 × 844 the width binds first.
-- **On a short stage, leave an actor out** rather than shrink the whole view: an actor the scene can do without on a phone gets `display: none` in the view's 360 px-tall query, and the module sends its messages from the nearest actor that stays.
-- **Worlds shared by several lessons:** a lesson may draw actors from two or three worlds (Phase 11 uses `assistant`'s chat, shop and model in six lessons). A view may list another world's actors, and its layout lives in the world that defines the view; a world with state prefixes its keys (`ai…`, `vx…`, `op…`) so the lesson can merge the states into one. A part only one lesson needs is better in a world of its own (`rag`, `ops`) than growing a shared one.
-- **Worlds:** the actors are HTML boxes in the world's `.astro`, with SVG only for shapes (people, a router, buildings); their labels are in the world's `strings.ts` (`es` and `en` of the same type); colours come only from `--ide-*` tokens, the scenery ones too (`--ide-skin-*`, `--ide-hair-*`, `--ide-wood`…).
-- **Tests:** a world's state and routes have unit tests; `web/e2e/scenes.e2e.ts` reads every scene lesson of the build from top to bottom on a computer and a phone and fails above a CLS of 0.01; the pilot also checks the controls, the line between scene and text and the fold on a phone.
 
 ## Routes, translations and SEO
 

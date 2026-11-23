@@ -7,7 +7,6 @@ import { strings as tcpStrings } from '../src/playgrounds/tcp-handshake/strings'
 import { strings as dockerStrings } from '../src/playgrounds/docker-layers/strings';
 import { strings as sqlStrings } from '../src/playgrounds/sql-playground/strings';
 import { expectAccessible, hydrate, open, settled, themes } from './axe';
-import { readPart, sceneLesson, scenesReady } from './scene';
 
 // What the page scan does not see, because it only appears after something is done: the labs'
 // states, a quiz answered, the menu on a phone, a glossary popover and the folded parts of the explorer.
@@ -223,27 +222,6 @@ for (const theme of themes) {
       await expect(toggle).toHaveAttribute('aria-expanded', 'false');
       await toggle.click();
       await expect(page.locator('#ide-files')).toBeVisible();
-    });
-
-    test('a scene lesson: a scene playing, then paused', async ({ page }) => {
-      await page.setViewportSize({ width: 1440, height: 900 });
-      await open(page, sceneLesson.es, theme);
-      await scenesReady(page);
-      await readPart(page, 'dns');
-      await expect(page.locator('#scene-play')).toHaveAttribute('data-state', 'playing');
-      await expectAccessible(page, '.scene-panel');
-      await page.locator('#scene-play').click();
-      await expect(page.locator('#scene-play')).toHaveAttribute('data-state', 'paused');
-      await expectAccessible(page);
-    });
-
-    test('a scene lesson on a phone, with the scene folded', async ({ page }) => {
-      await page.setViewportSize({ width: 390, height: 844 });
-      await open(page, sceneLesson.es, theme);
-      await scenesReady(page);
-      await page.locator('#scene-fold').click();
-      await expect(page.locator('#scene-fold')).toHaveAttribute('aria-expanded', 'false');
-      await expectAccessible(page);
     });
 
     test('the menu open on a phone', async ({ page }) => {
