@@ -195,7 +195,11 @@ src/scenes/                     scene lessons (docs/specs/2026-11-20-visual-less
                                 of the time to first token, Ana, the twelve evals and their judge, and the trace with its
                                 span's attributes, with ops.test.ts adding up the text's example: «IA en producción», which
                                 also uses assistant/'s chat, shop, checks, Redis, model, fake model and terminal and vectors/'
-                                worker), analogies/ (each Phase 11 lesson's analogy: the
+                                worker), loop/ (Luis and Ana, the shop's API with its single thread, the queue and the
+                                fulfilled promises' queue, libuv's four helper threads, the operating system, the two `curl`
+                                of the text's diagrams, `ejemplos/orden.ts` and what it prints, the four ways out, ten people
+                                at once and the restaurant with a single waiter, with loop.test.ts checking its outputs, routes
+                                and example against the text: «El event loop de Node.js»), analogies/ (each Phase 11 lesson's analogy: the
                                 counter and the phone translation service of lesson 1, the interpreters of lesson 2, the call
                                 center of lesson 3, the chargers and USB-C of lesson 4, the supermarket of lesson 5, the
                                 open-book exam of lesson 6, the cafeteria and its kitchen of lesson 7) and people.ts; actors.test.ts checks that an actor
@@ -204,7 +208,7 @@ src/scenes/                     scene lessons (docs/specs/2026-11-20-visual-less
   lessons/                      one choreography per scene lesson, named by its translationKey (from-url-to-page.ts,
                                 what-is-backend.ts, client-server.ts, protocols.ts, tcp-ip-model.ts, ip-ports-sockets.ts,
                                 tcp-vs-udp.ts, dns.ts, tls-https.ts, model-apis.ts, streaming.ts, tool-use.ts, mcp.ts, embeddings.ts,
-                                rag.ts, ai-in-production.ts), each with its client entry (<key>.astro: a script that imports it and starts
+                                rag.ts, ai-in-production.ts, event-loop.ts), each with its client entry (<key>.astro: a script that imports it and starts
                                 the engine, rendered by ScenePanel, so a page bundles only its own lesson) and its CSS (<key>.css:
                                 the worlds it draws, imported by its MDX, so a page loads only those worlds' CSS)
 src/styles/theme.css            "code editor" theme: the --ide-* tokens, the single source of colour (tokens.test.ts checks contrast)
