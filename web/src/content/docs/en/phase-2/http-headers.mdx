@@ -64,13 +64,17 @@ You already wrote one in [lesson 3 of Phase 0](/en/phase-0/what-is-a-protocol/),
 > Accept: */*
 >
 < HTTP/2 200
-< date: Tue, 13 Oct 2026 07:59:48 GMT
+< date: Mon, 23 Nov 2026 15:28:36 GMT
 < content-type: text/html
 < cf-cache-status: HIT
 < cache-control: public, max-age=0, must-revalidate
 < …
+< strict-transport-security: max-age=86400
+< referrer-policy: strict-origin-when-cross-origin
+< x-content-type-options: nosniff
+< …
 < server: cloudflare
-< cf-ray: a49cce9b1c2e0390-MAD
+< cf-ray: a5f13461ee01f768-MAD
 < alt-svc: h3=":443"; ma=86400
 ```
 
@@ -134,7 +138,7 @@ Back to the shop's failing grade. <Term id="security-headers">Security headers</
 
 The first one is known as <Term id="hsts">HSTS</Term>. In [lesson 9 of Phase 0](/en/phase-0/what-happens-when-you-type-a-url/) you saw that asking for `http://github.com` with `curl` costs an extra trip, the `301` to `https://`, and that this request goes unencrypted. With HSTS, the browser remembers the site as soon as it visits it over HTTPS and, the following times, changes `http://` to `https://` on its own. The first visit is still unprotected, with one exception you'll see below with GitHub.
 
-It has a risk: if your HTTPS fails one day, anyone who already visited you won't be able to get in until the `max-age` expires. That's why you start with a short value, and that's why this site doesn't send it yet: it will turn it on once it has been running for a few weeks without problems.
+It has a risk: if your HTTPS fails one day, anyone who already visited you won't be able to get in until the `max-age` expires. That's why you start with a short value and raise it little by little while everything works. This site has sent it since November 2026, after six weeks without problems, and started with one day.
 
 **`Content-Security-Policy`** (CSP) is the most powerful and the hardest. If an attacker sneaks a `<script>` with their code into your site (an attack called XSS, in Phase 6), the browser doesn't run it: `script-src 'self'` only lets files from your own domain run, never code written inside the page. It doesn't save you if the attacker manages to upload a file to your domain. And if you forget a site you do use, you break your own page.
 
@@ -216,18 +220,28 @@ curl -sI https://backenddesdecero.com/en/ | grep -iE 'strict-transport|content-s
   output={`strict-transport-security: max-age=31536000; includeSubdomains; preload
 x-content-type-options: nosniff
 referrer-policy: origin-when-cross-origin, strict-origin-when-cross-origin
-content-security-policy: default-src 'none'; base-uri 'self'; child-src github.g`}
+content-security-policy: default-src 'none'; base-uri 'self'; child-src github.g
+strict-transport-security: max-age=86400
+referrer-policy: strict-origin-when-cross-origin
+x-content-type-options: nosniff`}
 >
 
-GitHub sends all four. `cut -c 1-80` cuts each line at 80 characters, because its `content-security-policy` takes up almost 4,000: every site it loads something from. `preload` asks to be added to a list that browsers ship with, and GitHub is on it: browsers go to GitHub over HTTPS from the very first visit.
+GitHub sends all four. `cut -c 1-80` cuts each line at 80 characters, because its `content-security-policy` takes up more than 4,000: every site it loads something from. `preload` asks to be added to a list that browsers ship with, and GitHub is on it: browsers go to GitHub over HTTPS from the very first visit.
 
-The second command writes nothing: this site sends none of them. HSTS is pending, and the others mostly protect sites with sessions or forms, which this one doesn't have. Even so, a scanner would fail it.
+This site sends three, all but the CSP. `max-age=86400` is 86,400 seconds, one day: the short value it started with. If you see a larger one, we've already raised it.
+
+The CSP is missing because Starlight, the tool this site is built with, writes small scripts inside every page, like the one that sets the light or dark theme before drawing it, and `script-src 'self'` would block them. To send it, every one of those scripts would have to be allowed in the header itself.
 
 </TryIt>
 
-This site's headers are configured in a text file, `_headers`, which Cloudflare reads when the site is published. These are its rules for the practice files:
+This site's headers are configured in a text file, `_headers`, which Cloudflare reads when the site is published. These are its rules for every page and for this phase's practice files:
 
 ```text
+/*
+  Strict-Transport-Security: max-age=86400
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+
 /practicas/*
   X-Robots-Tag: noindex
 
@@ -241,18 +255,22 @@ This site's headers are configured in a text file, `_headers`, which Cloudflare 
   Access-Control-Allow-Origin: *
 ```
 
-Each block is a path and the headers added to its responses: the practice files don't show up on Google (`noindex`), scripts and configurations are shown as text in the browser, and `cors-on.json` is for [lesson 6](/en/phase-2/what-is-cors/).
+Each block is a path and the headers added to its responses, and `*` stands for any text. `/*` is every page: they all get the three security headers from step 4. The practice files don't show up on Google (`noindex`), scripts and configurations are shown as text in the browser, and `cors-on.json` is for [lesson 6](/en/phase-2/what-is-cors/). A path that matches several blocks gets the headers of all of them.
 
 <TryIt
   title="5. Check that the configuration is applied"
   cmd={`curl -sI https://backenddesdecero.com/practicas/shop-http.conf | grep -iE 'content-type|x-robots-tag'
 curl -sI https://backenddesdecero.com/en/ | grep -iE 'content-type|x-robots-tag'`}
   output={`content-type: text/plain; charset=utf-8
+x-content-type-options: nosniff
 x-robots-tag: noindex
-content-type: text/html`}
+content-type: text/html
+x-content-type-options: nosniff`}
 >
 
 The shop's configuration, the one you downloaded in the [introduction](/en/phase-2/), carries both headers. The home page isn't under `/practicas/`: it has no `x-robots-tag`, and its `content-type` is set by the server based on the file's extension.
+
+`x-content-type-options` shows up for both because `grep` finds `content-type` anywhere in the line, and both paths match the `/*` block.
 
 </TryIt>
 
