@@ -292,9 +292,39 @@ function start<S>(panel: HTMLElement, lesson: LessonModule<S>): void {
       if (pending === i && i !== current) void enter(i, { instant });
     }, 160);
   }
+  // Safari (WebKit) scrolls the page to reveal a control of the scene's bar when the Tab key
+  // focuses it, although the bar is sticky and already in view (it takes the page's
+  // scroll-padding-top, Starlight's room for the header, as covering it), sometimes a quarter of a
+  // second later. That scroll would move the reading line and change the scene, so a small scroll
+  // soon after such a focus is undone, unless the reader did something meanwhile.
+  let steady = scrollY;
+  let tabbedAt = -Infinity;
+  let focusGuard = 0;
+  const unguard = () => {
+    focusGuard = 0;
+  };
+  addEventListener('keydown', (event) => {
+    if (event.key === 'Tab') tabbedAt = performance.now();
+    else if (event.key !== 'Shift') unguard();
+  });
+  for (const type of ['wheel', 'touchstart', 'pointerdown'])
+    addEventListener(type, unguard, { passive: true });
+  panel.addEventListener('focusin', () => {
+    if (performance.now() - tabbedAt < 100) focusGuard = performance.now() + 500;
+  });
   addEventListener(
     'scroll',
     () => {
+      if (
+        performance.now() < focusGuard &&
+        panel.contains(document.activeElement) &&
+        Math.abs(scrollY - steady) < 64
+      ) {
+        unguard();
+        scrollTo(0, steady);
+        return;
+      }
+      steady = scrollY;
       if (!ticking) {
         ticking = true;
         requestAnimationFrame(onScroll);
@@ -304,6 +334,7 @@ function start<S>(panel: HTMLElement, lesson: LessonModule<S>): void {
   );
 
   function goTo(i: number): void {
+    unguard();
     i = Math.max(0, Math.min(scenes.length - 1, i));
     const top =
       i === 0
