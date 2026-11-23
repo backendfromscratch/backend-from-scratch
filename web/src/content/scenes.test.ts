@@ -147,6 +147,28 @@ describe('scene lessons', () => {
     expect(entry).toContain('boot(lesson);');
   });
 
+  // A world's CSS reaches only the pages that draw it: each scene lesson's MDX imports its
+  // lessons/<key>.css, which imports the CSS of exactly the worlds its module draws (Scene.astro
+  // brings only the engine's). A world missing here would leave its actors unstyled on that page.
+  it.each(Object.keys(modules))('%s has its CSS, with exactly the worlds it draws', (key) => {
+    const css = readFileSync(`${lessonsDir}${key}.css`, 'utf8');
+    const imported = [...css.matchAll(/^@import '\.\.\/worlds\/([\w-]+)\/([\w-]+)\.css';$/gm)].map(
+      ([, folder, file]) => (folder === file ? folder! : `${folder}/${file}`),
+    );
+    expect(imported.sort()).toEqual(modules[key]!.worlds.map((world) => world.id).sort());
+    expect(
+      css
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^@import .*$/gm, '')
+        .trim(),
+    ).toBe('');
+  });
+
+  it.each(withScenes.map((lesson) => lesson.path))('%s imports its lesson’s CSS', (path) => {
+    const lesson = withScenes.find((l) => l.path === path)!;
+    expect(lesson.text).toContain(`\nimport '~/scenes/lessons/${lesson.key}.css';\n`);
+  });
+
   it('no lesson without scenes: true has cues', () => {
     const stray = all
       .filter((lesson) => !lesson.scenes && cues(lesson.text).length > 0)

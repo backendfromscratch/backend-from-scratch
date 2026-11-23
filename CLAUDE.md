@@ -147,7 +147,7 @@ src/components/                 lessons (Term, TryIt, Analogy, SelfCheck, Quiz w
                                 AcronymLine (what a glossary acronym stands for, in Term and GlossaryList), ProjectCode (a file or a
                                 region of a guided project, as a code block: lessons never paste project code)
                                 and layout (Outline, Minimap, ExplorerToggle; LessonIntro, the lesson header, from overrides/PageTitle.astro).
-                                Scene lessons: Scene (a cue in the text; it also brings the scenes' CSS) and ScenePanel (the scene column,
+                                Scene lessons: Scene (a cue in the text; it also brings the engine's CSS) and ScenePanel (the scene column,
                                 rendered by overrides/TwoColumnContent.astro instead of the minimap)
 src/components/overrides/       replacements for Starlight components, registered in astro.config.ts: Head (preloads the two fonts every page draws, so
                                 they never swap in after the first paint: CLS), Header, Sidebar, PageTitle, LanguageSelect,
@@ -199,13 +199,14 @@ src/scenes/                     scene lessons (docs/specs/2026-11-20-visual-less
                                 counter and the phone translation service of lesson 1, the interpreters of lesson 2, the call
                                 center of lesson 3, the chargers and USB-C of lesson 4, the supermarket of lesson 5, the
                                 open-book exam of lesson 6, the cafeteria and its kitchen of lesson 7) and people.ts; actors.test.ts checks that an actor
-                                name shared by two worlds gets the same rule in both, and that no two worlds share a view name
-                                (every world's CSS is global)
+                                name shared by two worlds a lesson draws gets the same rule in both, and that no two of them share
+                                a view name (their CSS loads together on that lesson's pages)
   lessons/                      one choreography per scene lesson, named by its translationKey (from-url-to-page.ts,
                                 what-is-backend.ts, client-server.ts, protocols.ts, tcp-ip-model.ts, ip-ports-sockets.ts,
                                 tcp-vs-udp.ts, dns.ts, tls-https.ts, model-apis.ts, streaming.ts, tool-use.ts, mcp.ts, embeddings.ts,
                                 rag.ts, ai-in-production.ts), each with its client entry (<key>.astro: a script that imports it and starts
-                                the engine, rendered by ScenePanel, so a page bundles only its own lesson)
+                                the engine, rendered by ScenePanel, so a page bundles only its own lesson) and its CSS (<key>.css:
+                                the worlds it draws, imported by its MDX, so a page loads only those worlds' CSS)
 src/styles/theme.css            "code editor" theme: the --ide-* tokens, the single source of colour (tokens.test.ts checks contrast)
 src/styles/diagrams.css         styles for the diagrams generated from mermaid blocks
 src/lib/                        pure logic, no DOM, with tests:
